@@ -9,7 +9,8 @@ It listens on `127.0.0.1` only. Send one JSON object per line; each gets one rep
 ```
 
 Errors come back as `{"id": …, "ok": false, "error": "message"}`. A failed command leaves the
-document unchanged.
+document unchanged. Send only JSON lines: the server closes a connection on the first malformed
+line, including HTTP request lines.
 
 ## Methods
 

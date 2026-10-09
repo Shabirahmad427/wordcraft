@@ -1,6 +1,8 @@
 //! Loopback JSON-lines control server: one request per line, one reply per line.
 //! This is the transport the MCP server (`wordcraft mcp --connect`) wraps.
 
+#[cfg(test)]
+use std::io::Read;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -53,10 +55,42 @@ fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context) {
                 }
                 r
             }
-            Err(e) => json!({"ok": false, "error": format!("bad JSON: {e}")}),
+            Err(e) => {
+                // Do not keep parsing after malformed input. In particular, an HTTP request
+                // must not be able to smuggle a JSON command in its body over this JSON-lines
+                // socket (cross-protocol requests from a browser).
+                log::warn!("control connection closed after invalid JSON: {e}");
+                break;
+            }
         };
         if writeln!(out, "{reply}").is_err() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_http_request_closes_before_a_json_body_is_processed() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = channel();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            serve(stream, tx, egui::Context::default());
+        });
+
+        let mut client = TcpStream::connect(addr).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        client.write_all(b"POST / HTTP/1.1\r\nHost: localhost\r\n\r\n{\"id\":1,\"method\":\"app.quit\"}\n").unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).unwrap();
+
+        assert!(response.is_empty());
+        assert!(rx.try_recv().is_err());
+        server.join().unwrap();
     }
 }
