@@ -1,7 +1,8 @@
 use super::*;
 use wordcraft_doc::para::InlineObject;
 use wordcraft_doc::props::{Align, ParaProps};
-use wordcraft_doc::{Pos, Table};
+use wordcraft_doc::section::{SectionProps, SectionStart};
+use wordcraft_doc::{Path, Pos, StoryRef, Table};
 
 fn lay(doc: &Document) -> DocLayout {
     let mut c = LayoutCache::new();
@@ -223,6 +224,18 @@ fn display_has_glyphs_and_marks() {
     assert!(items.iter().any(|i| matches!(i, display::Draw::Line { .. })));
     assert!(items.iter().any(|i| matches!(i, display::Draw::Mark { ch: '¶', .. })));
     assert!(items.iter().any(|i| matches!(i, display::Draw::Mark { ch: '→', .. })));
+}
+
+#[test]
+fn display_marks_section_breaks() {
+    let mut d = Document::from_text("First section\nSecond section");
+    d.para_mut(StoryRef::Body, &Path::top(0)).unwrap().section =
+        Some(Box::new(SectionProps { start: SectionStart::Continuous, ..Default::default() }));
+    let l = lay(&d);
+    let marks = display::page_display(&d, &l.pages[0], &display::DisplayOptions { marks: true, ..Default::default() });
+    assert!(marks.iter().any(|item| matches!(item, display::Draw::Mark { ch: '§', .. })));
+    let plain = display::page_display(&d, &l.pages[0], &display::DisplayOptions::default());
+    assert!(!plain.iter().any(|item| matches!(item, display::Draw::Mark { ch: '§', .. })));
 }
 
 #[test]

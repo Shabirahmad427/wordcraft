@@ -431,6 +431,22 @@ fn lines(
                 let ex = x + line.xs.last().copied().unwrap_or(line.left);
                 let size = pl.lines.first().map(|_| msize).unwrap_or(msize);
                 out.push(Draw::Mark { x: ex + 1.0, baseline: base, size, ch: '¶' });
+                if story == StoryRef::Body && path.depth() == 0 && para.is_some_and(|p| p.section.is_some()) {
+                    // The section properties are stored on the paragraph that ends the section.
+                    // Mark that boundary separately from the paragraph mark, as Word does.
+                    let sx = ex + size * 0.9;
+                    out.push(Draw::Line {
+                        x0: sx,
+                        y0: base - size * 0.3,
+                        x1: x + line.right,
+                        y1: base - size * 0.3,
+                        width: 0.5,
+                        color: Rgb(0x60, 0x60, 0x60),
+                        stroke: Stroke::Dotted,
+                        alpha,
+                    });
+                    out.push(Draw::Mark { x: sx, baseline: base, size, ch: '§' });
+                }
             }
         }
         let _ = bottom;
