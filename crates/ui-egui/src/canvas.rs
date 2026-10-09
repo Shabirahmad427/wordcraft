@@ -18,6 +18,11 @@ pub const PX_PER_PT: f32 = 96.0 / 72.0;
 const GAP: f32 = 18.0;
 const RULER: f32 = 22.0;
 
+fn safe_external_link(link: &str) -> bool {
+    let Some((scheme, _)) = link.split_once(':') else { return false };
+    matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https" | "mailto")
+}
+
 pub struct CanvasState {
     textures: HashMap<usize, (u64, TextureHandle)>,
     pub scroll_to_caret: bool,
@@ -514,8 +519,10 @@ fn mouse(app: &mut WordApp, ui: &Ui, resp: &egui::Response, rects: &[Rect], layo
         {
             if let Some(name) = link.strip_prefix('#') {
                 let _ = app.run("edit.goto", json!({"bookmark": name}));
-            } else {
+            } else if safe_external_link(&link) {
                 app.canvas.open_url = Some(link);
+            } else {
+                app.status("This link type is blocked for safety.");
             }
             return;
         }
@@ -804,5 +811,20 @@ fn context_menu(app: &mut WordApp, ui: &mut Ui) {
             item(ui, app, "Delete Table", "table.deleteTable", json!({}));
         });
         item(ui, app, "Merge Cells", "table.merge", json!({}));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_external_link;
+
+    #[test]
+    fn external_links_allow_web_and_email_schemes_only() {
+        for url in ["https://example.com", "HTTP://example.com", "mailto:writer@example.com"] {
+            assert!(safe_external_link(url), "{url}");
+        }
+        for url in ["file:///etc/passwd", "javascript:alert(1)", "data:text/html,x", "custom:launch", "//example.com"] {
+            assert!(!safe_external_link(url), "{url}");
+        }
     }
 }
