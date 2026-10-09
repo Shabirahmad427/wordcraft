@@ -301,6 +301,27 @@ fn failed_command_leaves_document_unchanged() {
 }
 
 #[test]
+fn failed_save_leaves_document_metadata_unchanged() {
+    let mut s = Session::new(crate::sample::sample_document());
+    s.doc.core.created = "created-before-save".into();
+    s.doc.core.modified = "modified-before-save".into();
+    s.doc.core.last_modified_by = "previous author".into();
+    s.doc.core.revision = 7;
+    s.author = "current author".into();
+    let before = s.doc.core.clone();
+
+    let path = std::env::temp_dir().join(format!("wordcraft-save-blocker-{}", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::write(&path, b"block parent directory").unwrap();
+    let target = path.join("cannot-save.docx");
+
+    assert!(s.run("file.save", &json!({"path": target})).is_err());
+    assert_eq!(s.doc.core, before);
+
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn hostile_params_never_panic() {
     let reg = cmd::registry();
     let junk = [
