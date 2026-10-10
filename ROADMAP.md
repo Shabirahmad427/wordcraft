@@ -128,3 +128,5 @@ The DOCX fidelity corpus, then footnote continuation, column balancing and nativ
 - M14: Native file dialogs run asynchronously; delayed responses are cancelled after document replacement (#94, PR #246 plus regression guard).
 
 - M14: Release font inputs include Simplified Chinese; native UI can use installed CJK fallback faces (#241, PR #248).
+
+- M8: Interface theme can follow the operating system, with persisted Light/Dark/System choices (#115, PR #249).
