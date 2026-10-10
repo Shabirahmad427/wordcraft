@@ -7,7 +7,8 @@
 //! `docs/control-protocol.md`), `{"shot": "/abs/out.png"}` to save the window as PNG, or
 //! `{"steps": n}` to run extra frames, or `{"wait": ms}` to keep running frames for a while (for
 //! background work such as a Zotero session). The window is 1440×900 pt at 2× and opens the sample
-//! document unless the first line is `{"empty": true}`.
+//! document unless the first line is `{"empty": true}`. An optional `recoveryDirectory` on
+//! that first line configures an isolated native recovery store for restart/UI regression scripts.
 
 use wordcraft_engine::Session;
 use wordcraft_ui_egui::{ControlRequest, Services, WordApp};
@@ -27,6 +28,9 @@ fn main() {
     };
     let mut app = WordApp::new(Session::new(doc), Services::default()).with_control(rx);
     app.integrated_titlebar = true;
+    if let Some(directory) = lines.first().and_then(|line| line.get("recoveryDirectory")).and_then(serde_json::Value::as_str) {
+        app.enable_recovery(std::path::PathBuf::from(directory)).expect("configure test recovery store");
+    }
     let w = lines.iter().find_map(|l| l.get("width").and_then(|v| v.as_f64())).unwrap_or(1440.0) as f32;
     let h = lines.iter().find_map(|l| l.get("height").and_then(|v| v.as_f64())).unwrap_or(900.0) as f32;
     let mut harness =

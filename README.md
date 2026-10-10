@@ -160,6 +160,13 @@ can check their work through `inspect_document` without screenshots. See [docs/m
 and the [control protocol](docs/control-protocol.md). Macros record any sequence of commands and
 play it back (`tools.recordMacro`, `tools.macros`).
 
+## Document recovery
+
+The desktop app keeps separate recovery snapshots of modified documents, including never-saved
+work, and offers restore, discard and text comparison after restart. Open them through
+**File → Info → Recover Unsaved Documents**. Restoration requires Save As; the original file is
+not overwritten. See [recovery behavior, storage and limitations](docs/recovery.md).
+
 ## Logs
 
 The desktop app writes its log records to standard error and to `logs/wordcraft.log` next to its

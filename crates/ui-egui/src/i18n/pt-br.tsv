@@ -897,3 +897,9 @@
 	Mendeley	Mendeley
 	Import Mendeley Library	Importar biblioteca do Mendeley
 	Library	Biblioteca
+
+# Document recovery commands
+	Restore Recovery Version	Restaurar versão de recuperação
+	Discard Recovery Version	Descartar versão de recuperação
+	Compare Recovery Versions	Comparar versões de recuperação
+	Save Original Package	Salvar pacote original

@@ -61,6 +61,7 @@ impl eframe::App for App {
         self.3.show(frame);
     }
     fn on_exit(&mut self) {
+        self.0.finish_recovery();
         save_prefs(&self.0);
         if let Some(key_file) = &self.2 {
             key_file.remove();
@@ -218,6 +219,16 @@ fn main() -> eframe::Result {
             for f in files {
                 if let Err(e) = app.run("file.open", serde_json::json!({"path": f})) {
                     log::warn!("{f}: {e}");
+                }
+            }
+            if prefs_enabled() {
+                if let Some(dir) = wordcraft_control_key::settings_dir() {
+                    if let Err(error) = app.enable_recovery(dir.join("recovery")) {
+                        log::error!("Recovery unavailable: {error}");
+                        app.status(format!("Document recovery unavailable: {error}"));
+                    }
+                } else {
+                    app.status("Document recovery unavailable: user settings directory is unknown");
                 }
             }
             Ok(Box::new(App(

@@ -885,3 +885,9 @@
 	Mendeley	Mendeley
 	Import Mendeley Library	Mendeley ライブラリをインポート
 	Library	ライブラリ
+
+# Document recovery commands
+	Restore Recovery Version	回復版を復元
+	Discard Recovery Version	回復版を破棄
+	Compare Recovery Versions	回復版を比較
+	Save Original Package	元のパッケージを保存

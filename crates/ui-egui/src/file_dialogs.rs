@@ -26,6 +26,9 @@ pub enum FileDialogRequest {
 pub(crate) enum AfterPick {
     /// Open the picked document.
     OpenDocument,
+    RecoveryOriginal {
+        id: String,
+    },
     /// Import a Mendeley RIS export into the current document.
     Mendeley,
     /// Insert the picked picture, or replace the pending Change Picture target.
@@ -33,7 +36,9 @@ pub(crate) enum AfterPick {
     /// Save the document there, then carry on.
     SaveAs(AfterSave),
     /// Save a copy there in this format (`pdf`, `docx`, `png`…).
-    Export { ext: String },
+    Export {
+        ext: String,
+    },
 }
 
 /// What to do once Save As has written the document.
@@ -114,6 +119,10 @@ impl WordApp {
     /// Do what the dialog was for with the picked path (`None`: the user cancelled).
     fn finish_pick(&mut self, after: AfterPick, picked: Option<String>) -> Result<Value, String> {
         match after {
+            AfterPick::RecoveryOriginal { id } => {
+                let Some(path) = picked else { return Ok(json!({"cancelled": true})) };
+                self.execute("recovery.original", json!({"id": id, "path": path}))
+            }
             AfterPick::Mendeley => {
                 let Some(path) = picked else { return Ok(json!({"cancelled": true})) };
                 self.run("mendeley.import", json!({"path": path}))

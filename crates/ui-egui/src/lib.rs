@@ -31,6 +31,7 @@ pub mod objects;
 pub mod panes;
 pub mod previews;
 pub mod read_aloud;
+pub mod recovery;
 pub mod ribbon;
 mod table_resize;
 pub mod theme;
@@ -180,6 +181,8 @@ pub struct WordApp {
     autosave_path: Option<std::path::PathBuf>,
     /// The file dialog the host is showing, and what its answer is for ([`file_dialogs`]).
     file_dialog: Option<file_dialogs::PendingDialog>,
+    #[cfg(not(target_arch = "wasm32"))]
+    recovery: Option<recovery::Controller>,
 }
 
 /// The answer to "Do you want to save changes?" (`ui.saveChanges`).
@@ -236,6 +239,8 @@ impl WordApp {
             autosave_path: None,
             change_picture_target: None,
             file_dialog: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            recovery: None,
         }
     }
 
@@ -283,6 +288,10 @@ impl WordApp {
             self.dialog = dialogs::Dialog::open("recipients", self);
             return Ok(json!({"pending": "recipients"}));
         }
+        if id == "file.recover" {
+            self.dialog = dialogs::Dialog::open("recovery", self);
+            return Ok(json!({"pending": "recovery"}));
+        }
         if self.session.dirty && discards_document(id, &params) {
             let name =
                 self.session.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| self.title_stem());
@@ -328,6 +337,15 @@ impl WordApp {
                 self.session.dirty = false;
             }
             return Ok(json!({"downloaded": name, "bytes": bytes.len()}));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if discards_document(id, &params) {
+            self.recovery_checkpoint()?;
+        } else if matches!(id, "file.save" | "file.saveAs")
+            && let Err(error) = self.recovery_checkpoint()
+        {
+            // A failed recovery volume must not prevent saving to a healthy destination.
+            self.status(format!("Recovery snapshot failed: {error}"));
         }
         let document = self.session.document_id();
         let r = self.session.run(id, &params).map_err(|e| e.to_string());
@@ -666,6 +684,8 @@ impl WordApp {
         self.clear_stale_change_picture();
         let _ = self.poll_file_dialog();
         self.drain_inbox();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.recovery_tick(ctx);
         self.autosave_tick(now_ms());
         if self.autosaves() && self.session.dirty {
             ctx.request_repaint_after(std::time::Duration::from_millis(1000));
@@ -877,8 +897,9 @@ fn keeps_everything(name: &str) -> bool {
 /// new document in its place; a merge written to a file (`path`) leaves it alone.
 fn discards_document(id: &str, params: &Value) -> bool {
     match id {
-        "file.new" | "file.close" | "mailings.envelopes" | "mailings.labels" => true,
+        "file.new" | "file.close" | "file.newFromTemplate" | "recovery.restore" | "mailings.envelopes" | "mailings.labels" => true,
         "file.open" => params.get("path").is_some(),
+        "file.versions" => params.get("restore").is_some(),
         "mailings.finish" => params.get("path").and_then(Value::as_str).is_none(),
         _ => false,
     }

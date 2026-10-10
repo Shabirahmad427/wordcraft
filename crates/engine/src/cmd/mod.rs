@@ -13,6 +13,7 @@ pub mod mendeley;
 pub mod objects;
 pub mod page;
 pub mod para;
+pub mod recovery;
 pub mod references;
 pub mod review;
 pub mod speech;
@@ -49,6 +50,7 @@ pub fn registry() -> Registry {
     v.extend(mendeley::specs());
     v.extend(objects::specs());
     v.extend(tools::specs());
+    v.extend(recovery::specs());
     v.extend(speech::specs());
     Registry::new(v)
 }
@@ -215,7 +217,7 @@ pub fn split_para(s: &mut Session, at: &Pos) -> Result<Pos, CmdError> {
 }
 
 /// ISO-8601 timestamp (UTC, seconds) for `secs` since the Unix epoch.
-fn iso_from_unix_secs(secs: u64) -> String {
+pub(crate) fn iso_from_unix_secs(secs: u64) -> String {
     let (y, m, d) = civil_from_days((secs / 86_400) as i64);
     let t = secs % 86_400;
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", t / 3600, t / 60 % 60, t % 60)

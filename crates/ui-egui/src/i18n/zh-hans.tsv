@@ -896,3 +896,9 @@
 	Mendeley	Mendeley
 	Import Mendeley Library	导入 Mendeley 文献库
 	Library	文献库
+
+# Document recovery commands
+	Restore Recovery Version	还原恢复版本
+	Discard Recovery Version	丢弃恢复版本
+	Compare Recovery Versions	比较恢复版本
+	Save Original Package	保存原始包

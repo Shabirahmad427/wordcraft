@@ -200,6 +200,10 @@ fn open_page(app: &mut WordApp, ui: &mut Ui) {
 
 fn info_page(app: &mut WordApp, ui: &mut Ui) {
     heading(ui, "Info");
+    if ui.button(tl!("Recover Unsaved Documents")).clicked() {
+        let _ = app.run("file.recover", json!({}));
+    }
+    ui.add_space(8.0);
     let info = app.session.run("file.info", &json!({})).unwrap_or_default();
     ui.columns(2, |cols| {
         let ui = &mut cols[0];

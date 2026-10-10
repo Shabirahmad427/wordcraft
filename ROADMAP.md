@@ -32,7 +32,7 @@ from a signed download, without losing work.
 | Pagination fidelity: wrap, row splitting, hyphenation, drop caps, line numbers, borders | done this arc |
 | Comments in margin balloons, track changes | done |
 | Never-crash standard (no panics, hostile-param fuzzing, panic guard) | done |
-| Autosave and crash recovery | AutoSave for explicitly saved files; durable recovery of unsaved documents missing (source audit 2026-10-10) |
+| Autosave and crash recovery | AutoSave plus separate native recovery snapshots, restart restore/discard/text comparison; Linux crash tests pass, Windows/macOS power-loss verification outstanding |
 | **DOCX fidelity against a corpus of real-world files** (open, render, round-trip, fix) | Synthetic preservation regressions started; independent real-world corpus verification still missing |
 | Footnotes that continue onto the next page; column balancing | missing (≈4 h) |
 | Native printing (today printing goes through PDF) | missing (≈4 h) |
@@ -137,3 +137,6 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 ## Phase 2 — professional document recovery (2026-10-10)
 
 - Arc 1: native immutable recovery archive foundation, complete editor/media/passthrough snapshots and exact source DOCX retention. Restoring requires Save As; incomplete writes are ignored and live sessions are protected by OS locks. Storage regression tests include abrupt process exit and corrupted archives. Automatic scheduling and the restore/discard/compare interface remain for arc 2. See [recovery storage contract](docs/recovery.md).
+
+- Arc 2: periodic background snapshots (first modified frame, then 15 seconds), replacement/exit checkpoints, startup recovery interface, restore/discard/compare/original-package commands and six command-label translations. Tests include an actual process kill during a write, CRC corruption, restart DOCX/raster fidelity, scheduler timing and UI Save Changes/Cancel protection. Native platform APIs preserve WASM builds; browser recovery remains separate. See docs/recovery.md for bounded storage and preservation limits.
+- Verified: both recovery arcs passed `cargo xtask ci` (fmt, Clippy with warnings denied, workspace tests, assets, layers and WASM). Final suite: **821 passing tests**, including **16 added recovery tests** across storage, engine commands, DOCX/raster restoration and UI. Headless recovery window rendered and visually inspected. No native Windows/macOS power-loss or independent Word parity verification was performed.

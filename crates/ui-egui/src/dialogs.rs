@@ -12,6 +12,9 @@ use crate::theme::{Tokens, semibold};
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "dialog", rename_all = "camelCase")]
 pub enum Dialog {
+    Recovery {
+        state: crate::recovery::DialogState,
+    },
     Mendeley {
         ris: String,
         query: String,
@@ -132,6 +135,7 @@ pub enum Dialog {
 impl Dialog {
     pub fn name(&self) -> &'static str {
         match self {
+            Dialog::Recovery { .. } => "recovery",
             Dialog::Mendeley { .. } => "mendeley",
             Dialog::Recipients { .. } => "recipients",
             Dialog::Font { .. } => "font",
@@ -159,6 +163,11 @@ impl Dialog {
         let s = |k: &str| st.get(k).and_then(Value::as_str).unwrap_or("").to_string();
         let b = |k: &str| st.get(k).and_then(Value::as_bool).unwrap_or(false);
         Some(match name {
+            "recovery" => {
+                let mut state = crate::recovery::DialogState::default();
+                state.refresh(app);
+                Dialog::Recovery { state }
+            }
             "mendeley" => Dialog::Mendeley { ris: String::new(), query: String::new(), error: String::new() },
             "recipients" => Dialog::Recipients { csv: String::new(), error: String::new() },
             "font" => Dialog::Font {
@@ -303,6 +312,7 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context) {
     let mut open = true;
     let mut close = false;
     let title = match &d {
+        Dialog::Recovery { .. } => "Recover Unsaved Documents",
         Dialog::Mendeley { .. } => "Mendeley Library",
         Dialog::Recipients { .. } => "Select Recipients",
         Dialog::Font { .. } => "Font",
@@ -334,7 +344,9 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context) {
             close = body(app, ui, &mut d);
         });
     if open && !close {
-        app.dialog = Some(d);
+        if app.dialog.is_none() {
+            app.dialog = Some(d);
+        }
     } else {
         app.canvas.want_focus = true;
     }
@@ -360,6 +372,7 @@ fn buttons(ui: &mut Ui, ok: &str) -> (bool, bool) {
 /// Returns true to close.
 fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     match d {
+        Dialog::Recovery { state } => crate::recovery::show(app, ui, state),
         Dialog::Mendeley { ris, query, error } => {
             ui.label("In Mendeley: File → Export All → RIS. Paste the exported text below.");
             #[cfg(not(target_arch = "wasm32"))]

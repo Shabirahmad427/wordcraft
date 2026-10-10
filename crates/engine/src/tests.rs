@@ -1696,3 +1696,66 @@ fn custom_xml_preservation_keeps_pagination_and_page_rasters() {
         assert_eq!(a.to_straight(), b.to_straight(), "page {} differs after saving", n + 1);
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn recovery_docx_retains_original_unknown_parts_and_layout_after_restart() {
+    use crate::recovery::{Snapshot, Store, unique_id};
+    use std::io::{Cursor, Read, Write};
+    let mut doc = wordcraft_doc::Document::from_text(&(0..40).map(|n| format!("Original research paragraph {n} α β")).collect::<Vec<_>>().join("\n"));
+    doc.set_custom_prop("WordCraft.ReferenceSources", r#"[{"id":"mendeley-1","title":"Synthetic research"}]"#);
+    doc.last_section.page_w = 360.0;
+    doc.last_section.page_h = 480.0;
+    let base = wordcraft_docx::write(&doc).unwrap();
+    let mut zip = zip::ZipArchive::new(Cursor::new(base)).unwrap();
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for n in 0..zip.len() {
+        let mut entry = zip.by_index(n).unwrap();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        if entry.name() == "word/_rels/document.xml.rels" {
+            bytes = String::from_utf8(bytes).unwrap().replace("</Relationships>", "<Relationship Id='custom' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml' Target='../customXml/item1.xml'/></Relationships>").into_bytes();
+        }
+        out.start_file(entry.name(), zip::write::SimpleFileOptions::default()).unwrap();
+        out.write_all(&bytes).unwrap();
+    }
+    for (name, bytes) in [
+        ("customXml/item1.xml", b"<bibliography xmlns='urn:test'>untouched scientific sources</bibliography>".as_slice()),
+        ("word/charts/unknown.xml", b"<unknown>unsupported original drawing</unknown>".as_slice()),
+    ] {
+        out.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        out.write_all(bytes).unwrap();
+    }
+    let original = out.finish().unwrap().into_inner();
+    let dir = std::env::temp_dir().join(format!("wordcraft-recovery-fidelity-{}", unique_id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source_path = dir.join("research.docx");
+    std::fs::write(&source_path, &original).unwrap();
+    let mut before = s();
+    run(&mut before, "file.open", json!({"path": source_path}));
+    assert_eq!(*before.source_package.as_ref().unwrap().bytes, original);
+    run(&mut before, "text.insert", json!({"text": "Recovered edit: "}));
+    let store = Store::new(dir.join("recovery")).unwrap();
+    let id = store.save(&unique_id(), 1, &Snapshot::capture(&before)).unwrap();
+    let mut after = s();
+    Store::new(dir.join("recovery")).unwrap().load(&id).unwrap().restore(&mut after);
+    assert_eq!(text(&before), text(&after));
+    assert_eq!(before.doc.custom_props, after.doc.custom_props);
+    assert_eq!(before.doc.passthrough, after.doc.passthrough);
+    assert_eq!(std::fs::read(&source_path).unwrap(), original);
+    assert_eq!(*after.source_package.as_ref().unwrap().bytes, original);
+    let first = before.layout();
+    let second = after.layout();
+    assert!(first.pages.len() > 1);
+    assert_eq!(first.pages.len(), second.pages.len());
+    for (a, b) in first.pages.iter().zip(&second.pages) {
+        let options = wordcraft_render::RenderOptions::default();
+        assert_eq!(
+            wordcraft_render::render_page(&before.doc, a, 1.0, &options).to_straight(),
+            wordcraft_render::render_page(&after.doc, b, 1.0, &options).to_straight()
+        );
+    }
+    run(&mut after, "file.new", json!({}));
+    assert!(after.source_package.is_none());
+    std::fs::remove_dir_all(dir).unwrap();
+}

@@ -95,6 +95,7 @@ pub struct Entry {
     pub timestamp: String,
     pub original_path: Option<String>,
     pub has_original: bool,
+    pub original_name: Option<String>,
     pub active: bool,
     pub error: Option<String>,
 }
@@ -153,6 +154,9 @@ impl Store {
             return Err("invalid writer ID".into());
         }
         let id = format!("{writer}-{:016x}", NEXT.fetch_add(1, Ordering::Relaxed));
+        if snapshot.doc.media.len().saturating_add(snapshot.doc.passthrough.len()).saturating_add(3) > MAX_ENTRIES {
+            return Err("too many recovery attachments".into());
+        }
         let model = json_bytes(&snapshot.doc, MAX_MODEL)?;
         check_json(&model)?;
         let media: Vec<_> = snapshot
@@ -185,7 +189,10 @@ impl Store {
             id: id.clone(),
             writer: writer.into(),
             document,
-            timestamp: crate::cmd::now_iso(),
+            timestamp: {
+                let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+                format!("{}.{:09}Z", crate::cmd::iso_from_unix_secs(time.as_secs()).trim_end_matches('Z'), time.subsec_nanos())
+            },
             title: snapshot.title.clone(),
             original_path: snapshot.original_path.clone(),
             selection: snapshot.selection.clone(),
@@ -194,6 +201,16 @@ impl Store {
             opaque,
             source_name: snapshot.source.as_ref().map(|s| s.name.clone()),
         };
+        if metadata.title.len() > 4096
+            || metadata.original_path.as_ref().is_some_and(|p| p.len() > 4096)
+            || metadata.source_name.as_ref().is_some_and(|p| p.len() > 4096)
+            || metadata.bib_style.len() > 1024
+        {
+            return Err("recovery metadata text exceeds limits".into());
+        }
+        if metadata.media.iter().chain(&metadata.opaque).any(|b| b.key.len() > 4096) {
+            return Err("recovery attachment key exceeds limits".into());
+        }
         let meta = json_bytes(&metadata, MAX_META)?;
         check_json(&meta)?;
         self.publish(&id, |file| {
@@ -254,7 +271,12 @@ impl Store {
         }
         let mut names = BTreeSet::new();
         for i in 0..zip.len() {
-            if !names.insert(zip.by_index(i).map_err(io_error)?.name().to_string()) {
+            let entry = zip.by_index(i).map_err(io_error)?;
+            let name = entry.name();
+            if name.len() > 128 {
+                return Err("recovery entry name too long".into());
+            }
+            if !names.insert(name.to_string()) {
                 return Err("duplicate ZIP entry".into());
             }
         }
@@ -263,6 +285,14 @@ impl Store {
         let meta: Metadata = serde_json::from_slice(&bytes).map_err(io_error)?;
         if meta.version != 1 || meta.id != id || !valid_id(&meta.writer) || id.rsplit_once('-').map(|(w, _)| w) != Some(meta.writer.as_str()) {
             return Err("unsupported or inconsistent recovery metadata".into());
+        }
+        if meta.title.len() > 4096
+            || meta.original_path.as_ref().is_some_and(|p| p.len() > 4096)
+            || meta.source_name.as_ref().is_some_and(|p| p.len() > 4096)
+            || meta.timestamp.len() > 64
+            || meta.bib_style.len() > 1024
+        {
+            return Err("recovery metadata text exceeds limits".into());
         }
         if meta.media.len() + meta.opaque.len() + 3 > MAX_ENTRIES {
             return Err("too many recovery attachments".into());
@@ -290,6 +320,7 @@ impl Store {
                     timestamp: m.timestamp,
                     original_path: m.original_path,
                     has_original: m.source_name.is_some(),
+                    original_name: m.source_name,
                     active: self.active(&m.writer).unwrap_or(true),
                     error: None,
                 },
@@ -299,6 +330,7 @@ impl Store {
                     timestamp: String::new(),
                     original_path: None,
                     has_original: false,
+                    original_name: None,
                     active: id.rsplit_once('-').is_some_and(|(writer, _)| self.active(writer).unwrap_or(true)),
                     error: Some(error),
                 },
@@ -353,6 +385,9 @@ impl Store {
             return Err("this recovery version belongs to an active session".into());
         }
         std::fs::remove_file(self.path(id)?).map_err(io_error)?;
+        if !self.list()?.iter().any(|r| r.id.rsplit_once('-').map(|(w, _)| w) == Some(writer)) {
+            let _ = self.release_lease(writer);
+        }
         sync_dir(&self.dir)
     }
     /// The worker may prune only its own successfully committed versions. Other sessions' or
@@ -367,6 +402,9 @@ impl Store {
                 ids.push(row.id);
             }
         }
+        // Sequence numbers are fixed-width and monotonic within a writer. Retention must
+        // remain correct even if the wall clock is moved backwards.
+        ids.sort_by(|a, b| b.cmp(a));
         for id in ids.into_iter().skip(keep.max(1)) {
             std::fs::remove_file(self.path(&id)?).map_err(io_error)?;
         }
@@ -383,9 +421,20 @@ impl Store {
     pub fn export_original(&self, id: &str, target: &Path) -> Result<(), String> {
         let snapshot = self.load(id)?;
         let source = snapshot.source.ok_or("no original package in this recovery version")?;
-        // create_new refuses an existing file, including the original and symlinks.
-        let mut file = private_file(target)?;
-        file.write_all(&source.bytes).and_then(|_| file.sync_all()).map_err(io_error)
+        // Publish a fully synchronized copy without ever replacing an existing destination.
+        // A hard link in the same directory provides an atomic no-replace operation on Unix
+        // and Windows/NTFS. Unsupported filesystems return an error, leaving originals alone.
+        let parent = target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let partial = parent.join(format!(".wordcraft-original-{}.partial", unique_id()));
+        let mut file = private_file(&partial)?;
+        let result = (|| {
+            file.write_all(&source.bytes).and_then(|_| file.sync_all()).map_err(io_error)?;
+            drop(file);
+            std::fs::hard_link(&partial, target).map_err(io_error)?;
+            sync_dir(parent)
+        })();
+        let _ = std::fs::remove_file(&partial);
+        result
     }
 }
 fn private_file(path: &Path) -> Result<File, String> {
@@ -517,6 +566,12 @@ mod tests {
         session.doc.media.insert("image.png".into(), Arc::new(vec![1, 2, 3, 4]));
         session.doc.passthrough.insert("customXml/item1.xml".into(), Arc::new(b"<bibliography/>".to_vec()));
         session.doc.set_custom_prop("wordcraft.sources", "citation library");
+        session
+            .run(
+                "mendeley.import",
+                &serde_json::json!({"ris": "TY  - BOOK\nID  - recovery-source\nTI  - Recovery science\nAU  - Rivera, Alex\nPY  - 2024\nER  - \n"}),
+            )
+            .unwrap();
         session.source_package =
             Some(SourcePackage { name: "paper.docx".into(), bytes: Arc::new(b"exact source with unsupported relationships".to_vec()) });
         session.path = Some(PathBuf::from("paper.docx"));
@@ -576,12 +631,14 @@ mod tests {
         let lease = store.lease(&writer).unwrap();
         let other = store.save(&unique_id(), 1, &snapshot()).unwrap();
         let second_doc = store.save(&writer, 2, &snapshot()).unwrap();
+        let mut created = Vec::new();
         for _ in 0..20 {
-            store.save(&writer, 1, &snapshot()).unwrap();
+            created.push(store.save(&writer, 1, &snapshot()).unwrap());
         }
         store.prune_own(&writer, 1, 3).unwrap();
         let rows = store.list().unwrap();
         assert_eq!(rows.len(), 5);
+        assert!(created.iter().rev().take(3).all(|id| rows.iter().any(|r| &r.id == id)));
         assert!(rows.iter().any(|r| r.id == other));
         assert!(rows.iter().any(|r| r.id == second_doc));
         assert!(store.discard(&second_doc).is_err());
@@ -609,8 +666,18 @@ mod tests {
         let writer = unique_id();
         let _lease = store.lease(&writer).unwrap();
         store.save(&writer, 1, &snapshot()).unwrap();
-        std::fs::write(store.dir.join("killed.partial"), b"incomplete").unwrap();
-        std::process::exit(73);
+        let staging_id = format!("{writer}-deadbeef");
+        let _ = store.publish(&staging_id, |file| {
+            file.write_all(b"incomplete ZIP write").unwrap();
+            file.sync_all().unwrap();
+            if std::env::var_os("WORDCRAFT_RECOVERY_KILL_TEST").is_some() {
+                std::fs::write(store.dir.join("ready"), b"ready").unwrap();
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+            std::process::exit(73);
+        });
     }
     #[test]
     fn process_death_releases_lease_and_recovers_unsaved_document() {
@@ -625,6 +692,47 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(!rows.first().unwrap().active);
         assert!(store.load(&rows.first().unwrap().id).unwrap().doc.plain_text(wordcraft_doc::StoryRef::Body).contains("science"));
+        std::fs::remove_dir_all(store.dir).unwrap();
+    }
+    #[test]
+    fn killed_process_during_publication_retains_last_committed_snapshot() {
+        let store = store();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "recovery::tests::crash_child", "--nocapture"])
+            .env("WORDCRAFT_RECOVERY_CRASH_TEST", &store.dir)
+            .env("WORDCRAFT_RECOVERY_KILL_TEST", "1")
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !store.dir.join("ready").exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let ready = store.dir.join("ready").exists();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(ready, "child reached interrupted write");
+        let rows = store.list().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(!rows.first().unwrap().active);
+        assert!(store.load(&rows.first().unwrap().id).is_ok());
+        assert!(std::fs::read_dir(&store.dir).unwrap().any(|e| e.unwrap().path().extension().is_some_and(|e| e == "partial")));
+        std::fs::remove_dir_all(store.dir).unwrap();
+    }
+    #[test]
+    fn damaged_payload_fails_crc_without_removing_any_version() {
+        let store = store();
+        let id = store.save(&unique_id(), 1, &snapshot()).unwrap();
+        let path = store.path(&id).unwrap();
+        let mut zip = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+        let offset = zip.by_name("document.json").unwrap().data_start();
+        drop(zip);
+        let mut bytes = std::fs::read(&path).unwrap();
+        let byte = bytes.get_mut(usize::try_from(offset).unwrap()).unwrap();
+        *byte ^= 0xff;
+        std::fs::write(&path, bytes).unwrap();
+        assert!(store.load(&id).is_err());
+        assert!(path.exists());
+        store.discard(&id).unwrap();
         std::fs::remove_dir_all(store.dir).unwrap();
     }
 }
