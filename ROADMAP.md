@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (readiness table with hours per audience; full number back to the additive weighted sum, 60%; mainstream and essentials numbers added; alpha gate checked; previously major: full re-measure against Word for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (header/footer clearance and NextColumn section starts implemented and internally tested; independent Word comparison remains open) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and
 agent control. This page is the summary; the assessment is
@@ -175,8 +175,8 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 ## Phase 4B pagination reliability (2026-10-10)
 
 - Long footnotes split at line boundaries, reserve up to 40% of the page body, continue in order and emit continuation pages after body text ends.
-- Multicolumn text flows through configured columns and explicit column breaks; column balancing and `NextColumn` section starts are not implemented. Footnotes discovered in a later column can reduce the available body area without reflowing earlier columns.
-- Headers and footers render with inheritance and first/even selection, but pagination does not reserve the tallest selectable stories. Tall even headers and footers can overlap body content.
+- Multicolumn text flows through configured columns and explicit column breaks; `NextColumn` starts in the next column or advances from the final column to one new page. Column balancing remains unimplemented, and footnotes discovered in a later column can reduce the available body area without reflowing earlier columns.
+- Headers and footers render with inheritance and first/even selection. Pagination now reserves clearance for the tallest applicable story variant, which can leave extra whitespace when the selected header or footer is shorter. Independent Word comparison remains open.
 - Oversized inline objects remain whole and permit following text to progress. Existing table pagination continues to split rows where possible and places unsplittable rows/repeated headers oversized on an empty page without retry loops. This can extend beyond page bounds and is not clipped or automatically rescaled.
 - Added regression cases for long-note continuity plus Undo/recovery/DOCX reopen and oversized inline progress. Existing table regressions cover splittable and `cant_split` rows and oversized repeated headers; exploratory section tests are not wired into the crate test suite and are not counted as verified coverage.
 

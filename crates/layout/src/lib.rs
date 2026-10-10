@@ -804,6 +804,8 @@ struct PageBuilder<'a> {
     carry: Vec<NoteBox>,
     /// Page bottom before footnotes took space.
     orig_bottom: f32,
+    /// Body bottom after reserving the tallest applicable footer story.
+    clearance_bottom: f32,
     /// The previous paragraph: (style, contextual spacing, space after) for contextual spacing.
     prev: Option<(String, bool, f32)>,
     /// Wrap areas of floating objects on this page (see [`wrap_area`]).
@@ -1049,9 +1051,10 @@ impl PageBuilder<'_> {
             self.line_no = 0;
         }
         let s = self.sect;
-        self.number += 1;
+        self.number = self.number.saturating_add(1);
         let (w, h) = if self.web { (s.page_w, f32::MAX / 4.0) } else { (s.page_w, s.page_h) };
-        let body = Rect::new(s.margin_left + s.gutter, body_top, s.text_width(), (s.page_h - s.margin_bottom - body_top).max(36.0));
+        let body_bottom = if self.web { s.page_h - s.margin_bottom } else { self.clearance_bottom };
+        let body = Rect::new(s.margin_left + s.gutter, body_top, s.text_width(), (body_bottom - body_top).max(0.0));
         let mut decor = Vec::new();
         if !self.web {
             // Page borders, measured from the page edge (Word's default), so they surround the
@@ -1084,7 +1087,7 @@ impl PageBuilder<'_> {
         self.col = 0;
         self.cols = s.column_boxes();
         self.top = body_top;
-        self.bottom = if self.web { f32::MAX / 8.0 } else { s.page_h - s.margin_bottom };
+        self.bottom = if self.web { f32::MAX / 8.0 } else { body_bottom };
         self.orig_bottom = self.bottom;
         self.y = self.top;
         // Notes continued from the page before come first in this page's note area.
@@ -1185,6 +1188,7 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         notes: Vec::new(),
         carry: Vec::new(),
         orig_bottom: 0.0,
+        clearance_bottom: 0.0,
         prev: None,
         excl: Vec::new(),
         float_tables: Vec::new(),
@@ -1196,7 +1200,11 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
     for (si, (end, sect)) in sections.iter().enumerate() {
         let sect: &SectionProps = if web { sect_ref } else { sect };
         let start = if si == 0 { SectionStart::NextPage } else { sect.start };
-        if !web && si > 0 && start != SectionStart::Continuous {
+        if !web && si > 0 && start == SectionStart::NextColumn && !pb.pages.is_empty() && pb.col + 1 >= pb.cols.len() {
+            // Close the outgoing page while its section still owns alignment and note geometry.
+            pb.finish_page();
+        }
+        if !web && si > 0 && matches!(start, SectionStart::NextPage | SectionStart::EvenPage | SectionStart::OddPage) {
             // Finish the outgoing section while its margins, note area and vertical alignment
             // still describe the page being closed.
             pb.finish_page();
@@ -1210,19 +1218,50 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         }
         pb.sect = sect;
         pb.sect_idx = si;
-        let body_top = if web { sect.margin_top } else { body_top_for(&mut ctx, sect, sect.headers.default) };
-        let first_top = if web || !sect.title_page { body_top } else { body_top_for(&mut ctx, sect, sect.headers.first) };
+        let even_odd = ctx.doc.settings.even_odd_headers;
+        let body_top = if web { sect.margin_top } else { body_top_for(&mut ctx, sect, si, &sections, false, even_odd) };
+        let first_top = if web || !sect.title_page { body_top } else { body_top_for(&mut ctx, sect, si, &sections, true, even_odd) };
+        pb.clearance_bottom = if web { sect.page_h - sect.margin_bottom } else { body_bottom_for(&mut ctx, sect, si, &sections, even_odd) };
         let restart = sect.page_num_start;
         if sect.line_numbers.as_ref().is_some_and(|l| l.restart == wordcraft_doc::section::LineNumberRestart::Section) {
             pb.line_no = 0;
         }
         if web && si > 0 {
             // one long page
-        } else if pb.pages.is_empty() || start != SectionStart::Continuous {
+        } else if pb.pages.is_empty() || matches!(start, SectionStart::NextPage | SectionStart::EvenPage | SectionStart::OddPage) {
             if let Some(n) = restart {
                 pb.number = n.saturating_sub(1);
             }
             pb.new_page(block, first_top);
+        } else if start == SectionStart::NextColumn {
+            // Continue at the next column using the incoming section's column geometry. At the
+            // end of the outgoing section's columns, `advance` creates the next physical page.
+            let creates_page = pb.pages.is_empty() || pb.col + 1 >= pb.cols.len();
+            let next_col = if pb.pages.is_empty() {
+                0
+            } else if pb.col + 1 < pb.cols.len() {
+                pb.col + 1
+            } else {
+                0
+            };
+            if creates_page && let Some(n) = restart {
+                pb.number = n.saturating_sub(1);
+            }
+            if !pb.pages.is_empty() {
+                pb.advance(block, body_top);
+            }
+            pb.cols = sect.column_boxes();
+            pb.col = next_col.min(pb.cols.len().saturating_sub(1));
+            if let Some(page) = pb.pages.last_mut() {
+                page.section = si;
+                page.w = sect.page_w;
+                page.h = sect.page_h;
+                page.body = Rect::new(sect.margin_left + sect.gutter, body_top, sect.text_width(), (pb.clearance_bottom - body_top).max(0.0));
+            }
+            pb.top = body_top;
+            pb.bottom = pb.clearance_bottom;
+            pb.orig_bottom = pb.bottom;
+            pb.y = pb.top;
         } else {
             // Continuous: new column layout below the current text.
             pb.cols = sect.column_boxes();
@@ -1354,15 +1393,50 @@ fn item_bottom(y: f32, para: &ParaLayout, l0: usize, l1: usize) -> Option<f32> {
 }
 
 /// Where body text starts: the top margin, or below the header if it's taller.
-fn body_top_for(ctx: &mut Ctx, sect: &SectionProps, header: Option<u32>) -> f32 {
-    let Some(id) = header else { return sect.margin_top };
-    let Some(part) = ctx.doc.parts.get(&id) else { return sect.margin_top };
+fn linked_story_ids(sections: &[(usize, &SectionProps)], section: usize, headers: bool) -> wordcraft_doc::section::HeaderSet {
+    let get = |s: &SectionProps| if headers { s.headers } else { s.footers };
+    let Some((_, current)) = sections.get(section) else { return Default::default() };
+    let mut set = get(current);
+    for k in (0..section).rev() {
+        if set.default.is_some() && set.first.is_some() && set.even.is_some() {
+            break;
+        }
+        if let Some((_, previous)) = sections.get(k) {
+            let old = get(previous);
+            set.default = set.default.or(old.default);
+            set.first = set.first.or(old.first);
+            set.even = set.even.or(old.even);
+        }
+    }
+    set
+}
+
+fn story_height(ctx: &mut Ctx, sect: &SectionProps, id: Option<u32>, y: f32) -> f32 {
+    let Some(id) = id else { return 0.0 };
+    let Some(part) = ctx.doc.parts.get(&id) else { return 0.0 };
     let blocks = part.blocks.clone();
-    // Placed as `headers_footers` draws it, so page-relative floats wrap the same way.
-    let frame = PageFrame { sect, origin: (sect.margin_left + sect.gutter, sect.header) };
-    let h = layout_box(ctx, StoryRef::Part(id), &blocks, &[], sect.text_width(), None, 0, Some(frame)).height;
-    // Word starts the body right below a header that reaches past the top margin, no gap.
+    let frame = PageFrame { sect, origin: (sect.margin_left + sect.gutter, y) };
+    layout_box(ctx, StoryRef::Part(id), &blocks, &[], sect.text_width(), None, 0, Some(frame)).height
+}
+
+/// Reserve the tallest header variant, including variants inherited through link-to-previous.
+fn body_top_for(ctx: &mut Ctx, sect: &SectionProps, section: usize, sections: &[(usize, &SectionProps)], first_page: bool, even_odd: bool) -> f32 {
+    let ids = linked_story_ids(sections, section, true);
+    let h = [ids.default, ids.even.filter(|_| even_odd), ids.first.filter(|_| first_page && sect.title_page)]
+        .into_iter()
+        .map(|id| story_height(ctx, sect, id, sect.header))
+        .fold(0.0, f32::max);
     sect.margin_top.max(sect.header + h)
+}
+
+/// Reserve the tallest footer variant above the page's bottom margin.
+fn body_bottom_for(ctx: &mut Ctx, sect: &SectionProps, section: usize, sections: &[(usize, &SectionProps)], even_odd: bool) -> f32 {
+    let ids = linked_story_ids(sections, section, false);
+    let h = [ids.default, ids.first.filter(|_| sect.title_page), ids.even.filter(|_| even_odd)]
+        .into_iter()
+        .map(|id| story_height(ctx, sect, id, sect.page_h - sect.footer))
+        .fold(0.0, f32::max);
+    (sect.page_h - sect.margin_bottom).min(sect.page_h - sect.footer - h)
 }
 
 /// Where a box of laid-out items sits on its page, for floating objects positioned relative to

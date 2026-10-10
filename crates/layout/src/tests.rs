@@ -714,6 +714,97 @@ fn tall_first_page_header_pushes_body_down() {
 }
 
 #[test]
+fn body_stays_between_tall_header_variants_and_footer_variants() {
+    let mut d = Document::from_text(&"Body text for clearance.\n".repeat(180));
+    d.settings.even_odd_headers = true;
+    d.last_section.title_page = true;
+    let story = |text: &str, count: usize| {
+        (0..count).map(|_| wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text(text, Default::default()))).collect()
+    };
+    let default_header = d.add_part(wordcraft_doc::PartKind::Header, story("Default running header", 4));
+    let first_header = d.add_part(wordcraft_doc::PartKind::Header, story("First page header", 8));
+    let even_header = d.add_part(wordcraft_doc::PartKind::Header, story("Even page header", 12));
+    let default_footer = d.add_part(wordcraft_doc::PartKind::Footer, story("Default footer", 4));
+    let first_footer = d.add_part(wordcraft_doc::PartKind::Footer, story("First page footer", 8));
+    let even_footer = d.add_part(wordcraft_doc::PartKind::Footer, story("Even page footer", 12));
+    d.last_section.headers = wordcraft_doc::section::HeaderSet { default: Some(default_header), first: Some(first_header), even: Some(even_header) };
+    d.last_section.footers = wordcraft_doc::section::HeaderSet { default: Some(default_footer), first: Some(first_footer), even: Some(even_footer) };
+    let l = lay(&d);
+    assert!(l.pages.len() > 2);
+    for (pi, page) in l.pages.iter().enumerate() {
+        let body_lines: Vec<_> = page
+            .items
+            .iter()
+            .filter_map(|it| {
+                if let Placed::Lines { story: StoryRef::Body, para, l0, l1, y, .. } = it {
+                    Some((*y, item_bottom(*y, para, *l0, *l1).unwrap_or(*y)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let header_bottom = page.header.iter().map(v_span).map(|(_, bottom)| bottom).fold(0.0, f32::max);
+        assert!(
+            body_lines.iter().all(|(top, bottom)| *top >= page.body.y - 0.5 && *bottom <= page.body.bottom() + 0.5),
+            "body escaped clearance on page {pi}: {:?}, body {:?}",
+            body_lines,
+            page.body
+        );
+        assert!(body_lines.iter().all(|(top, _)| *top >= header_bottom - 0.5), "body overlaps header on page {pi}");
+        let footer_top = page.footer.iter().map(v_span).map(|(top, _)| top).fold(f32::MAX, f32::min);
+        assert!(body_lines.iter().all(|(_, bottom)| *bottom <= footer_top + 0.5), "body overlaps footer on page {pi}");
+        if pi == 0 {
+            assert_eq!(page.header_story, Some(first_header));
+            assert_eq!(page.footer_story, Some(first_footer));
+        } else if page.number % 2 == 0 {
+            assert_eq!(page.header_story, Some(even_header));
+            assert_eq!(page.footer_story, Some(even_footer));
+        }
+    }
+}
+
+#[test]
+fn next_column_section_starts_in_the_following_column_and_keeps_page_number() {
+    use wordcraft_doc::section::{SectionProps, SectionStart};
+    let mut d = Document::from_text("First section\nSecond section");
+    let mut old = SectionProps::default();
+    old.columns.count = 2;
+    d.para_mut(StoryRef::Body, &Path::top(0)).unwrap().section = Some(Box::new(old));
+    d.last_section.columns.count = 2;
+    d.last_section.start = SectionStart::NextColumn;
+    d.last_section.page_num_start = Some(7);
+    let l = lay(&d);
+    let first = l.caret(&Pos::body(0, 0)).unwrap();
+    let second = l.caret(&Pos::body(1, 0)).unwrap();
+    assert_eq!(first.page, second.page, "NextColumn must not create a page when another column remains");
+    assert!(second.x > first.x + 100.0, "second section should start in the next column: {first:?} -> {second:?}");
+    assert_eq!(l.pages[second.page].number, 1, "a same-page section break must not restart the page number");
+}
+
+#[test]
+fn next_column_at_the_final_column_boundary_advances_once_and_applies_number_restart() {
+    use wordcraft_doc::section::{SectionProps, SectionStart};
+    let mut d = Document::from_text("Preceding section\nFollowing section");
+    d.insert_text(&Pos::body(0, "Preceding section".len()), &wordcraft_doc::para::COLUMN_BREAK.to_string(), &Default::default()).unwrap();
+    let mut old = SectionProps::default();
+    old.columns.count = 2;
+    d.para_mut(StoryRef::Body, &Path::top(0)).unwrap().section = Some(Box::new(old));
+    d.last_section.columns.count = 2;
+    d.last_section.start = SectionStart::NextColumn;
+    d.last_section.page_num_start = Some(9);
+    let l = lay(&d);
+    let prior = l.caret(&Pos::body(0, d.para(StoryRef::Body, &Path::top(0)).unwrap().text.len())).unwrap();
+    let next = l.caret(&Pos::body(1, 0)).unwrap();
+    assert_eq!(
+        next.page,
+        prior.page + 1,
+        "a break after the final column must continue on the next page without inserting an extra blank page: prior={prior:?}, next={next:?}, pages={}",
+        l.pages.len()
+    );
+    assert_eq!(l.pages[next.page].number, 9, "a physical page created for the new section must apply its page-number restart");
+}
+
+#[test]
 fn cache_reuses_unchanged_paragraphs() {
     let d = Document::from_text(&"some text here\n".repeat(50));
     let mut c = LayoutCache::new();

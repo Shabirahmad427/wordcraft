@@ -115,6 +115,9 @@ fn academic_sections_roundtrip_undo_and_recovery_keep_pagination_and_pixels() {
     store.load(&id).unwrap().restore(&mut restored);
     let output = directory.join("academic.docx");
     restored.run("file.save", &json!({"path":output})).unwrap();
+    let pdf = directory.join("academic.pdf");
+    restored.run("file.exportPdf", &json!({"path":pdf})).unwrap();
+    assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
     let mut reopened = Session::new(Document::new());
     reopened.run("file.open", &json!({"path":output})).unwrap();
     let after = reopened.layout();
@@ -175,6 +178,112 @@ fn preceding_section_raster_matches_its_standalone_page() {
             == wordcraft_render::render_page(&standalone.doc, &b.pages[0], 1.0, &options).to_straight(),
         "the following section changed the previous page's pixels"
     );
+}
+
+#[test]
+fn next_column_with_inherited_page_furniture_survives_undo_recovery_docx_and_pdf() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-next-column-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut doc = Document::from_text("Introduction\nMethods and evidence\nConclusion");
+    let header = doc.add_part(
+        PartKind::Header,
+        (0..8).map(|_| wordcraft_engine::doc::para_block(Paragraph::with_text("Inherited running header", Default::default()))).collect(),
+    );
+    let footer = doc.add_part(
+        PartKind::Footer,
+        (0..8).map(|_| wordcraft_engine::doc::para_block(Paragraph::with_text("Inherited footer", Default::default()))).collect(),
+    );
+    let mut first = SectionProps::default();
+    first.columns.count = 2;
+    first.headers.default = Some(header);
+    first.footers.default = Some(footer);
+    doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap().section = Some(Box::new(first));
+    doc.last_section.start = SectionStart::NextColumn;
+    doc.last_section.columns.count = 2;
+    let note = doc.add_part(
+        PartKind::Footnote,
+        vec![wordcraft_engine::doc::para_block(Paragraph::with_text("A supporting academic note.", Default::default()))],
+    );
+    doc.insert_object(&Pos::body(1, 6), InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() }, &Default::default())
+        .unwrap();
+    let mut table = Table::new(4, 2, doc.last_section.text_width());
+    for (row, cells) in table.rows.iter_mut().enumerate() {
+        for (column, cell) in cells.cells.iter_mut().enumerate() {
+            cell.blocks = vec![wordcraft_engine::doc::para_block(Paragraph::with_text(
+                &format!("Result {row}/{column}: measured value and interpretation."),
+                Default::default(),
+            ))];
+        }
+    }
+    doc.body.push(std::sync::Arc::new(wordcraft_engine::doc::Block::Table(table)));
+    let mut session = Session::new(doc);
+    let original = session.doc.clone();
+    session.run("text.insert", &json!({"text":"temporary "})).unwrap();
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(session.doc, original);
+    let before = session.layout();
+    let a = before.caret(&Pos::body(0, 0)).unwrap();
+    let b = before.caret(&Pos::body(1, 0)).unwrap();
+    assert_eq!(a.page, b.page);
+    assert!(b.x > a.x + 100.0);
+    let page = &before.pages[b.page];
+    assert_eq!(page.header_story, Some(header));
+    assert_eq!(page.footer_story, Some(footer));
+    let header_bottom = page
+        .header
+        .iter()
+        .filter_map(|it| {
+            if let Placed::Lines { para, l1, y, .. } = it {
+                para.lines.get(l1.saturating_sub(1)).map(|line| *y + line.top + line.height)
+            } else {
+                None
+            }
+        })
+        .fold(0.0, f32::max);
+    assert!(page.body.y >= header_bottom - 0.5);
+    let footer_top = page
+        .footer
+        .iter()
+        .filter_map(|it| if let Placed::Lines { y, para, l0, .. } = it { para.lines.get(*l0).map(|line| *y + line.top) } else { None })
+        .fold(f32::MAX, f32::min);
+    assert!(page.body.bottom() <= footer_top + 0.5);
+    let expected_pixels: Vec<_> = before
+        .pages
+        .iter()
+        .map(|page| wordcraft_render::render_page(&session.doc, page, 1.0, &wordcraft_render::RenderOptions::default()).to_straight())
+        .collect();
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let id = store.save(&unique_id(), session.document_id(), &Snapshot::capture(&session)).unwrap();
+    let mut recovered = Session::new(Document::new());
+    store.load(&id).unwrap().restore(&mut recovered);
+    assert_eq!(recovered.doc.plain_text(StoryRef::Body).trim_end(), original.plain_text(StoryRef::Body).trim_end());
+    assert_eq!(recovered.doc.parts.len(), original.parts.len());
+    let before = recovered.layout();
+    for (index, (page, expected)) in before.pages.iter().zip(&expected_pixels).enumerate() {
+        assert!(
+            wordcraft_render::render_page(&recovered.doc, page, 1.0, &wordcraft_render::RenderOptions::default()).to_straight() == *expected,
+            "recovery changed page {index} pixels"
+        );
+    }
+    let docx = directory.join("sections.docx");
+    recovered.run("file.save", &json!({"path":docx})).unwrap();
+    let pdf = directory.join("sections.pdf");
+    recovered.run("file.exportPdf", &json!({"path":pdf})).unwrap();
+    assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path":docx})).unwrap();
+    let after = reopened.layout();
+    assert_eq!(before.pages.len(), after.pages.len());
+    for (index, (a, b)) in before.pages.iter().zip(&after.pages).enumerate() {
+        assert_eq!((a.w, a.h, a.number, a.section), (b.w, b.h, b.number, b.section));
+        let original_pos = before.caret(&Pos::body(1, 0)).unwrap();
+        let reopened_pos = after.caret(&Pos::body(1, 0)).unwrap();
+        assert_eq!(original_pos.page, reopened_pos.page, "section flow changed after DOCX reopen on page {index}");
+        assert!((original_pos.x - reopened_pos.x).abs() < 1.0, "column position changed after DOCX reopen: {original_pos:?} -> {reopened_pos:?}");
+        let rendered = wordcraft_render::render_page(&reopened.doc, b, 1.0, &wordcraft_render::RenderOptions::default());
+        assert_eq!((rendered.width, rendered.height), (b.w.ceil() as u32, b.h.ceil() as u32));
+    }
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
