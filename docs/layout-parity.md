@@ -1,6 +1,6 @@
 # Layout and pagination parity with Microsoft Word
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (cross-column footnote reservation and equivalent DOCX marker rendering regression verified internally; no Word reference comparison) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (safe final-page balancing for complete paragraphs; complex layouts report stable-flow fallback; no Word reference comparison) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 A document only "opens correctly" if its pages break where Word breaks them: the same lines, the
 same page count, footnotes and pictures on the same pages. This checklist covers line breaking,
@@ -28,7 +28,7 @@ font can't match Word's metrics.
 | Tabs (left, center, right, decimal, bar), leaders | 🟡 | Bar tabs untested | 1–2 |
 | Hyphenation (automatic, 0.25" zone, soft hyphens, consecutive limit) | 🟡 | English patterns only; other languages hyphenate wrongly or not at all | in localization |
 | Drop caps | ✅ | 2026-10-06 | — |
-| Columns, column breaks, separators | 🟡 | Basic column flow and separators work; `NextColumn` advances within the current column sequence and rolls over at its final column (internal layout tests); columns do not balance at a continuous section break or document end; Word comparison outstanding | 4–6 |
+| Columns, column breaks, separators | 🟡 | Basic flow, configurable equal/unequal widths and `NextColumn` are supported. At continuous section/document endings, complete text paragraphs balance across 2+ columns if every shaped line fits its destination. Notes, tables, objects, partial paragraphs, width rebreaking and multi-page balancing report a safe fallback. Undo/recovery/DOCX/raster/PDF coverage is internal only; Word comparison outstanding | 4–6 |
 | Section breaks (next page, next column, continuous, even, odd), different first page, odd/even headers | 🟡 | Internal tests cover column movement, rollover and page-number restart; complex geometry changes on one physical page and Word reference comparison remain outstanding | 1–2 |
 | Body clearance below headers and above footers | 🟡 | Tall default/inherited, first-page and enabled even-page stories reserve body clearance; reservation uses the tallest possible variant and can leave extra whitespace; Word comparison outstanding | 2–4 |
 | Footnotes at the page bottom, endnotes at the end, note numbering | 🟡 | Footnotes continue at line boundaries and later-column anchors reserve space page-wide; document-end endnotes now continue in order across columns/pages with a continuation rule and body/footer clearance. Undo/redo, recovery, DOCX reopen/raster equality and PDF export are tested. Number formats are modeled; continuous numbering is the only active endnote restart behavior. Endnote position/restart properties, section-end placement, custom continuation separator/notice and section-specific overrides are not modeled. No Microsoft Word reference comparison | 4–6 |
@@ -71,6 +71,7 @@ font can't match Word's metrics.
 | 2026-10-10 | minor | Tall default/inherited/first/even header and footer stories reserve body clearance; NextColumn starts in the following column and rolls over at the final column. Internal tests added; Word comparison outstanding |
 | 2026-10-10 | minor | Multicolumn footnotes reserve note space across the page and reflow earlier columns; equivalent source/DOCX note-marker raster equality and text coverage tested; Word comparison outstanding |
 | 2026-10-10 | minor | Document-end endnotes continue across columns/pages at line boundaries; Undo/redo, recovery, DOCX reopen/raster and PDF regressions added; placement/restart settings remain unmodeled |
+| 2026-10-10 | minor | Complete paragraphs balance on safe final pages across equal/unequal columns; complex pages retain stable flow and report skipped balancing |
 | 2026-10-10 | trivial | Long footnotes continue onto the next page with a continuation separator (#352) |
 | 2026-10-10 | trivial | Layout reports vertical body overflow pages and the UI keeps a warning visible; horizontal overflow and text-box clipping remain undetected |
 | 2026-10-10 | trivial | Rotated and flipped objects laid out and drawn (#332) |

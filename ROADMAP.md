@@ -101,7 +101,7 @@ the two partial ones (real-world .docx, printing) complete, roughly.
 | M1 | DOCX I/O | **done** (first version; corpus testing next) |
 | M2 | Home tab complete | **done** |
 | M3 | Insert tab | mostly done (chart/SmartArt rendering is partial; icons/3D missing) |
-| M4 | Layout + Design tabs | **done** except column balancing |
+| M4 | Layout + Design tabs | **done**; safe text-only column balancing added, complex-content fallback still open |
 | M5 | Tables | **done** (row splitting landed) |
 | M6 | References | first version done; long footnote continuation landed |
 | M7 | Review | **done** (margin balloons landed) |
@@ -131,7 +131,7 @@ the two partial ones (real-world .docx, printing) complete, roughly.
 - Comment balloons in a markup area beside each page, with leader lines to their anchors.
 
 ## Next
-See [production audit](docs/production-audit.md): protect DOCX data and add durable crash recovery, then footnote continuation, column balancing, native printing and drawing depth. No independent Word 365 parity certification is available.
+See [production audit](docs/production-audit.md): protect DOCX data and add durable crash recovery, then complex-content column balancing, native printing and drawing depth. No independent Word 365 parity certification is available.
 
 - M14: Native file dialogs run asynchronously; delayed responses are cancelled after document replacement (#94, PR #246 plus regression guard).
 
@@ -197,3 +197,9 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 - Document-end endnotes now flow across columns/pages after the body. Paragraphs split at line boundaries, retain their existing number/reference and order, and continue with a separator while respecting available body space above footer and footnote areas. Indivisible objects remain intact; an oversized item may overflow an otherwise empty column/page so pagination progresses without data loss.
 - Added focused layout and engine regressions for multi-page line coverage/order, body clearance, Undo/redo, recovery restore, DOCX save/reopen raster equality and PDF export. `w:numFmt` remains global and continuous numbering follows reference order; the document model has no start/restart or endnote-position properties, so section-end placement and continuous/section/page restart selection are not implemented. Custom separator markup remains unmodeled.
 - Internal Linux verification only. No Microsoft Word-produced reference output was available or used. Footnote tables/objects, custom continuation separator fidelity, section-end endnotes, configurable restart numbering, mixed-geometry note transitions and column balancing remain open; Word 365 pagination parity is not claimed.
+
+## Phase 4C.4 — safe multicolumn balancing (2026-10-10)
+
+- At continuous section endings and document end, balance a final page when its body consists of complete top-level paragraphs only. Two/three columns, equal and unequal widths, section spacing, header/footer body geometry and paragraph keep/widow constraints are respected. Paragraph groups are assigned in reading order, and every existing shaped line is checked against its destination width before the page changes.
+- Pages containing notes, tables, floats/objects, partial paragraphs, page-dependent fields, explicit breaks, mixed-section content or insufficient destination width keep their stable original flow. `DocLayout::column_balance_skipped` exposes these pages and the status bar reports the fallback. Notes continue to use their existing page-wide reservations and endnote flow.
+- Added regressions for 2/3 columns, unequal widths, continuous single-column transitions, note/table/shape fallback, and balanced save/reopen with Undo/redo, recovery, exact raster comparison and PDF export. Complex paragraphs that would need width-specific rebreaking and multi-page section balancing remain unsupported. No Microsoft Word reference output was available; this is not Word pagination parity.

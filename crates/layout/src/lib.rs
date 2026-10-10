@@ -272,6 +272,9 @@ pub struct DocLayout {
     /// indivisible objects and table rows are kept intact for progress, but callers can surface
     /// this diagnostic rather than silently presenting the layout as ordinary.
     pub overflow_pages: Vec<usize>,
+    /// Zero-based pages where column balancing was requested at a section/document end but
+    /// skipped because the page contained content that cannot yet be safely redistributed.
+    pub column_balance_skipped: Vec<usize>,
     /// Index: (story, paragraph path) → (page, item index) of each placed piece, in order.
     pub index: HashMap<(StoryRef, Path), Vec<(usize, usize)>>,
     /// Layout time, milliseconds.
@@ -1224,6 +1227,148 @@ fn append_note_fragment(pb: &mut PageBuilder<'_>, note: NoteBox) {
     pb.y += note.h;
 }
 
+/// Reflow a simple final column page into a more even sequence of complete paragraphs. Complex
+/// content deliberately keeps the existing pagination path: moving table rows, anchored objects,
+/// note anchors or partial paragraphs needs a full source-level repagination pass.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BalanceOutcome {
+    Balanced,
+    NotNeeded,
+    Skipped,
+}
+
+fn balance_final_columns(pb: &mut PageBuilder<'_>, doc: &Document, start_block: usize, end_block: usize) -> BalanceOutcome {
+    if pb.cols.len() < 2 {
+        return BalanceOutcome::NotNeeded;
+    }
+    if !pb.notes.is_empty() || !pb.carry.is_empty() || pb.reserved_note_h > 0.01 {
+        return BalanceOutcome::Skipped;
+    }
+    let Some(page) = pb.pages.last_mut() else { return BalanceOutcome::NotNeeded };
+    let mut paragraphs: Vec<(usize, Placed, f32)> = Vec::new();
+    let mut seen = HashSet::new();
+    let separator_x: Vec<f32> = pb
+        .cols
+        .windows(2)
+        .filter_map(|pair| match pair {
+            [(left, width), (right, _)] => Some(pb.sect.margin_left + pb.sect.gutter + (left + width + right) / 2.0),
+            _ => None,
+        })
+        .collect();
+    for (index, item) in page.items.iter().enumerate() {
+        match item {
+            Placed::Lines { story: StoryRef::Body, path, para, l0, l1, .. } => {
+                let Some(block) = path.0.first().map(|value| *value as usize) else { return BalanceOutcome::Skipped };
+                if path.0.len() != 1
+                    || block < start_block
+                    || block > end_block
+                    || *l0 != 0
+                    || *l1 != para.lines.len()
+                    || !seen.insert(path.clone())
+                    || para.rp.keep_next
+                    || para.rp.contextual_spacing
+                    || para.rp.page_break_before
+                    || para.has_page_fields
+                    || !para.notes.is_empty()
+                    || para.label.is_some()
+                    || para.drop_cap.is_some()
+                    || para.lines.iter().any(|line| matches!(line.end, LineEnd::ColumnBreak | LineEnd::PageBreak))
+                {
+                    return BalanceOutcome::Skipped;
+                }
+                let Some(model) = doc.para(StoryRef::Body, path) else { return BalanceOutcome::Skipped };
+                if !model.objects.is_empty() {
+                    return BalanceOutcome::Skipped;
+                }
+                let height = para.rp.space_before + para.height + para.rp.space_after;
+                if !height.is_finite() || height < 0.0 {
+                    return BalanceOutcome::Skipped;
+                }
+                paragraphs.push((index, item.clone(), height));
+            }
+            Placed::Rule { x0, x1, .. } if (*x0 - *x1).abs() < 0.01 && separator_x.iter().any(|x| (*x - *x0).abs() < 0.5) => {}
+            _ => return BalanceOutcome::Skipped,
+        }
+    }
+    if paragraphs.len() < pb.cols.len() {
+        return BalanceOutcome::NotNeeded;
+    }
+
+    // All lines are kept intact, but an unequal-width destination must still accommodate every
+    // already-shaped line. Otherwise source-level rebreaking is required and this page falls back.
+    for (_, item, _) in &paragraphs {
+        let Placed::Lines { para, .. } = item else { return BalanceOutcome::Skipped };
+        let min_x = para.lines.iter().flat_map(|line| line.xs.iter().copied()).fold(f32::MAX, f32::min);
+        let max_x = para.lines.iter().flat_map(|line| line.xs.iter().copied()).fold(f32::MIN, f32::max);
+        if min_x < -0.5 || max_x > pb.cols.iter().map(|(_, width)| *width).fold(0.0f32, f32::max) + 0.5 {
+            return BalanceOutcome::Skipped;
+        }
+    }
+
+    let total: f32 = paragraphs.iter().map(|(_, _, height)| *height).sum();
+    let mut assignment = vec![0usize; paragraphs.len()];
+    let (mut unit, mut remaining_height) = (0usize, total);
+    for col in 0..pb.cols.len() {
+        let columns_left = pb.cols.len() - col;
+        let units_left = paragraphs.len() - unit;
+        if units_left < columns_left {
+            return BalanceOutcome::Skipped;
+        }
+        let target = remaining_height / columns_left as f32;
+        let first = unit;
+        let mut used = 0.0;
+        while unit < paragraphs.len() - (columns_left - 1) {
+            let height = paragraphs.get(unit).map(|entry| entry.2).unwrap_or(0.0);
+            if unit > first && used + height > target && (used - target).abs() <= (used + height - target).abs() {
+                break;
+            }
+            assignment[unit] = col;
+            used += height;
+            unit += 1;
+            if used >= target && col + 1 < pb.cols.len() {
+                break;
+            }
+        }
+        remaining_height = (remaining_height - used).max(0.0);
+    }
+    if unit != paragraphs.len() {
+        return BalanceOutcome::Skipped;
+    }
+
+    let mut cursors = vec![pb.top; pb.cols.len()];
+    let mut moved = Vec::with_capacity(paragraphs.len());
+    for (unit, (_, original, _)) in paragraphs.iter().enumerate() {
+        let mut item = original.clone();
+        let Some(&col) = assignment.get(unit) else { return BalanceOutcome::Skipped };
+        let Some((offset, width)) = pb.cols.get(col) else { return BalanceOutcome::Skipped };
+        let Placed::Lines { para, x, y, .. } = &mut item else { return BalanceOutcome::Skipped };
+        let min_x = para.lines.iter().flat_map(|line| line.xs.iter().copied()).fold(f32::MAX, f32::min);
+        let max_x = para.lines.iter().flat_map(|line| line.xs.iter().copied()).fold(f32::MIN, f32::max);
+        if min_x < -0.5 || max_x > *width + 0.5 {
+            return BalanceOutcome::Skipped;
+        }
+        let before = para.rp.space_before;
+        let placement_y = cursors[col] + before;
+        let placement_x = pb.sect.margin_left + pb.sect.gutter + offset;
+        let bottom = placement_y + para.height;
+        if !bottom.is_finite() || bottom > pb.bottom + 0.5 {
+            return BalanceOutcome::Skipped;
+        }
+        *x = placement_x;
+        *y = placement_y;
+        cursors[col] = bottom + para.rp.space_after;
+        moved.push(item);
+    }
+
+    let ids: HashSet<usize> = paragraphs.iter().map(|(index, _, _)| *index).collect();
+    page.items = page.items.drain(..).enumerate().filter_map(|(i, item)| (!ids.contains(&i)).then_some(item)).collect();
+    page.items.extend(moved);
+    pb.col = cursors.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(i, _)| i).unwrap_or(0);
+    pb.y = cursors.get(pb.col).copied().unwrap_or(pb.top);
+    pb.prev = None;
+    BalanceOutcome::Balanced
+}
+
 /// Lay out the whole document.
 pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> DocLayout {
     let t0 = now_ms();
@@ -1369,6 +1514,7 @@ fn layout_pass(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions, re
         page_finished: true,
     };
     let mut block = 0usize;
+    let mut column_balance_skipped = Vec::new();
     for (si, (end, sect)) in sections.iter().enumerate() {
         let sect: &SectionProps = if web { sect_ref } else { sect };
         let start = if si == 0 { SectionStart::NextPage } else { sect.start };
@@ -1443,6 +1589,7 @@ fn layout_pass(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions, re
             pb.top = pb.y;
         }
         let last = (*end).min(doc.body.len().saturating_sub(1));
+        let section_first_block = block;
         while block <= last {
             let Some(b) = doc.body.get(block) else { break };
             match &**b {
@@ -1450,6 +1597,15 @@ fn layout_pass(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions, re
                 Block::Table(t) => place_table(&mut ctx, &mut pb, t, block, body_top),
             }
             block += 1;
+        }
+        let ends_at_column_balance =
+            !web && sect.columns.count > 1 && sections.get(si + 1).is_none_or(|(_, next)| next.start == SectionStart::Continuous);
+        if ends_at_column_balance && balance_final_columns(&mut pb, doc, section_first_block, last) == BalanceOutcome::Skipped && !pb.pages.is_empty()
+        {
+            let page = pb.pages.len() - 1;
+            if !column_balance_skipped.contains(&page) {
+                column_balance_skipped.push(page);
+            }
         }
     }
     if pb.pages.is_empty() {
@@ -1532,7 +1688,7 @@ fn layout_pass(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions, re
         })
         .collect();
     let note_heights = pb.page_note_heights.clone();
-    (DocLayout { pages, overflow_pages, index, ms: now_ms() - t0, text_boxes: ctx.boxes.total() }, note_heights)
+    (DocLayout { pages, overflow_pages, column_balance_skipped, index, ms: now_ms() - t0, text_boxes: ctx.boxes.total() }, note_heights)
 }
 
 fn item_bottom(y: f32, para: &ParaLayout, l0: usize, l1: usize) -> Option<f32> {

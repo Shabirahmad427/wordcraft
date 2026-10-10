@@ -245,6 +245,13 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                     st(ui, tl!("Page overflow"))
                         .on_hover_text(crate::i18n::fmt(tl!("Content exceeds page area on {count} page(s)."), &[("count", &count)]));
                 }
+                if !l.column_balance_skipped.is_empty() {
+                    let count = l.column_balance_skipped.len().to_string();
+                    st(ui, tl!("Column balance skipped")).on_hover_text(crate::i18n::fmt(
+                        tl!("Complex content kept the existing column flow on {count} page(s)."),
+                        &[("count", &count)],
+                    ));
+                }
                 if let Some((msg, at)) = &app.status_msg
                     && crate::now_ms() - at < 6000.0
                 {

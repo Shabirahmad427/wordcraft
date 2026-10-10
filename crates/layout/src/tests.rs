@@ -1,6 +1,7 @@
 use super::*;
 use wordcraft_doc::para::InlineObject;
 use wordcraft_doc::props::{Align, Border, BorderStyle, Borders, HeightRule, ParaProps, TextDirection};
+use wordcraft_doc::section::Columns;
 use wordcraft_doc::{Block, Pos, Table};
 
 fn lay(doc: &Document) -> DocLayout {
@@ -1314,6 +1315,135 @@ fn long_endnote_continues_in_order_across_pages_without_body_overlap() {
         d.parts.get(&note).map(|part| part.blocks.iter().filter_map(|b| b.as_para()).map(|p| p.text.as_str()).collect::<String>()),
         Some(text)
     );
+}
+
+fn text_only_columns(count: u32, widths: Vec<(f32, f32)>) -> Document {
+    let mut doc = Document::new();
+    doc.body =
+        (0..18).map(|i| wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text(&format!("P{i}: words flow."), Default::default()))).collect();
+    doc.last_section.columns = Columns { count, space: 24.0, separator: false, widths };
+    doc
+}
+
+fn assert_balanced_columns(doc: &Document, count: usize) {
+    let layout = lay(doc);
+    assert!(layout.column_balance_skipped.is_empty(), "simple text pages should balance safely: {:?}", layout.column_balance_skipped);
+    assert_eq!(layout.pages.len(), 1, "simple cases must not introduce blank/overflow pages");
+    let page = layout.pages.first().expect("balanced page");
+    let mut bottoms = std::collections::BTreeMap::<i32, f32>::new();
+    let mut seen = Vec::new();
+    for item in &page.items {
+        if let Placed::Lines { story: StoryRef::Body, path, para, l0, l1, x, y, .. } = item {
+            assert_eq!((*l0, *l1), (0, para.lines.len()), "balancing must keep complete paragraphs together");
+            seen.push(path.clone());
+            let bottom = item_bottom(*y, para, *l0, *l1).unwrap_or(*y);
+            bottoms.entry((x * 10.0).round() as i32).and_modify(|v| *v = v.max(bottom)).or_insert(bottom);
+        }
+    }
+    assert_eq!(bottoms.len(), count, "every column should receive body text");
+    let values: Vec<f32> = bottoms.values().copied().collect();
+    let min = values.iter().copied().fold(f32::MAX, f32::min);
+    let max = values.iter().copied().fold(0.0f32, f32::max);
+    assert!(max - min <= 30.0, "column bottoms should be balanced: {values:?}");
+    seen.sort();
+    assert_eq!(seen, doc.para_paths(StoryRef::Body), "paragraphs must appear exactly once in source order");
+}
+
+#[test]
+fn balances_two_three_and_unequal_width_columns() {
+    assert_balanced_columns(&text_only_columns(2, Vec::new()), 2);
+    assert_balanced_columns(&text_only_columns(3, Vec::new()), 3);
+    assert_balanced_columns(&text_only_columns(2, vec![(156.0, 24.0), (288.0, 0.0)]), 2);
+}
+
+#[test]
+fn continuous_single_column_section_starts_below_balanced_columns() {
+    let mut doc = text_only_columns(2, Vec::new());
+    doc.body.truncate(10);
+    doc.para_mut(StoryRef::Body, &Path::top(9)).unwrap().section =
+        Some(Box::new(SectionProps { columns: Columns { count: 2, space: 24.0, separator: true, widths: Vec::new() }, ..Default::default() }));
+    doc.body.push(wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text("Following continuous section", Default::default())));
+    doc.last_section.start = SectionStart::Continuous;
+    doc.last_section.columns = Columns::default();
+    let layout = lay(&doc);
+    assert!(layout.column_balance_skipped.is_empty());
+    let previous_bottom = layout.pages[0]
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Placed::Lines { story: StoryRef::Body, path, para, l0, l1, y, .. } if path.0.first().is_some_and(|block| *block < 10) => {
+                item_bottom(*y, para, *l0, *l1)
+            }
+            _ => None,
+        })
+        .fold(0.0f32, f32::max);
+    let next_top = layout.pages[0]
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Placed::Lines { story: StoryRef::Body, path, y, .. } if path.0.first() == Some(&10) => Some(*y),
+            _ => None,
+        })
+        .expect("following section should remain on the same page");
+    assert!(next_top >= previous_bottom, "continuous section must start below the balanced columns");
+}
+
+#[test]
+fn footnote_page_reports_stable_fallback_instead_of_rebalancing_notes() {
+    let mut doc = text_only_columns(2, Vec::new());
+    let note = doc.add_part(
+        wordcraft_doc::PartKind::Footnote,
+        vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text("Source note", Default::default()))],
+    );
+    doc.insert_object(
+        &Pos::body(2, 12),
+        InlineObject::NoteRef { kind: wordcraft_doc::para::NoteKind::Footnote, id: note, custom: String::new() },
+        &Default::default(),
+    )
+    .unwrap();
+    let layout = lay(&doc);
+    assert!(!layout.column_balance_skipped.is_empty(), "unsafe note layout must be reported");
+    let visible_notes: Vec<_> = layout
+        .pages
+        .iter()
+        .flat_map(|page| &page.items)
+        .filter(|item| matches!(item, Placed::Lines { story: StoryRef::Part(id), .. } if *id == note))
+        .collect();
+    assert_eq!(visible_notes.len(), 1, "fallback preserves the note once");
+}
+
+#[test]
+fn tables_and_anchored_shapes_keep_existing_flow_and_report_balance_fallback() {
+    let mut doc = text_only_columns(2, Vec::new());
+    let shape = InlineObject::Shape {
+        kind: wordcraft_doc::para::ShapeKind::Rectangle,
+        w: 28.0,
+        h: 24.0,
+        fill: None,
+        stroke: None,
+        stroke_width: 0.5,
+        float: Default::default(),
+        story: None,
+        effects: Default::default(),
+    };
+    doc.insert_object(&Pos::body(1, 0), shape, &Default::default()).unwrap();
+    let mut table = Table::new(1, 1, doc.last_section.text_width());
+    table.rows[0].cells[0].blocks =
+        vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text("Table cell remains present", Default::default()))];
+    doc.body.push(std::sync::Arc::new(Block::Table(table)));
+
+    let layout = lay(&doc);
+    assert!(!layout.column_balance_skipped.is_empty(), "objects and tables should report the stable-flow fallback");
+    assert!(layout.pages.iter().flat_map(|page| &page.items).any(|item| matches!(item, Placed::Object { .. } | Placed::Shape { .. })));
+    assert!(
+        layout
+            .pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .any(|item| { matches!(item, Placed::Lines { story: StoryRef::Body, path, .. } if path.0.len() > 1) })
+    );
+    assert!(doc.plain_text(StoryRef::Body).contains("Table cell remains present"));
+    assert!(layout.pages.len() < 3, "safe fallback should not add unnecessary pages");
 }
 
 #[test]

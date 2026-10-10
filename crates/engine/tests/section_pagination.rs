@@ -8,7 +8,7 @@ use wordcraft_engine::{
         Document, Paragraph, PartKind, Path, Pos, StoryRef, Table,
         para::{InlineObject, NoteKind},
         props::VAlign,
-        section::{SectionProps, SectionStart},
+        section::{Columns, SectionProps, SectionStart},
     },
     recovery::{Snapshot, Store, unique_id},
 };
@@ -422,6 +422,59 @@ fn long_endnote_keeps_undo_recovery_docx_reopen_and_pdf_content() {
         );
     }
     let pdf = directory.join("academic-long-endnote.pdf");
+    reopened.run("file.exportPdf", &json!({"path":pdf})).unwrap();
+    assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn balanced_columns_survive_undo_recovery_docx_reopen_and_pdf() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-balanced-columns-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut doc = Document::new();
+    doc.body = (0..18).map(|i| wordcraft_engine::doc::para_block(Paragraph::with_text(&format!("P{i}: words flow."), Default::default()))).collect();
+    doc.last_section.columns = Columns { count: 2, space: 24.0, separator: false, widths: Vec::new() };
+    let mut session = Session::new(doc);
+    let original = session.doc.clone();
+    session.run("text.insert", &json!({"text":"Reviewed: "})).unwrap();
+    let edited = session.doc.clone();
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(session.doc, original);
+    session.run("edit.redo", &json!({})).unwrap();
+    let before = session.layout();
+    assert!(before.column_balance_skipped.is_empty());
+    assert_eq!(before.pages.len(), 1);
+    let mut paths: Vec<_> = before.pages[0]
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Placed::Lines { story: StoryRef::Body, path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .collect();
+    paths.sort();
+    assert_eq!(paths, session.doc.para_paths(StoryRef::Body));
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let id = store.save(&unique_id(), session.document_id(), &Snapshot::capture(&session)).unwrap();
+    let mut restored = Session::new(Document::new());
+    store.load(&id).unwrap().restore(&mut restored);
+    assert_eq!(restored.doc, edited);
+    let path = directory.join("balanced-columns.docx");
+    restored.run("file.save", &json!({"path":path})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path":path})).unwrap();
+    let after = reopened.layout();
+    assert!(after.column_balance_skipped.is_empty());
+    assert_eq!(after.pages.len(), before.pages.len());
+    for (a, b) in before.pages.iter().zip(&after.pages) {
+        let options = wordcraft_render::RenderOptions::default();
+        assert_eq!(
+            wordcraft_render::render_page(&session.doc, a, 1.0, &options).to_straight(),
+            wordcraft_render::render_page(&reopened.doc, b, 1.0, &options).to_straight(),
+            "balanced column raster changed after DOCX reopen"
+        );
+    }
+    let pdf = directory.join("balanced-columns.pdf");
     reopened.run("file.exportPdf", &json!({"path":pdf})).unwrap();
     assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
     std::fs::remove_dir_all(directory).unwrap();
