@@ -351,6 +351,8 @@ pub fn write_as(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {
         }
     }
 
+    crate::custom_xml::write(doc, &mut entries, &mut overrides, &mut rels)?;
+
     // Main part goes first in the zip after content types.
     entries.insert(0, ("word/document.xml".into(), body));
     overrides.insert(0, ("/word/document.xml".into(), flavor.main_content_type().into()));

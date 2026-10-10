@@ -1650,3 +1650,49 @@ fn page_and_table_gridlines_are_separate() {
     run(&mut s, "view.gridlines", json!({"value": false}));
     assert!(!s.view.gridlines && !s.view.table_gridlines);
 }
+
+/// Custom bibliography data must survive ordinary edits, Undo, and saves without altering
+/// pagination or pixels. This is a self-comparison, not an independent Word rendering oracle.
+#[test]
+fn custom_xml_preservation_keeps_pagination_and_page_rasters() {
+    use std::io::{Cursor, Read, Write};
+    let mut original = wordcraft_doc::Document::from_text(
+        &(0..70).map(|n| format!("Academic paragraph {n}: original synthetic compatibility content.")).collect::<Vec<_>>().join("\n"),
+    );
+    original.last_section.page_w = 360.0;
+    original.last_section.page_h = 480.0;
+    let base = wordcraft_docx::write(&original).unwrap();
+    let mut input = zip::ZipArchive::new(Cursor::new(base)).unwrap();
+    let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..input.len() {
+        let mut file = input.by_index(i).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        if file.name() == "word/_rels/document.xml.rels" {
+            let rels = String::from_utf8(bytes).unwrap();
+            bytes = rels.replace("</Relationships>", "<Relationship Id=\"academicData\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml\" Target=\"../customXml/item1.xml\"/></Relationships>").into_bytes();
+        }
+        z.start_file(file.name(), zip::write::SimpleFileOptions::default()).unwrap();
+        z.write_all(&bytes).unwrap();
+    }
+    z.start_file("customXml/item1.xml", zip::write::SimpleFileOptions::default()).unwrap();
+    z.write_all(b"<library xmlns='urn:wordcraft:test'>Original reference data</library>").unwrap();
+    let bytes = z.finish().unwrap().into_inner();
+    let mut before = Session::new(crate::io::open_bytes("academic.docx", &bytes).unwrap());
+    run(&mut before, "text.insert", json!({"text": "Temporary edit"}));
+    run(&mut before, "edit.undo", json!({}));
+    let saved = crate::io::save_bytes("academic.docx", &before.doc).unwrap();
+    let mut after = Session::new(crate::io::open_bytes("academic.docx", &saved).unwrap());
+    assert_eq!(before.doc.passthrough, after.doc.passthrough);
+    assert_eq!(text(&before), text(&after));
+    let first = before.layout().clone();
+    let second = after.layout().clone();
+    assert!(first.pages.len() > 1);
+    assert_eq!(first.pages.len(), second.pages.len());
+    for (n, (a, b)) in first.pages.iter().zip(&second.pages).enumerate() {
+        let opts = wordcraft_render::RenderOptions::default();
+        let a = wordcraft_render::render_page(&before.doc, a, 1.0, &opts);
+        let b = wordcraft_render::render_page(&after.doc, b, 1.0, &opts);
+        assert_eq!(a.to_straight(), b.to_straight(), "page {} differs after saving", n + 1);
+    }
+}

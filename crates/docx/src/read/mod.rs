@@ -145,6 +145,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, DocxError> {
             _ => log::warn!("docx: ignoring malformed WordCraft source library"),
         }
     }
+    crate::custom_xml::read(&pkg, &rels, &main, &mut r.doc)?;
     let mut doc = r.doc;
     doc.ensure_nonempty();
     Ok(doc)

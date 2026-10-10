@@ -32,8 +32,8 @@ from a signed download, without losing work.
 | Pagination fidelity: wrap, row splitting, hyphenation, drop caps, line numbers, borders | done this arc |
 | Comments in margin balloons, track changes | done |
 | Never-crash standard (no panics, hostile-param fuzzing, panic guard) | done |
-| Autosave and crash recovery | done; needs a soak test |
-| **DOCX fidelity against a corpus of real-world files** (open, render, round-trip, fix) | **not started — the main alpha blocker (≈10 h)** |
+| Autosave and crash recovery | AutoSave for explicitly saved files; durable recovery of unsaved documents missing (source audit 2026-10-10) |
+| **DOCX fidelity against a corpus of real-world files** (open, render, round-trip, fix) | Synthetic preservation regressions started; independent real-world corpus verification still missing |
 | Footnotes that continue onto the next page; column balancing | missing (≈4 h) |
 | Native printing (today printing goes through PDF) | missing (≈4 h) |
 | Signed builds for macOS, Windows, Linux, FreeBSD and web | pipeline written; **needs the GitHub remote and release secrets from the owner** |
@@ -108,6 +108,7 @@ the icon art).
 | M14 | 1.0 polish, packaging, signing | pipeline written; waiting on remote and secrets |
 
 ## Recently landed
+- M1: Preserve document-attached custom XML/bibliography data, properties, dependent relationships and content types with bounded graph traversal. Repeated round-trip, hostile-input and multi-page raster/Undo regressions added; independent Word verification remains pending.
 - M5: Drag unmerged column borders and unsplit row borders to resize tables, with one undo step and Escape cancellation (#217, local fix).
 - M7: Accept/Reject resolves tracked paragraph breaks; DOCX preserves their revision tags across saves (#229, local fix).
 - M9: Select Recipients opens a CSV entry dialog; invalid input stays open for correction (#240, local fix).
@@ -123,7 +124,7 @@ the icon art).
 - Comment balloons in a markup area beside each page, with leader lines to their anchors.
 
 ## Next
-The DOCX fidelity corpus, then footnote continuation, column balancing and native printing.
+See [production audit](docs/production-audit.md): protect DOCX data and add durable crash recovery, then footnote continuation, column balancing, native printing and drawing depth. No independent Word 365 parity certification is available.
 
 - M14: Native file dialogs run asynchronously; delayed responses are cancelled after document replacement (#94, PR #246 plus regression guard).
 
