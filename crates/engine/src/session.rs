@@ -41,7 +41,10 @@ pub struct ViewState {
     pub focus_mode: bool,
     pub marks: bool,
     pub ruler: bool,
+    /// View › Gridlines: a grid over each page's text area.
     pub gridlines: bool,
+    /// Table Layout › View Gridlines: show the edges of table cells, even without borders (on in Word by default).
+    pub table_gridlines: bool,
     pub nav_pane: bool,
     pub styles_pane: bool,
     pub comments_pane: bool,
@@ -66,6 +69,7 @@ impl Default for ViewState {
             marks: false,
             ruler: true,
             gridlines: false,
+            table_gridlines: true,
             nav_pane: false,
             styles_pane: false,
             comments_pane: false,

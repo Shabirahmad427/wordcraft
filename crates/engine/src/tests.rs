@@ -1502,3 +1502,16 @@ fn styles_apply_rejected_on_protected_document() {
     assert_eq!(para_style(&s, 0), None);
     assert_eq!(s.undo_labels(), undo);
 }
+
+/// View › Gridlines and Table Layout › View Gridlines are separate switches (#69: the View checkbox only drew table cells).
+#[test]
+fn page_and_table_gridlines_are_separate() {
+    let mut s = s();
+    assert!(!s.view.gridlines && s.view.table_gridlines);
+    assert_eq!(run(&mut s, "view.gridlines", json!({}))["value"], true);
+    assert!(s.view.gridlines && s.view.table_gridlines);
+    assert_eq!(run(&mut s, "table.gridlines", json!({"value": false}))["value"], false);
+    assert!(s.view.gridlines && !s.view.table_gridlines);
+    run(&mut s, "view.gridlines", json!({"value": false}));
+    assert!(!s.view.gridlines && !s.view.table_gridlines);
+}
