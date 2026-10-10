@@ -46,7 +46,16 @@ pub(crate) struct Reader<'p> {
 
 /// Read a `.docx` package.
 pub fn read(bytes: &[u8]) -> Result<Document, DocxError> {
+    read_impl(bytes, true)
+}
+
+pub(crate) fn read_model(bytes: &[u8]) -> Result<Document, DocxError> {
+    read_impl(bytes, false)
+}
+
+fn read_impl(bytes: &[u8], preserve: bool) -> Result<Document, DocxError> {
     let pkg = Package::open(bytes)?;
+    crate::preservation::validate(&pkg)?;
     let root_rels = pkg.rels_checked("")?;
     let main = root_rels.by_type(rt::OFFICE_DOC).filter(|r| !r.external).map(|r| r.target.clone()).unwrap_or_else(|| "word/document.xml".to_string());
     let Some(root) = pkg.xml(&main)? else {
@@ -156,6 +165,9 @@ pub fn read(bytes: &[u8]) -> Result<Document, DocxError> {
     crate::custom_xml::read(&pkg, &rels, &main, &mut r.doc)?;
     let mut doc = r.doc;
     doc.ensure_nonempty();
+    if preserve {
+        crate::preservation::capture(bytes, &pkg, &main, &mut doc)?;
+    }
     Ok(doc)
 }
 

@@ -38,3 +38,7 @@ Limits: edits since the last successful snapshot can be lost in a crash; the nom
 Linux native tests and a headless UI inspection have been performed. Portable Rust APIs and existing platform directory rules support macOS and Windows, but real Windows/macOS crash/power-loss tests and independent Microsoft Word compatibility verification remain outstanding. Windows has no directory-fsync implementation in this std-only path; filesystem/hardware behavior can affect power-loss durability. No Microsoft Word 365 parity claim is made.
 
 Verified CI result for these two arcs: all six checks passed; 821 workspace tests passed (16 added recovery tests). The headless screenshot was rendered and inspected without committing a document image asset. CI logs: `/tmp/wordcraft-recovery-storage-ci.log` and `/tmp/wordcraft-recovery-ui-ci.log`.
+
+## Guarded DOCX packages
+
+Package-wide DOCX preservation state is captured alongside the editor model and media. Restoration retains unknown package data and the exact independently stored original ZIP. Supported text edits can be saved to a new DOCX; unsupported edits remain recoverable but saving DOCX returns an explicit error. The original package can still be exported separately. See [the guarded editing contract](docx-compatibility.md) for budgets and operation limits.

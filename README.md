@@ -160,7 +160,8 @@ can check their work through `inspect_document` without screenshots. See [docs/m
 and the [control protocol](docs/control-protocol.md). Macros record any sequence of commands and
 play it back (`tools.recordMacro`, `tools.macros`).
 
-DOCX chart data and embedded workbooks are preserved with explicit compatibility warnings.
+DOCX imports retain unsupported package content through guarded editing, including content controls,
+embedded objects, chart/Excel data and extension metadata. Unsafe saves fail explicitly.
 See [the preservation contract and current limitations](docs/docx-compatibility.md).
 
 ## Document recovery

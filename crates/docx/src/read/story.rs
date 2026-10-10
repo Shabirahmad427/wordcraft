@@ -668,13 +668,11 @@ impl Reader<'_> {
         if let Some(wsp) = gd.find("wps:wsp") {
             return Some(self.read_wsp(sc, wsp, rels, w, h, float));
         }
-        match self.opaque.capture(d, rels) {
-            Ok(object) => Some(object),
-            Err(error) => {
-                self.preservation_error = Some(error);
-                None
-            }
-        }
+        Some(InlineObject::Opaque {
+            format: "docx-preserved".into(),
+            xml: String::new(),
+            text: "[Unsupported drawing preserved — editing and rendering unavailable]".into(),
+        })
     }
 
     fn read_wsp(&mut self, sc: &mut StoryCtx, wsp: &El, rels: &Rels, w: f32, h: f32, float: Float) -> InlineObject {

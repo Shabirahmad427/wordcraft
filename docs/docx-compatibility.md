@@ -1,6 +1,6 @@
 # DOCX preservation contract and verification
 
-## Audit from 199822f
+## Earlier chart audit from 199822f
 
 Existing implementations already cover custom XML/bibliography package graphs, complex citation fields (including Zotero/Mendeley field instructions), OMML equations, footnotes, tables, lists, sections, headers/footers, tracked changes, atomic saves and complete native recovery archives. Those implementations are reused. They do not establish lossless preservation of arbitrary OOXML.
 
@@ -10,7 +10,7 @@ The first selected defect was chart loss: `read_drawing` recognized pictures and
 
 Chart drawings use the existing opaque inline-object model. Their drawing markup is canonicalized, relationship IDs are rebound in the containing story, and drawing object IDs are regenerated uniquely. Inline and anchored chart drawing markup is retained for DOCX output; WordCraft layout does not reproduce chart positioning or appearance.
 
-The existing bounded custom XML dependency traversal now also preserves chart graphs. Chart XML, dependent styles, embedded workbooks and dependent relationship files retain their exact imported bytes, part names and content types. External relationships are retained without fetching their targets. Unsupported extension markup inside these copied parts is retained unchanged. This is a part preservation promise, not byte identity of the entire ZIP or original drawing markup.
+The existing bounded custom XML dependency traversal now also preserves chart graphs. Chart XML, dependent styles, embedded workbooks and dependent relationship files retain their exact imported bytes, part names and content types. External relationships are retained without fetching their targets. Unsupported extension markup inside these copied parts is retained unchanged. This is a part preservation promise, not byte identity of the entire ZIP or original drawing markup. In the later guarded package path below, original drawing markup and IDs remain unchanged instead of being regenerated.
 
 Limits: 512 parts/relationships, 64 MiB preserved graph data, 128 KiB bookkeeping and 1 MiB per drawing, with a 16,384-node drawing bound. Missing dependencies/content types, corrupt ZIP entries, ambiguous case-insensitive ZIP names, malformed relationship records, unknown drawing namespaces, unsupported drawing types and generated-part collisions cause explicit errors on the checked paths. Failure during save leaves the original file and live document metadata unchanged. Markup-compatibility attributes within chart drawings are rejected when namespace canonicalization cannot safely retain their meaning.
 
@@ -35,12 +35,47 @@ Six package integration tests exercise three generations and multiple output fla
 
 The pixel comparison is WordCraft before/after restoration and round-tripping, not a Microsoft Word reference comparison. Linux verification does not establish native Windows/macOS behavior. Independent Word reference outputs and a consented real-world corpus are unavailable in this environment. There is no full Microsoft Word 365 parity claim.
 
-## Remaining high-impact deficiencies
+## Package-wide safety audit from 6807535
 
-1. General preservation of unknown OOXML markup, styles, properties and package relationships is still incomplete. Ordinary export regenerates modeled parts and can lose unmodeled content outside the new checked drawing paths.
-2. OLE, content-control bindings, legacy VML and SmartArt need separate preservation contracts. An unrecognized DrawingML graphic type can now be rejected, but this is not a comprehensive detector of every unsupported object.
-3. Citation/bibliography and equation models need independent real-world interoperability verification; preserved bibliography XML is not synchronized with edited citation sources.
-4. Pagination, complex wrapping, footnote continuation and column balancing still need independent Word/PDF comparisons. Charts currently contribute placeholder layout rather than their rendered geometry.
-5. Real-world package coverage and independently validated visual references remain required before accepting arbitrary DOCX files as lossless.
+At 6807535, custom XML and chart graphs were retained but the main exporter still regenerated modeled XML. Content controls were flattened; OLE/ActiveX/unknown relationships, unreferenced embedded parts, unknown styles/settings/numbering properties and extension metadata could disappear. SmartArt drawing types caused an explicit import error. A controlled synthetic probe run through the installed 6807535 CLI lost **14 package parts**, plus the SDT wrapper and its data binding. The probe omitted its SmartArt drawing solely to reach the older export path; its original dependency parts were still present.
+
+The new package-wide path retains the exact source ZIP, its bounded editor projection and native export baseline in Arc-backed `Document.passthrough`. The chart/custom XML mechanisms remain separate and run first. No lower layer depends on UI code and no dependency was added. Undo, recovery and atomic saves reuse their existing implementations.
+
+A complete source/native package comparison checks entry names, expanded XML names, all attributes (including namespace declarations), text and tree structure; comments, processing instructions and declaration differences require preservation. Unmodeled package data therefore selects guarded mode rather than being overwritten with regenerated XML. Imported macro/ActiveX/signature-sensitive packages also select guarded mode even when the ordinary writer can reproduce them. A package with a blocked native export remains recoverable but its ordinary save fails explicitly.
+
+### Preservation and supported edits
+
+Guarded no-op saves in the original Word package flavor return the exact imported ZIP bytes. Tested main-body text edits splice only proven text ranges in the original story bytes. Every other part, original relationship ID/target, content type, namespace declaration, extension attribute, custom XML binding, SDT metadata, unknown property and embedded payload stays unchanged. SmartArt, OLE and ActiveX data are retained as **inert bytes**, without executing code or fetching external targets. Disconnected parts and nested/cyclic relationship graphs are retained too. Some unsupported drawings show placeholders; preservation does not imply rendering or editing support.
+
+Only isolated text edits in the first simple text run of a directly mapped body paragraph are currently supported in guarded mode. The model, run formatting, objects, properties and all other document state must match the original projection after accounting for those edits. Mapping follows source block position, so identical text inside a bound control cannot redirect an edit to an ordinary paragraph. Content-control/custom XML/revision wrappers are protected; ambiguous mappings, formatting boundaries, tables, header/footer edits, object changes and structural edits fail explicitly. Source XML in UTF-16 is retained, but text splicing in it is refused. Unchanged field markup is retained, including a pre-existing malformed field range, rather than silently repaired.
+
+Ordinary formatting and structural editing remain available for reproducible native packages. Guarded mode is deliberately conservative: normalization differences or added generated parts can select it even when no user-visible unsupported object is apparent. It is a safety fallback, not a general OOXML merge engine.
+
+Original core metadata and application statistics remain byte-exact in guarded packages. File Save defers automatic timestamps, revision increments and last-modified-by updates; statistics may be stale. Explicit metadata/style/numbering/settings edits currently fail in guarded mode. DOCX/template flavor changes update only a uniquely identified main content type while retaining extension attributes. Guarded macro-enabled packages cannot be converted to macro-free flavors by discarding active content. OPC-signed packages reject text/flavor changes that would invalidate a signature. Signature cryptography is not verified.
+
+### Checked input and storage limits
+
+All imported package parts and supported XML content types are inspected before the lenient model reader. Checks cover duplicate/ambiguous ZIP names, corrupt or unreadable entries, strict XML well-formedness, bound namespace prefixes, duplicate expanded attributes, forbidden XML characters, unsupported encodings and DTD rejection. Content types must exist and have nonconflicting definitions. All relationship parts—including orphan graphs—must have existing owners, complete unique IDs, valid target modes and existing internal dependencies. Office relationship-namespace attributes, including SmartArt `r:dm/lo/qs/cs`, must resolve within their containing part. Package escape targets are rejected. External targets remain untouched and unfetched.
+
+Limits now apply to imported DOCX packages: **512 parts and 64 MiB total decompressed data**, with 64 MiB per-part/retained ZIP budgets, **16 MiB per XML inspection and model snapshot**, 200,000 XML elements per part and depth 256. This replaces the older permissive 256/512 MiB import bounds. Legitimate files above these limits fail explicitly. URI-escaped/nonstandard part names and unsupported encodings may also fail. Embedded binary formats are not recursively interpreted or schema-validated. DTD-bearing custom XML is rejected, not sanitized. This is structural/graph validation, not a complete OOXML schema validator or malware scanner.
+
+Recovery retains the editor model, all preservation state and the independent original package copy. Failed saves keep the original file, document metadata/path and dirty state unchanged. An unsupported edit can still be recovered even if it cannot yet be exported safely to DOCX. Removing or corrupting a preservation-state entry produces an error rather than disabling the guard.
+
+### Verification and remaining gaps
+
+All six CI gates passed with **850 tests**. Added **19 regression tests**: 14 DOCX integration tests, two XML inspection unit tests and three engine integration tests. They cover repeated edits, all-part byte preservation, SDT bindings, inert embedded graphs, identical protected/unprotected text, unknown namespaces/properties, malformed/missing dependencies, conflicting IDs/types, oversized ZIP declarations, part-count limits, Strict/alternate/case-insensitive main paths, UTF-16, signatures, guarded flavor conversions, normal native editing, Undo, failed saves and recovery/raster self-comparison. Existing fixtures now include required content types; old tests expecting malformed parts to be silently dropped instead assert safe failures or complete preservation.
+
+```sh
+WORDCRAFT_COMPAT_CORPUS_DIR=/tmp/wordcraft-generic-compatibility-corpus cargo test -p wordcraft-docx --test preservation
+cargo test -p wordcraft-engine --test package_preservation --test opaque_charts --test macro_packages
+cargo xtask ci
+cargo build --release -p wordcraft -p wordcraft-cli
+```
+
+The generated corpus is original synthetic package data. Its minimal diagram/OLE/ActiveX fixtures test byte retention and graph integrity; they are not certified Word-renderable object implementations. No proprietary assets or active executable payloads are included. Independent Word reference outputs, a consented real-world corpus and native Windows/macOS verification remain unavailable. The raster checks compare WordCraft with itself.
+
+Remaining priorities are safe XML merging for richer edits, editable SDT/custom XML binding synchronization, SmartArt/OLE/ActiveX rendering (active execution remains unsupported), independent schema/interoperability validation, pagination and real-world visual comparisons. Whole-ZIP losslessness is established only for the tested guarded no-op cases; supported text edits preserve tested package data but change story bytes and ZIP encoding. No arbitrary-document losslessness or Microsoft Word 365 parity is claimed.
+
+Format references for this arc: [content-control data bindings](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.databinding?view=openxml-3.0.1) and [explicit diagram relationships](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.drawing.diagrams.relationshipids?view=openxml-3.0.1). They describe format syntax, not WordCraft certification.
 
 Public format references: [ECMA-376 Part 1 fundamentals](https://download.microsoft.com/download/e/1/4/e14fb96f-83b8-4a2a-84db-7fa8acbe061a/Office%20Open%20XML%20Part%201%20-%20Fundamentals.pdf), [chart reference relationship definition](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.drawing.charts.chartreference?view=openxml-3.0.1), and [Office Open XML chart/package examples](https://learn.microsoft.com/en-us/office/dev/add-ins/word/create-better-add-ins-for-word-with-office-open-xml). These document format syntax; they do not certify WordCraft interoperability.

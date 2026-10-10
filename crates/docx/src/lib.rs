@@ -11,6 +11,8 @@ mod custom;
 mod custom_xml;
 mod opaque;
 mod package;
+mod preservation;
+mod preserved_xml;
 mod read;
 mod units;
 mod write;
@@ -19,9 +21,16 @@ mod xml;
 pub use read::read;
 pub use write::{write, write_as};
 
+/// Whether automatic metadata changes must be deferred to keep unsupported source XML intact.
+pub fn has_preserved_package(doc: &wordcraft_doc::Document) -> bool {
+    preservation::is_guarded(doc)
+}
+
 /// Known preservation-only features; this is not a complete compatibility certification.
 pub fn compatibility_warnings(doc: &wordcraft_doc::Document) -> Vec<String> {
-    opaque::warnings(doc)
+    let mut warnings = opaque::warnings(doc);
+    warnings.extend(preservation::warnings(doc));
+    warnings
 }
 
 /// Which kind of WordprocessingML package to write. The main part's content type differs per

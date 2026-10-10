@@ -12,6 +12,11 @@ const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships 
 
 pub fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    if !entries.iter().any(|(name, _)| *name == "[Content_Types].xml") {
+        zw.start_file("[Content_Types].xml", zip::write::SimpleFileOptions::default()).unwrap();
+        zw.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="bin" ContentType="application/octet-stream"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#).unwrap();
+    }
+
     for (name, bytes) in entries {
         zw.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
         zw.write_all(bytes).unwrap();
@@ -384,9 +389,9 @@ fn vml_image_and_inline_drawing() {
     let body = r#"
 <w:p><w:r><w:pict><v:shape style="width:1in;height:36pt" alt="vml pic"><v:imagedata r:id="rIdImg" o:title="t"/></v:shape></w:pict></w:r>
 <w:r><w:drawing><wp:inline><wp:extent cx="1270000" cy="635000"/><wp:docPr id="3" name="P" descr="alt text"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/><a:srcRect l="10000"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>
-<w:r><w:drawing><wp:inline><wp:extent cx="1" cy="1"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rIdMissing"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+</w:p>"#;
     let doc = format!(r#"<w:document {W_NS}><w:body>{body}</w:body></w:document>"#);
-    let r = rels(&[("rIdImg", "image", "media/pic.png"), ("rIdMissing", "image", "media/nope.png")]);
+    let r = rels(&[("rIdImg", "image", "media/pic.png")]);
     let bytes = zip(&[
         ("_rels/.rels", ROOT_RELS.as_bytes()),
         ("word/document.xml", doc.as_bytes()),
@@ -467,11 +472,7 @@ fn header_self_reference_and_escaping_targets() {
         ("word/header1.xml", hdr.as_bytes()),
         ("word/_rels/header1.xml.rels", hdr_rels.as_bytes()),
     ]);
-    let d = wordcraft_docx::read(&bytes).unwrap();
-    assert_eq!(d.last_section.headers.default, d.last_section.headers.even);
-    assert!(d.media.is_empty());
-    let out = wordcraft_docx::write(&d).unwrap();
-    wordcraft_docx::read(&out).unwrap();
+    assert!(wordcraft_docx::read(&bytes).is_err());
 }
 
 /// A document whose settings part is `settings` (None: no settings part at all).

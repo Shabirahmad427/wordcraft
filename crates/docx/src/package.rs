@@ -7,9 +7,9 @@ use crate::DocxError;
 use crate::xml::{self, El};
 
 /// Largest single part we decompress.
-pub const MAX_PART: u64 = 256 * 1024 * 1024;
+pub const MAX_PART: u64 = 64 * 1024 * 1024;
 /// Largest total of all decompressed parts.
-pub const MAX_TOTAL: u64 = 512 * 1024 * 1024;
+pub const MAX_TOTAL: u64 = 64 * 1024 * 1024;
 /// Most zip entries we look at.
 pub const MAX_ENTRIES: usize = 20_000;
 
@@ -55,6 +55,10 @@ pub struct Package {
 }
 
 impl Package {
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.files.iter().map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+    }
+
     pub fn open(bytes: &[u8]) -> Result<Package, DocxError> {
         Package::open_limited(bytes, MAX_PART, MAX_TOTAL)
     }

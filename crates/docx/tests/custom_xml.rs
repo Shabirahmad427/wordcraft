@@ -32,7 +32,7 @@ fn fixture(root_target: &str, extra_rels: &str) -> Vec<u8> {
     let item_rels = format!(
         r#"<Relationships xmlns="{REL_NS}"><Relationship Id="properties" Type="{OFFICE}customXmlProps" Target="itemProps1.xml"/>{extra_rels}</Relationships>"#
     );
-    let types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/customXml/itemProps1.xml" ContentType="application/vnd.openxmlformats-officedocument.customXmlProperties+xml"/></Types>"#;
+    let types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/customXml/itemProps1.xml" ContentType="application/vnd.openxmlformats-officedocument.customXmlProperties+xml"/></Types>"#;
     archive(&[
         ("_rels/.rels".into(), root.into_bytes()),
         ("word/document.xml".into(), document.as_bytes().to_vec()),
@@ -57,7 +57,7 @@ fn bibliography_parts_survive_edits_and_repeated_round_trips() {
                 assert_eq!(entry(&out, name), entry(&input, name), "changed {name}");
             }
             let rels = String::from_utf8(entry(&out, "word/_rels/document.xml.rels")).unwrap();
-            assert!(rels.contains("/customXml/item1.xml") && rels.contains("/relationships/customXml"));
+            assert!(rels.contains("customXml/item1.xml") && rels.contains("/relationships/customXml"));
             let types = String::from_utf8(entry(&out, "[Content_Types].xml")).unwrap();
             assert!(types.contains("/customXml/itemProps1.xml") && types.contains("customXmlProperties+xml"));
             current = wordcraft_docx::read(&out).unwrap();

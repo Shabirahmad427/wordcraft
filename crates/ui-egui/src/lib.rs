@@ -1801,7 +1801,10 @@ mod tests {
     fn web_save_keeps_the_opened_word_format() {
         let mut doc = wordcraft_doc::Document::new();
         doc.passthrough.insert("word/vbaProject.bin".into(), std::sync::Arc::new(vec![0xD0, 0xCF, 0x11, 0xE0, 1, 2, 3]));
-        doc.passthrough.insert("word/vbaData.xml".into(), std::sync::Arc::new(b"<wne:vbaSuppData/>".to_vec()));
+        doc.passthrough.insert(
+            "word/vbaData.xml".into(),
+            std::sync::Arc::new(br#"<wne:vbaSuppData xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml"/>"#.to_vec()),
+        );
         // The docx reader's list of parts the project relates to (wordcraft_docx VBA_RELATED).
         let related = "http://schemas.microsoft.com/office/2006/relationships/wordVbaData\tword/vbaData.xml\tapplication/vnd.ms-word.vbaData+xml\n";
         doc.passthrough.insert("wordcraft:vbaProject.related".into(), std::sync::Arc::new(related.as_bytes().to_vec()));

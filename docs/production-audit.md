@@ -54,3 +54,7 @@ The durable recovery deficiency is addressed by a separate immutable archive con
 ## Chart preservation follow-up from 199822f
 
 The next audited data-loss defect was complete removal of charts and their embedded workbook graphs. The chart preservation arc reuses opaque objects and the bounded graph traversal, provides preservation warnings and fails checked unsafe cases explicitly. Ten added regressions bring the passing CI suite to 831 tests. This addresses chart package loss; broad unknown markup, OLE, SmartArt and content controls remain incomplete. See [the current DOCX contract and remaining deficiencies](docx-compatibility.md).
+
+## Package-wide preservation follow-up from 6807535
+
+A reproduced baseline save removed 14 opaque parts and flattened an SDT/data binding. Package-wide retention and guarded text splicing now preserve those structures instead of regenerating them. Strict input/relationship checks and explicit save failures protect unsupported editing operations. This adds 19 regressions and reuses chart, custom XML, recovery and atomic saves. It does not add general object editing or certify arbitrary OOXML losslessness. See [the current preservation and editing contract](docx-compatibility.md).

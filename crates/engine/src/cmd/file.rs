@@ -142,12 +142,16 @@ fn save(s: &mut Session, v: &Value) -> CmdResult {
     // Serialize updated metadata without changing the live document until the write succeeds.
     // A failed save must leave the document exactly as it was.
     let mut doc = s.doc.clone();
-    doc.core.modified = super::now_iso();
-    if doc.core.created.is_empty() {
-        doc.core.created = doc.core.modified.clone();
+    // Guarded packages retain original core XML. Automatic timestamp/revision changes
+    // cannot be allowed to turn an otherwise safe text save into a destructive rewrite.
+    if !wordcraft_docx::has_preserved_package(&doc) {
+        doc.core.modified = super::now_iso();
+        if doc.core.created.is_empty() {
+            doc.core.created = doc.core.modified.clone();
+        }
+        doc.core.last_modified_by = s.author.clone();
+        doc.core.revision = doc.core.revision.saturating_add(1);
     }
-    doc.core.last_modified_by = s.author.clone();
-    doc.core.revision = doc.core.revision.saturating_add(1);
     crate::io::save_path(&path, &doc).map_err(CmdError::Failed)?;
     s.doc.core = doc.core;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();

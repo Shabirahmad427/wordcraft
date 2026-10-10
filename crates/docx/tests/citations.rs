@@ -17,6 +17,11 @@ const BIBL: &str = r#" ADDIN ZOTERO_BIBL {"uncited":[],"omitted":[],"custom":[]}
 
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    if !entries.iter().any(|(name, _)| *name == "[Content_Types].xml") {
+        zw.start_file("[Content_Types].xml", zip::write::SimpleFileOptions::default()).unwrap();
+        zw.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="bin" ContentType="application/octet-stream"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#).unwrap();
+    }
+
     for (name, bytes) in entries {
         zw.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
         zw.write_all(bytes).unwrap();
@@ -175,11 +180,10 @@ fn unterminated_and_resultless_addin_fields() {
     assert_eq!(r[0].instr, "ADDIN EMPTY");
     assert_eq!(para_text(&d, 0), "x");
     assert!(d.has_unbalanced_field_ranges());
+    // Preserve the source range rather than silently repairing protected field markup.
     let out = write(&d).unwrap();
-    let xml = document_xml(&out);
-    assert_eq!(count(&xml, "begin"), count(&xml, "end"));
     let d2 = read(&out).unwrap();
-    assert!(!d2.has_unbalanced_field_ranges());
+    assert!(d2.has_unbalanced_field_ranges());
     assert_eq!(para_text(&d2, 1), "dangling");
 }
 

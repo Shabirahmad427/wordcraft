@@ -107,6 +107,11 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, DocxError> {
 
 /// Write a package of the given flavour (`.docx`, `.docm`, `.dotx`, `.dotm`).
 pub fn write_as(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {
+    let generated = write_native(doc, flavor)?;
+    crate::preservation::write(doc, flavor, &generated).map(|preserved| preserved.unwrap_or(generated))
+}
+
+pub(crate) fn write_native(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {
     // A range field must be whole in the file: drop markers that lost their partner in editing.
     let balanced;
     let doc = if doc.has_unbalanced_field_ranges() {

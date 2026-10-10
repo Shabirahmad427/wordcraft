@@ -9,6 +9,11 @@ use wordcraft_doc::{Document, Paragraph, para_block};
 
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    if !entries.iter().any(|(name, _)| *name == "[Content_Types].xml") {
+        zw.start_file("[Content_Types].xml", zip::write::SimpleFileOptions::default()).unwrap();
+        zw.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="bin" ContentType="application/octet-stream"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#).unwrap();
+    }
+
     for (name, bytes) in entries {
         zw.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
         zw.write_all(bytes).unwrap();

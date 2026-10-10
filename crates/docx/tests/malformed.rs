@@ -10,6 +10,11 @@ const ROOT_RELS: &str = r#"<Relationships xmlns="http://schemas.openxmlformats.o
 
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    if !entries.iter().any(|(name, _)| *name == "[Content_Types].xml") {
+        zw.start_file("[Content_Types].xml", zip::write::SimpleFileOptions::default()).unwrap();
+        zw.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="bin" ContentType="application/octet-stream"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#).unwrap();
+    }
+
     for (name, bytes) in entries {
         zw.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
         zw.write_all(bytes).unwrap();
@@ -102,7 +107,7 @@ fn deep_nesting_is_rejected() {
 }
 
 #[test]
-fn broken_secondary_parts_are_ignored() {
+fn broken_secondary_parts_fail_before_data_can_be_lost() {
     let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="a" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="b" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/><Relationship Id="c" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/></Relationships>"#;
     let doc = format!("<w:document {W_NS}><w:body><w:p><w:r><w:t>body</w:t></w:r></w:p></w:body></w:document>");
     let z = zip(&[
@@ -113,10 +118,7 @@ fn broken_secondary_parts_are_ignored() {
         ("word/numbering.xml", b"<w:numbering><w:num w:numId=\"1\"><w:abstractNumId w:val=\"999\"/></w:num></w:numbering>"),
         ("word/comments.xml", b"<<<"),
     ]);
-    let d = read(&z).unwrap();
-    assert_eq!(d.plain_text(wordcraft_doc::StoryRef::Body), "body");
-    // The unresolvable list still writes.
-    write(&d).unwrap();
+    assert!(read(&z).is_err());
 }
 
 #[test]
