@@ -255,14 +255,7 @@ fn export_page(app: &mut WordApp, ui: &mut Ui) {
         ("Page image (*.png)", "png"),
     ] {
         if ui.add(egui::Button::new(egui::RichText::new(tl!(label)).font(medium(13.5))).min_size(vec2(320.0, 34.0))).clicked() {
-            let name = format!("{}.{ext}", app.title_stem());
-            let picked = app.services.pick_save.as_ref().and_then(|f| f(&name));
-            if let Some(path) = picked {
-                let r = if ext == "png" { app.run("file.exportPng", json!({"path": path})) } else { app.run("file.saveAs", json!({"path": path})) };
-                if r.is_ok() {
-                    app.status(crate::i18n::fmt(tl!("Exported {path}"), &[("path", &path)]));
-                }
-            }
+            app.export_dialog(ext);
         }
         ui.add_space(4.0);
     }
