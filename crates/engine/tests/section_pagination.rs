@@ -366,3 +366,63 @@ fn long_note_keeps_undo_recovery_and_docx_roundtrip_content() {
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn long_endnote_keeps_undo_recovery_docx_reopen_and_pdf_content() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-long-endnote-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let note_text = "Endnote continuation must preserve numbering, order, and every source word. ".repeat(220);
+    let mut doc = Document::from_text("Academic claim with an endnote.\nClosing body text.");
+    let note = doc.add_part(PartKind::Endnote, vec![wordcraft_engine::doc::para_block(Paragraph::with_text(&note_text, Default::default()))]);
+    doc.insert_object(
+        &Pos { story: StoryRef::Part(note), path: Path::top(0), off: 0 },
+        InlineObject::NoteRef { kind: NoteKind::Endnote, id: note, custom: String::new() },
+        &Default::default(),
+    )
+    .unwrap();
+    doc.insert_object(&Pos::body(0, 21), InlineObject::NoteRef { kind: NoteKind::Endnote, id: note, custom: String::new() }, &Default::default())
+        .unwrap();
+    let mut session = Session::new(doc);
+    let original = session.doc.clone();
+    session.run("text.insert", &json!({"text":"Reviewed: "})).unwrap();
+    let edited = session.doc.clone();
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(session.doc, original);
+    session.run("edit.redo", &json!({})).unwrap();
+    let before = session.layout();
+    let note_pages: std::collections::BTreeSet<_> = before
+        .pages
+        .iter()
+        .enumerate()
+        .filter(|(_, page)| page.items.iter().any(|item| matches!(item, Placed::Lines { story: StoryRef::Part(id), .. } if *id == note)))
+        .map(|(index, _)| index)
+        .collect();
+    assert!(note_pages.len() >= 2, "long endnote should continue across pages: {note_pages:?}");
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let id = store.save(&unique_id(), session.document_id(), &Snapshot::capture(&session)).unwrap();
+    let mut restored = Session::new(Document::new());
+    store.load(&id).unwrap().restore(&mut restored);
+    assert_eq!(restored.doc, edited);
+    let path = directory.join("academic-long-endnote.docx");
+    restored.run("file.save", &json!({"path":path})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path":path})).unwrap();
+    let restored_note = reopened.doc.parts.get(&note).expect("endnote part remains attached");
+    let restored_text = restored_note.blocks.iter().filter_map(|block| block.as_para()).map(|para| para.text.as_str()).collect::<String>();
+    assert!(restored_text.ends_with(&note_text));
+    let after = reopened.layout();
+    assert_eq!(before.pages.len(), after.pages.len());
+    assert!(after.caret_on(&Pos { story: StoryRef::Part(note), path: Path::top(0), off: note_text.len() + 1 }, after.pages.len() - 1).is_some());
+    for (a, b) in before.pages.iter().zip(&after.pages) {
+        let options = wordcraft_render::RenderOptions::default();
+        assert_eq!(
+            wordcraft_render::render_page(&session.doc, a, 1.0, &options).to_straight(),
+            wordcraft_render::render_page(&reopened.doc, b, 1.0, &options).to_straight(),
+            "endnote raster changed after DOCX reopen"
+        );
+    }
+    let pdf = directory.join("academic-long-endnote.pdf");
+    reopened.run("file.exportPdf", &json!({"path":pdf})).unwrap();
+    assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
+    std::fs::remove_dir_all(directory).unwrap();
+}

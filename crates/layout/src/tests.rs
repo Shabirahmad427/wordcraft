@@ -1270,6 +1270,53 @@ fn hidden_note_anchors_keep_their_number_and_their_note() {
 }
 
 #[test]
+fn long_endnote_continues_in_order_across_pages_without_body_overlap() {
+    let text = "Endnote continuation must keep every word in source order. ".repeat(500);
+    let mut d = Document::from_text("A cited academic claim.");
+    let note =
+        d.add_part(wordcraft_doc::PartKind::Endnote, vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text(&text, Default::default()))]);
+    d.insert_object(
+        &Pos::body(0, 9),
+        InlineObject::NoteRef { kind: wordcraft_doc::para::NoteKind::Endnote, id: note, custom: String::new() },
+        &Default::default(),
+    )
+    .unwrap();
+    let l = lay(&d);
+    let expected_lines = l
+        .pages
+        .iter()
+        .flat_map(|page| &page.items)
+        .find_map(|item| match item {
+            Placed::Lines { story: StoryRef::Part(id), path, para, .. } if *id == note && *path == Path::top(0) => Some(para.lines.len()),
+            _ => None,
+        })
+        .expect("endnote should be placed");
+    let mut seen = Vec::new();
+    let mut note_pages = std::collections::BTreeSet::new();
+    for (page_index, page) in l.pages.iter().enumerate() {
+        for item in &page.items {
+            if let Placed::Lines { story: StoryRef::Part(id), path, l0, l1, y, para, .. } = item
+                && *id == note
+                && *path == Path::top(0)
+            {
+                note_pages.insert(page_index);
+                seen.extend(*l0..*l1);
+                for line in &para.lines[*l0..*l1] {
+                    let top = *y + line.top - para.lines[*l0].top;
+                    assert!(top + line.height <= page.body.bottom() + 0.5, "endnote overlaps footer/body boundary");
+                }
+            }
+        }
+    }
+    assert!(note_pages.len() >= 2, "long endnote should continue: {note_pages:?}");
+    assert_eq!(seen, (0..expected_lines).collect::<Vec<_>>(), "endnote lines must appear once and in order");
+    assert_eq!(
+        d.parts.get(&note).map(|part| part.blocks.iter().filter_map(|b| b.as_para()).map(|p| p.text.as_str()).collect::<String>()),
+        Some(text)
+    );
+}
+
+#[test]
 fn text_wraps_around_square_float() {
     let mut d = Document::from_text(&"Words flow around the picture here. ".repeat(30));
     let float = wordcraft_doc::para::Float {

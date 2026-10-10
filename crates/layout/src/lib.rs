@@ -1133,6 +1133,97 @@ impl PageBuilder<'_> {
     }
 }
 
+/// Place document-end notes in normal text flow, continuing their paragraph lines onto later
+/// columns or pages. Non-text objects stay indivisible; if one cannot fit in the remaining space,
+/// it moves whole to the next column/page (or overflows an otherwise empty page to guarantee
+/// progress).
+fn place_endnotes(pb: &mut PageBuilder<'_>, ctx: &mut Ctx<'_>, doc: &Document, ids: &[u32], block: usize) {
+    let mut first = true;
+    for &id in ids {
+        let Some(part) = doc.parts.get(&id) else { continue };
+        let BoxLayout { items, height, .. } = layout_box(ctx, StoryRef::Part(id), &part.blocks, &[], pb.col_w(), None, 0, None);
+        let mut note = NoteBox { id, items, h: height, cont: false };
+        let mut page_steps = 0usize;
+        loop {
+            if first {
+                if pb.y + 20.0 + note.first_piece() > pb.bottom && !pb.at_top() {
+                    pb.advance(block, pb.top);
+                }
+                pb.y += 12.0;
+                let (x, y) = (pb.col_x(), pb.y);
+                if let Some(page) = pb.page() {
+                    page.items.push(Placed::Rule { x0: x, y0: y, x1: x + 144.0, y1: y, border: Border::single(0.5) });
+                }
+                pb.y += 8.0;
+                first = false;
+            } else if note.cont {
+                if pb.y + NOTE_SEP > pb.bottom && !pb.at_top() {
+                    pb.advance(block, pb.top);
+                }
+                let (x, y, width) = (pb.col_x(), pb.y, pb.col_w());
+                if let Some(page) = pb.page() {
+                    page.items.push(Placed::Rule {
+                        x0: x,
+                        y0: y + NOTE_SEP / 2.0,
+                        x1: x + width,
+                        y1: y + NOTE_SEP / 2.0,
+                        border: Border::single(0.5),
+                    });
+                }
+                pb.y += NOTE_SEP;
+            }
+
+            let room = (pb.bottom - pb.y).max(0.0);
+            if note.h <= room + 0.01 {
+                append_note_fragment(pb, note);
+                break;
+            }
+            let cut = note.cuts().into_iter().rev().find(|cut| *cut <= room + 0.01);
+            if let Some(cut) = cut {
+                let (head, tail) = note.split(cut);
+                append_note_fragment(pb, head);
+                note = tail;
+                pb.advance(block, pb.top);
+                page_steps += 1;
+            } else if !pb.at_top() {
+                pb.advance(block, pb.top);
+                page_steps += 1;
+            } else {
+                let cut = note.cuts().first().copied().unwrap_or(note.h);
+                if cut < note.h - 0.01 {
+                    let (head, tail) = note.split(cut);
+                    append_note_fragment(pb, head);
+                    note = tail;
+                    pb.advance(block, pb.top);
+                    page_steps += 1;
+                } else {
+                    // An indivisible object or oversized first line is emitted whole. This can
+                    // extend past the body rectangle, but cannot clip or discard source content.
+                    append_note_fragment(pb, note);
+                    break;
+                }
+            }
+            // Splitting consumes at least one line. If hostile input exceeds the normal page
+            // bound, emit any remainder intact rather than silently losing it.
+            if page_steps >= MAX_NOTE_PAGES {
+                append_note_fragment(pb, note);
+                break;
+            }
+        }
+    }
+}
+
+fn append_note_fragment(pb: &mut PageBuilder<'_>, note: NoteBox) {
+    let (x, y) = (pb.col_x(), pb.y);
+    if let Some(page) = pb.page() {
+        for mut item in note.items {
+            item.translate(x, y);
+            page.items.push(item);
+        }
+    }
+    pb.y += note.h;
+}
+
 /// Lay out the whole document.
 pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> DocLayout {
     let t0 = now_ms();
@@ -1364,7 +1455,8 @@ fn layout_pass(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions, re
     if pb.pages.is_empty() {
         pb.new_page(0, sect_ref.margin_top);
     }
-    // Endnotes after the last paragraph.
+    // Endnotes flow after the last body paragraph. Unlike footnotes, they are not anchored to
+    // the bottom of a page, but their stories can use the same safe line-boundary splitter.
     let endnotes: Vec<u32> = {
         let mut ids: Vec<(u32, u32)> = ctx
             .fields
@@ -1377,34 +1469,7 @@ fn layout_pass(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions, re
         ids.into_iter().map(|(_, id)| id).collect()
     };
     if !endnotes.is_empty() && !web {
-        pb.y += 12.0;
-        let (x, ry) = (pb.col_x(), pb.y);
-        if let Some(pg) = pb.page() {
-            pg.items.push(Placed::Rule {
-                x0: x,
-                y0: ry,
-                x1: x + 144.0,
-                y1: ry,
-                border: Border { style: wordcraft_doc::props::BorderStyle::Single, width: 0.5, color: None, space: 0.0 },
-            });
-        }
-        pb.y += 8.0;
-        for id in endnotes {
-            let Some(part) = doc.parts.get(&id) else { continue };
-            let blocks = part.blocks.clone();
-            let BoxLayout { items, height: h, .. } = layout_box(&mut ctx, StoryRef::Part(id), &blocks, &[], pb.col_w(), None, 0, None);
-            if pb.y + h > pb.bottom && !pb.at_top() {
-                pb.advance(block, pb.top);
-            }
-            let (x, y) = (pb.col_x(), pb.y);
-            if let Some(pg) = pb.page() {
-                for mut it in items {
-                    it.translate(x, y);
-                    pg.items.push(it);
-                }
-            }
-            pb.y += h;
-        }
+        place_endnotes(&mut pb, &mut ctx, doc, &endnotes, block);
     }
     pb.finish_page();
     // Footnotes still continuing after the last page get pages of their own. Each page takes at
