@@ -26,7 +26,7 @@ from a signed download, without losing work.
 | Never-crash standard (no panics, hostile-param fuzzing, panic guard) | done |
 | Autosave and crash recovery | AutoSave plus separate native recovery snapshots, restart restore/discard/text comparison; Linux crash tests pass, Windows/macOS power-loss verification outstanding |
 | **DOCX fidelity against a corpus of real-world files** (open, render, round-trip, fix) | Synthetic preservation regressions started; independent real-world corpus verification still missing |
-| Long footnotes that continue onto later pages | landed (40% page-area cap; continuation pages keep remaining lines visible). Page-specific note styles and Word parity are unverified |
+| Long footnotes that continue onto later pages | landed (40% page-area cap; continuation pages keep remaining lines visible). A synthetic DOCX reopen adds a visible note marker absent in the pre-save raster; Word behavior and page-specific note styles remain unverified |
 | Balanced multicolumn layout | missing (≈4 h) |
 | Native printing (today printing goes through PDF) | missing (≈4 h) |
 | Signed builds for macOS, Windows, Linux, FreeBSD and web | pipeline written; **needs the GitHub remote and release secrets from the owner** |

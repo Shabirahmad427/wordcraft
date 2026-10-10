@@ -274,6 +274,16 @@ fn next_column_with_inherited_page_furniture_survives_undo_recovery_docx_and_pdf
     reopened.run("file.open", &json!({"path":docx})).unwrap();
     let after = reopened.layout();
     assert_eq!(before.pages.len(), after.pages.len());
+    let reopened_body = reopened.doc.plain_text(StoryRef::Body);
+    assert!(reopened_body.contains("Methods and evidence"));
+    assert!(reopened_body.contains("Result 3/1: measured value and interpretation."));
+    assert!(reopened.doc.parts.values().any(|part| {
+        part.kind == PartKind::Footnote
+            && part
+                .blocks
+                .iter()
+                .any(|block| matches!(&**block, wordcraft_engine::doc::Block::Para(p) if p.text.contains("A supporting academic note.")))
+    }));
     for (index, (a, b)) in before.pages.iter().zip(&after.pages).enumerate() {
         assert_eq!((a.w, a.h, a.number, a.section), (b.w, b.h, b.number, b.section));
         let original_pos = before.caret(&Pos::body(1, 0)).unwrap();
