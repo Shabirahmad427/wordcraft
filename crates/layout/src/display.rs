@@ -383,7 +383,7 @@ fn item(doc: &Document, it: &Placed, opts: &DisplayOptions, alpha: f32, out: &mu
         Placed::Image { rect, media, crop, spin, .. } => {
             spun(*spin, *rect, vec![Draw::Image { rect: *rect, media: media.clone(), crop: *crop, alpha }], out)
         }
-        Placed::Shape { rect, kind, fill, stroke, stroke_width, effects, spin } => spun(
+        Placed::Shape { rect, kind, fill, stroke, stroke_width, effects, spin, .. } => spun(
             *spin,
             *rect,
             vec![Draw::Shape {

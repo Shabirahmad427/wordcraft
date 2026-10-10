@@ -95,6 +95,7 @@ pub enum Placed {
     },
     Shape {
         rect: Rect,
+        story: StoryRef,
         kind: wordcraft_doc::para::ShapeKind,
         fill: Option<Rgb>,
         stroke: Option<Rgb>,
@@ -1332,10 +1333,11 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
                     let body_content = match item {
                         Placed::Lines { story, .. }
                         | Placed::Image { story, .. }
+                        | Placed::Shape { story, .. }
                         | Placed::Graphic { story, .. }
                         | Placed::Object { story, .. }
                         | Placed::Cell { story, .. } => *story == StoryRef::Body,
-                        Placed::Fill { .. } | Placed::Rule { .. } | Placed::Shape { .. } => false,
+                        Placed::Fill { .. } | Placed::Rule { .. } => false,
                     };
                     body_content && v_span(item).1 > pg.body.bottom() + 0.5
                 })
@@ -1451,7 +1453,7 @@ fn float_items(o: &InlineObject, rect: Rect, outer: (Spin, Point), story: StoryR
             vec![Placed::Image { rect, media: media.clone(), crop: *crop, story, path: Path(path.to_vec()), off, spin }]
         }
         InlineObject::Shape { kind, fill, stroke, stroke_width, effects, .. } => {
-            vec![Placed::Shape { rect, kind: *kind, fill: *fill, stroke: *stroke, stroke_width: *stroke_width, effects: *effects, spin }]
+            vec![Placed::Shape { rect, story, kind: *kind, fill: *fill, stroke: *stroke, stroke_width: *stroke_width, effects: *effects, spin }]
         }
         InlineObject::Graphic { graphic, .. } => {
             vec![Placed::Graphic { rect, graphic: graphic.clone(), story, path: Path(path.to_vec()), off, spin }]

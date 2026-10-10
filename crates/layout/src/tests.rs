@@ -65,6 +65,37 @@ fn oversized_unsplittable_table_row_reports_its_overflow_page() {
 }
 
 #[test]
+fn oversized_floating_shape_reports_its_overflow_page() {
+    let mut doc = Document::from_text("Body text");
+    doc.last_section.page_h = 220.0;
+    doc.last_section.margin_top = 30.0;
+    doc.last_section.margin_bottom = 30.0;
+    doc.insert_object(
+        &Pos::body(0, 0),
+        InlineObject::Shape {
+            kind: wordcraft_doc::para::ShapeKind::Rectangle,
+            w: 60.0,
+            h: 80.0,
+            fill: None,
+            stroke: None,
+            stroke_width: 1.0,
+            effects: Default::default(),
+            float: wordcraft_doc::para::Float {
+                wrap: wordcraft_doc::para::Wrap::BehindText,
+                v_rel: wordcraft_doc::para::Anchor::Page,
+                y: 170.0,
+                ..Default::default()
+            },
+            story: None,
+        },
+        &Default::default(),
+    )
+    .unwrap();
+    let result = lay(&doc);
+    assert_eq!(result.overflow_pages, vec![0]);
+}
+
+#[test]
 fn long_paragraph_wraps_and_paginates() {
     let text = "The quick brown fox jumps over the lazy dog. ".repeat(400);
     let d = Document::from_text(&text);
