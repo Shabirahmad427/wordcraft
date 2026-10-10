@@ -1098,6 +1098,86 @@ fn footnotes_sit_at_page_bottom() {
 }
 
 #[test]
+fn footnote_in_later_column_reflows_the_whole_page_without_losing_text() {
+    use wordcraft_doc::para::NoteKind;
+    let text = "Body sequence keeps every word visible. ".repeat(100);
+    let mut doc = Document::from_text(&text);
+    doc.last_section.page_h = 360.0;
+    doc.last_section.margin_top = 24.0;
+    doc.last_section.margin_bottom = 24.0;
+    doc.last_section.columns.count = 2;
+    let note_text = "A long supporting note needs room beneath body text. ".repeat(10);
+    let note = doc.add_part(
+        wordcraft_doc::PartKind::Footnote,
+        vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text(&note_text, Default::default()))],
+    );
+    let anchor = Pos::body(0, 900);
+    doc.insert_object(&anchor, InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() }, &Default::default()).unwrap();
+
+    let first_pass = layout_pass(&doc, &mut LayoutCache::new(), &LayoutOptions::default(), &[]).0;
+    let first_anchor = first_pass.caret(&anchor).expect("first pass places the reference");
+    assert_eq!(first_anchor.page, 0, "fixture should place the note on the first page: {first_anchor:?}");
+    assert!(first_anchor.x > 300.0, "fixture should anchor in the second column: {first_anchor:?}");
+
+    let result = lay(&doc);
+    let column_bottom = |layout: &DocLayout, page_index: usize, second_column: bool| {
+        layout.pages[page_index]
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let Placed::Lines { story: StoryRef::Body, x, y, para, l0, l1, .. } = item
+                    && (*x > 300.0) == second_column
+                {
+                    item_bottom(*y, para, *l0, *l1)
+                } else {
+                    None
+                }
+            })
+            .fold(0.0f32, f32::max)
+    };
+    assert!(
+        column_bottom(&result, 0, false) < column_bottom(&first_pass, 0, false) - 1.0,
+        "a footnote in column two must make the earlier column reflow too: first pass {}, final {}",
+        column_bottom(&first_pass, 0, false),
+        column_bottom(&result, 0, false),
+    );
+
+    // Every body/note byte is laid out once, including the reference object, and each page's
+    // body lines end above the note separator even when notes are anchored in a later column.
+    let mut coverage = HashMap::<(StoryRef, Path), Vec<u8>>::new();
+    for (page_index, page) in result.pages.iter().enumerate() {
+        let mut body_bottom = 0.0f32;
+        let mut note_top = f32::MAX;
+        for item in &page.items {
+            let Placed::Lines { story, path, para, l0, l1, x: _, y, .. } = item else { continue };
+            if *story == StoryRef::Body {
+                body_bottom = body_bottom.max(item_bottom(*y, para, *l0, *l1).unwrap_or(*y));
+            } else if *story == StoryRef::Part(note) {
+                note_top = note_top.min(*y + para.lines.get(*l0).map_or(0.0, |line| line.top));
+            }
+            let text_len = doc.para(*story, path).map_or(0, |source| source.text.len());
+            let ranges = coverage.entry((*story, path.clone())).or_insert_with(|| vec![0; text_len]);
+            for line in para.lines.get(*l0..*l1).unwrap_or(&[]) {
+                for cluster in para.clusters.get(line.c0..line.c1).unwrap_or(&[]) {
+                    for byte in ranges.iter_mut().take(cluster.end).skip(cluster.start) {
+                        *byte = byte.saturating_add(1);
+                    }
+                }
+            }
+        }
+        if note_top < f32::MAX {
+            assert!(body_bottom <= note_top - NOTE_SEP / 2.0 + 1.0, "body overlaps a footnote on page {page_index}: {body_bottom} > {note_top}");
+        }
+    }
+    for (story, path) in [(StoryRef::Body, Path::top(0)), (StoryRef::Part(note), Path::top(0))] {
+        let para = doc.para(story, &path).expect("fixture paragraph exists");
+        let bytes = coverage.get(&(story, path)).expect("paragraph appears in layout");
+        assert!(bytes.iter().all(|count| *count == 1), "text missing or duplicated in {story:?}: {bytes:?}");
+        assert_eq!(bytes.len(), para.text.len());
+    }
+}
+
+#[test]
 fn deleted_note_anchors_take_no_number_and_print_no_note() {
     use wordcraft_doc::para::NoteKind;
     let mut d = Document::from_text("Alpha Beta Gamma");

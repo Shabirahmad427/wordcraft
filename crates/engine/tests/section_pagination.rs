@@ -204,6 +204,14 @@ fn next_column_with_inherited_page_furniture_survives_undo_recovery_docx_and_pdf
         PartKind::Footnote,
         vec![wordcraft_engine::doc::para_block(Paragraph::with_text("A supporting academic note.", Default::default()))],
     );
+    // A footnote story's first paragraph carries its own display mark (`w:footnoteRef`).
+    // Model it in memory so the pre-save document is semantically equivalent to the DOCX.
+    doc.insert_object(
+        &Pos { story: StoryRef::Part(note), path: Path::top(0), off: 0 },
+        InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() },
+        &Default::default(),
+    )
+    .unwrap();
     doc.insert_object(&Pos::body(1, 6), InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() }, &Default::default())
         .unwrap();
     let mut table = Table::new(4, 2, doc.last_section.text_width());
@@ -292,6 +300,11 @@ fn next_column_with_inherited_page_furniture_survives_undo_recovery_docx_and_pdf
         assert!((original_pos.x - reopened_pos.x).abs() < 1.0, "column position changed after DOCX reopen: {original_pos:?} -> {reopened_pos:?}");
         let rendered = wordcraft_render::render_page(&reopened.doc, b, 1.0, &wordcraft_render::RenderOptions::default());
         assert_eq!((rendered.width, rendered.height), (b.w.ceil() as u32, b.h.ceil() as u32));
+        assert_eq!(
+            wordcraft_render::render_page(&session.doc, a, 1.0, &wordcraft_render::RenderOptions::default()).to_straight(),
+            rendered.to_straight(),
+            "equivalent in-memory and reopened footnotes differ on page {index}"
+        );
     }
     std::fs::remove_dir_all(directory).unwrap();
 }

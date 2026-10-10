@@ -1,6 +1,6 @@
 # Layout and pagination parity with Microsoft Word
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first version; line breaking, pagination and object placement checked against Word's behaviour from the layout source on origin/main) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (cross-column footnote reservation and equivalent DOCX marker rendering regression verified internally; no Word reference comparison) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 A document only "opens correctly" if its pages break where Word breaks them: the same lines, the
 same page count, footnotes and pictures on the same pages. This checklist covers line breaking,
@@ -31,7 +31,7 @@ font can't match Word's metrics.
 | Columns, column breaks, separators | 🟡 | Basic column flow and separators work; `NextColumn` advances within the current column sequence and rolls over at its final column (internal layout tests); columns do not balance at a continuous section break or document end; Word comparison outstanding | 4–6 |
 | Section breaks (next page, next column, continuous, even, odd), different first page, odd/even headers | 🟡 | Internal tests cover column movement, rollover and page-number restart; complex geometry changes on one physical page and Word reference comparison remain outstanding | 1–2 |
 | Body clearance below headers and above footers | 🟡 | Tall default/inherited, first-page and enabled even-page stories reserve body clearance; reservation uses the tallest possible variant and can leave extra whitespace; Word comparison outstanding | 2–4 |
-| Footnotes at the page bottom, endnotes at the end, note numbering | 🟡 | A long note continues onto the next page at a line boundary (its first line stays with the reference), first in that page's note area under a full-width continuation separator (#352); the document's own `w:continuationSeparator`/`w:continuationNotice` aren't read (default line, no notice); per-section restart partial. Synthetic DOCX reopen adds a visible note marker absent in the pre-save raster; Word behavior not checked | 2–4 |
+| Footnotes at the page bottom, endnotes at the end, note numbering | 🟡 | Long notes continue at line boundaries; later-column notes reserve space page-wide and reflow earlier columns. Equivalent in-memory and DOCX-reopened note stories render pixel-identically when the in-memory model contains its own reference mark (`w:footnoteRef`); the prior raster difference came from an incomplete synthetic source fixture. `w:continuationSeparator`/`w:continuationNotice` aren't read (default line, no notice); per-section restart is partial. No Microsoft Word reference comparison | 2–4 |
 | Tables: row heights (at least/exact), rows split across pages, header rows repeat, Can't Split | ✅ | 2026-10-06, #138 | — |
 | Tables: autofit to contents/window, fixed widths, Word 2013 edge | 🟡 | #137; #44: AutoFit Contents measures each column's narrowest and widest text and shares the width like Word, once (not live as you type); cell preferred widths and spans still differ | 3–5 |
 | Floating tables (`w:tblpPr`) | 🟡 | #137; overlap rules untested | 2–3 |
@@ -69,6 +69,7 @@ font can't match Word's metrics.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-10 | minor | Tall default/inherited/first/even header and footer stories reserve body clearance; NextColumn starts in the following column and rolls over at the final column. Internal tests added; Word comparison outstanding |
+| 2026-10-10 | minor | Multicolumn footnotes reserve note space across the page and reflow earlier columns; equivalent source/DOCX note-marker raster equality and text coverage tested; Word comparison outstanding |
 | 2026-10-10 | trivial | Long footnotes continue onto the next page with a continuation separator (#352) |
 | 2026-10-10 | trivial | Layout reports vertical body overflow pages and the UI keeps a warning visible; horizontal overflow and text-box clipping remain undetected |
 | 2026-10-10 | trivial | Rotated and flipped objects laid out and drawn (#332) |

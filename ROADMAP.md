@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (header/footer clearance and NextColumn section starts implemented and internally tested; independent Word comparison remains open) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (page-wide footnote reflow across columns; equivalent DOCX note-marker raster regression fixed; independent Word comparison remains open) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and
 agent control. This page is the summary; the assessment is
@@ -26,7 +26,7 @@ from a signed download, without losing work.
 | Never-crash standard (no panics, hostile-param fuzzing, panic guard) | done |
 | Autosave and crash recovery | AutoSave plus separate native recovery snapshots, restart restore/discard/text comparison; Linux crash tests pass, Windows/macOS power-loss verification outstanding |
 | **DOCX fidelity against a corpus of real-world files** (open, render, round-trip, fix) | Synthetic preservation regressions started; independent real-world corpus verification still missing |
-| Long footnotes that continue onto later pages | landed (40% page-area cap; continuation pages keep remaining lines visible). A synthetic DOCX reopen adds a visible note marker absent in the pre-save raster; Word behavior and page-specific note styles remain unverified |
+| Long footnotes that continue onto later pages | landed (40% page-area cap; continuation pages keep remaining lines visible). Multicolumn pagination now reserves note space page-wide and reflows earlier columns. Equivalent in-memory and DOCX-reopened notes match pixels when the in-memory story includes its OOXML self-reference mark. Word behavior, page-specific note styles and custom continuation separators remain unverified |
 | Balanced multicolumn layout | missing (≈4 h) |
 | Native printing (today printing goes through PDF) | missing (≈4 h) |
 | Signed builds for macOS, Windows, Linux, FreeBSD and web | pipeline written; **needs the GitHub remote and release secrets from the owner** |
@@ -175,7 +175,7 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 ## Phase 4B pagination reliability (2026-10-10)
 
 - Long footnotes split at line boundaries, reserve up to 40% of the page body, continue in order and emit continuation pages after body text ends.
-- Multicolumn text flows through configured columns and explicit column breaks; `NextColumn` starts in the next column or advances from the final column to one new page. Column balancing remains unimplemented, and footnotes discovered in a later column can reduce the available body area without reflowing earlier columns.
+- At the Phase 4B baseline, multicolumn text flowed through configured columns and explicit breaks, but notes discovered in a later column did not reflow earlier columns. Phase 4C.3 below adds that page-wide reservation pass. Column balancing remains unimplemented.
 - Headers and footers render with inheritance and first/even selection. Pagination now reserves clearance for the tallest applicable story variant, which can leave extra whitespace when the selected header or footer is shorter. Independent Word comparison remains open.
 - Oversized inline objects remain whole and permit following text to progress. Existing table pagination continues to split rows where possible and places unsplittable rows/repeated headers oversized on an empty page without retry loops. This can extend beyond page bounds and is not clipped or automatically rescaled.
 - Added regression cases for long-note continuity plus Undo/recovery/DOCX reopen and oversized inline progress. Existing table regressions cover splittable and `cant_split` rows and oversized repeated headers; exploratory section tests are not wired into the crate test suite and are not counted as verified coverage.
@@ -188,3 +188,10 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 - Implemented `DocLayout::overflow_pages` for body content extending below the available body rectangle and a persistent localized status-bar warning. Oversized images, floating shapes and unsplittable table rows remain intact and have focused regression tests. Horizontal overflow and text-box clipping are not detected.
 - Validation: all six `cargo xtask ci` gates passed; the workspace lists 1,076 test cases. GUI and CLI release builds passed on Linux. A separate recount attempt hit sandbox TCP bind restrictions in desktop control-server tests. No Microsoft Word reference outputs or native Windows/macOS verification were available.
 - Phase 4B validation baseline: all six CI gates passed with **865 tests** (47 suites), and GUI/CLI release builds succeeded on Linux. Complex note objects and mixed section transitions, retroactive multicolumn footnote reflow, complex column balancing, overflow choices, native printing and independent Word/Windows/macOS comparison remained open at that baseline. These checks do not establish Microsoft Word pagination parity.
+
+## Phase 4C.3 — footnote rendering consistency and cross-column reflow (2026-10-10)
+
+- The DOCX raster difference came from a synthetic in-memory footnote story that omitted its own display mark. The DOCX writer correctly serializes a `w:footnoteRef` in that story, and the importer keeps it as the note's leading reference object. The fixture now models that mark before the first render; its strict per-page raster comparison passes after reopen. This validates equivalent model/DOCX behavior and does not hide the marker.
+- Print layout now repeats with page-level footnote reservations when a note appears in a multicolumn section. Each pass reserves the note area across every column on its physical page, moving earlier body lines before placing the note. A bounded high-water fallback keeps note anchors that move between pages from reintroducing overlap; that fallback can leave extra blank space in an unusual nonconverging document.
+- A layout regression verifies a note anchored in column two reflows column one, with each body and note text byte present once and body lines above the separator. The existing end-to-end test continues through Undo, recovery, DOCX save/reopen, raster equality and PDF export.
+- Internal Linux verification only. No Microsoft Word-produced reference output was available or used. Footnote tables/objects, exact continuation placement at complex section transitions, custom continuation separators, endnote continuation and column balancing remain open; Word 365 pagination parity is not claimed.

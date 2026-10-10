@@ -804,6 +804,12 @@ struct PageBuilder<'a> {
     carry: Vec<NoteBox>,
     /// Page bottom before footnotes took space.
     orig_bottom: f32,
+    /// Conservative page-wide footnote space learned from the preceding pagination pass.
+    reserved_note_h: f32,
+    /// Footnote reservation needed on each finalized page in this pass.
+    page_note_heights: Vec<f32>,
+    /// Reservations produced by the preceding complete-document pass.
+    reserved_note_heights: &'a [f32],
     /// Body bottom after reserving the tallest applicable footer story.
     clearance_bottom: f32,
     /// The previous paragraph: (style, contextual spacing, space after) for contextual spacing.
@@ -967,15 +973,16 @@ impl PageBuilder<'_> {
             return;
         }
         self.apply_valign();
-        self.flush_notes();
+        let note_h = self.flush_notes();
+        self.page_note_heights.push(note_h);
         self.page_finished = true;
     }
     /// Place the collected footnotes at the bottom of the current page. When they don't all fit
     /// below the body (`bottom`), the note that doesn't is split at a line and its rest, with
     /// the notes after it, continues on the next page.
-    fn flush_notes(&mut self) {
+    fn flush_notes(&mut self) -> f32 {
         if self.notes.is_empty() {
-            return;
+            return 0.0;
         }
         let total = self.notes_h();
         let x = self.sect.margin_left + self.sect.gutter;
@@ -1013,6 +1020,7 @@ impl PageBuilder<'_> {
             self.carry.extend(rest.by_ref());
             break;
         }
+        let placed_h = placed.iter().map(|(n, _)| n.h).sum::<f32>();
         if let Some(pg) = self.pages.last_mut() {
             let len = if cont { self.sect.text_width() } else { 144.0 };
             let sy = top + NOTE_SEP / 2.0;
@@ -1024,6 +1032,10 @@ impl PageBuilder<'_> {
                 }
             }
         }
+        // Reserve from the footnote separator to the bottom of the usable body area. If the
+        // notes could not fit below the current body, the next pagination pass will move body
+        // lines above this separator before notes are placed again.
+        (self.orig_bottom - top).max(placed_h + NOTE_SEP).min((self.orig_bottom - self.top).max(0.0))
     }
     /// Section vertical alignment: move the page's body down (centre/bottom).
     fn apply_valign(&mut self) {
@@ -1035,7 +1047,7 @@ impl PageBuilder<'_> {
         if self.web {
             return;
         }
-        let space = (self.orig_bottom - self.notes_h() - self.y).max(0.0) * k;
+        let space = (self.orig_bottom - self.notes_h().max(self.reserved_note_h) - self.y).max(0.0) * k;
         let start = self.page_items_start;
         if let Some(pg) = self.pages.last_mut() {
             for it in pg.items.iter_mut().skip(start) {
@@ -1087,13 +1099,15 @@ impl PageBuilder<'_> {
         self.col = 0;
         self.cols = s.column_boxes();
         self.top = body_top;
-        self.bottom = if self.web { f32::MAX / 8.0 } else { body_bottom };
-        self.orig_bottom = self.bottom;
+        self.reserved_note_h = self.reserved_note_heights.get(self.pages.len() - 1).copied().unwrap_or(0.0);
+        self.reserved_note_h = self.reserved_note_h.min((body_bottom - body_top).max(0.0));
+        self.orig_bottom = if self.web { f32::MAX / 8.0 } else { body_bottom };
+        self.bottom = self.orig_bottom - if self.web { 0.0 } else { self.reserved_note_h };
         self.y = self.top;
         // Notes continued from the page before come first in this page's note area.
         if !self.carry.is_empty() && !self.web {
             self.notes = std::mem::take(&mut self.carry);
-            self.bottom -= self.notes_h();
+            self.bottom = self.bottom.min(self.orig_bottom - self.notes_h());
         }
     }
     fn col_x(&self) -> f32 {
@@ -1121,6 +1135,70 @@ impl PageBuilder<'_> {
 
 /// Lay out the whole document.
 pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> DocLayout {
+    let t0 = now_ms();
+    let has_multicolumn_notes = opts.view == ViewMode::Print
+        && doc.sections().iter().any(|(_, section)| section.columns.count > 1)
+        && doc
+            .para_paths(StoryRef::Body)
+            .iter()
+            .filter_map(|path| doc.para(StoryRef::Body, path))
+            .flat_map(|para| &para.objects)
+            .any(|object| matches!(object, InlineObject::NoteRef { kind: wordcraft_doc::para::NoteKind::Footnote, .. }));
+    if !has_multicolumn_notes {
+        let (mut result, _) = layout_pass(doc, cache, opts, &[]);
+        result.ms = now_ms() - t0;
+        return result;
+    }
+    let mut reservations = Vec::new();
+    let mut last = None;
+    // A note found in a later column can require earlier columns on the same page to reflow.
+    // Repeat until the page note areas stop moving. This is bounded for hostile/oscillating
+    // pagination; the high-water reservation keeps the bounded fallback from reintroducing
+    // overlap if note anchors move between columns or pages while the body is reflowed.
+    let mut high_water: Vec<f32> = Vec::new();
+    let mut stable = false;
+    for _ in 0..24 {
+        let (result, actual) = layout_pass(doc, cache, opts, &reservations);
+        for (i, height) in actual.iter().copied().enumerate() {
+            if high_water.len() <= i {
+                high_water.resize(i + 1, 0.0);
+            }
+            high_water[i] = high_water[i].max(height);
+        }
+        let covered = actual.iter().enumerate().all(|(i, height)| reservations.get(i).is_some_and(|reserved| *height <= *reserved + 0.1));
+        if covered && reservations == high_water {
+            last = Some(result);
+            stable = true;
+            break;
+        }
+        reservations.clone_from(&high_water);
+        last = Some(result);
+    }
+    let mut result = last.unwrap_or_default();
+    if !stable {
+        // Converge under the accumulated safe reservations if anchors kept moving in the first
+        // bounded window. Any newly occupied page adds to the high-water map and gets another pass.
+        for _ in 0..8 {
+            let current = high_water.clone();
+            let (candidate, actual) = layout_pass(doc, cache, opts, &current);
+            let covered = actual.iter().enumerate().all(|(i, height)| current.get(i).is_some_and(|reserved| *height <= *reserved + 0.1));
+            for (i, height) in actual.iter().copied().enumerate() {
+                if high_water.len() <= i {
+                    high_water.resize(i + 1, 0.0);
+                }
+                high_water[i] = high_water[i].max(height);
+            }
+            result = candidate;
+            if covered && current == high_water {
+                break;
+            }
+        }
+    }
+    result.ms = now_ms() - t0;
+    result
+}
+
+fn layout_pass(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions, reserved_note_heights: &[f32]) -> (DocLayout, Vec<f32>) {
     let t0 = now_ms();
     let env = env_hash(doc, opts);
     if env != cache.env {
@@ -1188,6 +1266,9 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         notes: Vec::new(),
         carry: Vec::new(),
         orig_bottom: 0.0,
+        reserved_note_h: 0.0,
+        page_note_heights: Vec::new(),
+        reserved_note_heights,
         clearance_bottom: 0.0,
         prev: None,
         excl: Vec::new(),
@@ -1259,8 +1340,10 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
                 page.body = Rect::new(sect.margin_left + sect.gutter, body_top, sect.text_width(), (pb.clearance_bottom - body_top).max(0.0));
             }
             pb.top = body_top;
-            pb.bottom = pb.clearance_bottom;
-            pb.orig_bottom = pb.bottom;
+            pb.orig_bottom = pb.clearance_bottom;
+            pb.reserved_note_h =
+                pb.reserved_note_heights.get(pb.pages.len().saturating_sub(1)).copied().unwrap_or(0.0).min((pb.orig_bottom - body_top).max(0.0));
+            pb.bottom = pb.orig_bottom - pb.reserved_note_h.max(pb.notes_h());
             pb.y = pb.top;
         } else {
             // Continuous: new column layout below the current text.
@@ -1383,7 +1466,8 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
                 .then_some(page)
         })
         .collect();
-    DocLayout { pages, overflow_pages, index, ms: now_ms() - t0, text_boxes: ctx.boxes.total() }
+    let note_heights = pb.page_note_heights.clone();
+    (DocLayout { pages, overflow_pages, index, ms: now_ms() - t0, text_boxes: ctx.boxes.total() }, note_heights)
 }
 
 fn item_bottom(y: f32, para: &ParaLayout, l0: usize, l1: usize) -> Option<f32> {
@@ -1786,12 +1870,10 @@ fn place_para(ctx: &mut Ctx, pb: &mut PageBuilder, p: &Paragraph, block: usize, 
                     }
                 }
             }
-            let extra: f32 = line_notes.iter().map(|n| n.h).sum::<f32>()
-                + if pb.notes.is_empty() && new_notes.is_empty() && !line_notes.is_empty() { NOTE_SEP } else { 0.0 };
-            let limit = pb.bottom
-                - new_notes.iter().map(|n| n.h).sum::<f32>()
-                - if pb.notes.is_empty() && !new_notes.is_empty() { NOTE_SEP } else { 0.0 }
-                - extra;
+            let candidate_notes_h: f32 = pb.notes.iter().chain(&new_notes).chain(&line_notes).map(|note| note.h).sum();
+            let candidate_note_h =
+                if pb.notes.is_empty() && new_notes.is_empty() && line_notes.is_empty() { 0.0 } else { NOTE_SEP + candidate_notes_h };
+            let limit = pb.orig_bottom - pb.reserved_note_h.max(candidate_note_h);
             let bottom = pb.y + lead + (l.top + l.height - first.top);
             // Notes too long for the rest of the page continue on the next one: the line still
             // fits if the notes before its last one, and that one's first line, fit below it.
@@ -1846,9 +1928,8 @@ fn place_para(ctx: &mut Ctx, pb: &mut PageBuilder, p: &Paragraph, block: usize, 
         // Keep only the notes of the lines that are placed.
         let placed_end = pl.lines.get(l1.saturating_sub(1)).map(|l| l.c1).unwrap_or(0);
         new_notes.retain(|n| notes.iter().any(|(ci, nid)| *nid == n.id && *ci < placed_end));
-        let before = pb.notes_h();
         pb.notes.extend(new_notes);
-        pb.bottom -= pb.notes_h() - before;
+        pb.bottom = pb.orig_bottom - pb.reserved_note_h.max(pb.notes_h());
         let x = pb.col_x();
         let y = pb.y + lead;
         // Notes that no longer fit below the text (a long one, or the rest of one continued from
