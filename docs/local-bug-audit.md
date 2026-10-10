@@ -18,7 +18,7 @@ Validated fixes are pushed to the fork main; upstream issues and pull requests r
 | #187: Open replaces unsaved work | Upstream `802ba30` | Existing fix verified by `open_asks_before_discarding_unsaved_work`, cancellation, and save-prompt tests. |
 | #168: lossy exports clear dirty state | Upstream `802ba30` | Existing fix verified by `web_downloads_that_drop_content_leave_the_document_unsaved` and save-prompt tests. Browser download delivery was not manually tested. |
 | #94: synchronous Linux file dialogs freeze the UI | PR #246 plus lifecycle guard | Native dialogs now complete asynchronously. Regression tests cover delayed saves, cancellation, single-dialog enforcement, deferred Close, and stale responses after document replacement. Live desktop portal behavior remains unverified. |
-| #241: missing Chinese UI glyphs in Windows release | Unresolved | Windows release packaging report read; not reproduced on this Linux host. |
+| #241: missing Chinese UI glyphs in Windows release | PR #248 | Updated release font pin, required Japanese/Chinese manifest coverage, bounded installed-font fallback and coverage tests. Windows release behavior remains unverified on this Linux host. |
 
 ## Validation
 

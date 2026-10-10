@@ -166,18 +166,39 @@ pub fn font_definitions(prefer_hans: bool) -> FontDefinitions {
     }
     fonts.families.insert(FontFamily::Name("medium".into()), vec!["InterMedium".into(), "Inter".into(), "SourceSans".into()]);
     fonts.families.insert(FontFamily::Name("semibold".into()), vec!["InterSemiBold".into(), "Inter".into(), "SourceSans".into()]);
-    for f in wordcraft_fonts::ui_cjk_fonts(prefer_hans) {
-        // The same static bytes the document fonts use: one copy in the binary.
-        let name = format!("{} {}", f.family, f.style);
-        fonts.font_data.insert(name.clone(), Arc::new(FontData::from_static(f.bytes)));
+    let add_cjk = |fonts: &mut FontDefinitions, name: String, data: FontData| {
+        fonts.font_data.insert(name.clone(), Arc::new(data));
         for fam in [FontFamily::Proportional, FontFamily::Name("medium".into()), FontFamily::Name("semibold".into())] {
             if let Some(v) = fonts.families.get_mut(&fam) {
                 v.push(name.clone());
             }
         }
+    };
+    let cjk = wordcraft_fonts::ui_cjk_fonts(prefer_hans);
+    for f in &cjk {
+        // The same static bytes the document fonts use: one copy in the binary.
+        add_cjk(&mut fonts, format!("{} {}", f.family, f.style), FontData::from_static(f.bytes));
+    }
+    // No embedded face covers the interface language (a build without craft-fonts, or without
+    // its Chinese face, #241): an installed CJK font, so the menus don't show boxes.
+    #[cfg(not(target_arch = "wasm32"))]
+    if wordcraft_fonts::ui_needs_system_cjk(prefer_hans, &cjk)
+        && let Some(f) = system_cjk_font(prefer_hans)
+    {
+        let mut data = FontData::from_static(&f.bytes);
+        data.index = f.index;
+        add_cjk(&mut fonts, format!("system {}", f.family), data);
     }
     // Symbols and emoji fall back to egui's defaults (kept in the families).
     fonts
+}
+
+/// The installed CJK interface font for a Chinese (`hans`) or other interface, read once.
+#[cfg(not(target_arch = "wasm32"))]
+fn system_cjk_font(hans: bool) -> Option<&'static wordcraft_fonts::SystemUiFont> {
+    static ZH: std::sync::OnceLock<Option<wordcraft_fonts::SystemUiFont>> = std::sync::OnceLock::new();
+    static OTHER: std::sync::OnceLock<Option<wordcraft_fonts::SystemUiFont>> = std::sync::OnceLock::new();
+    (if hans { &ZH } else { &OTHER }).get_or_init(|| wordcraft_fonts::system_cjk_ui_font(hans)).as_ref()
 }
 
 pub fn medium(size: f32) -> FontId {
