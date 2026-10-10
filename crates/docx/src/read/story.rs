@@ -238,6 +238,10 @@ impl Reader<'_> {
             let (props, mark) = self.pc.ppr(ppr);
             para.props = props;
             para.mark = mark;
+            if let Some(rpr) = ppr.child("w:rPr") {
+                para.mark.ins = rpr.child("w:ins").map(|e| self.revision(RevisionKind::Insert, e));
+                para.mark.del = rpr.child("w:del").map(|e| self.revision(RevisionKind::Delete, e));
+            }
             if let Some(s) = ppr.child("w:sectPr") {
                 para.section = Some(Box::new(self.read_section(s, rels)));
             }

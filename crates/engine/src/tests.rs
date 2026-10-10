@@ -663,6 +663,79 @@ fn tracked_split_gives_the_new_paragraph_mark_to_its_author() {
 }
 
 #[test]
+fn rejecting_tracked_paragraph_breaks_restores_the_original_text() {
+    for original in ["Owned ALPHA Owned BETA", "écriture العربية"] {
+        for off in [0, original.find(' ').unwrap() + 1, original.len()] {
+            for redo in [false, true] {
+                for reopen in [false, true] {
+                    let mut s = s();
+                    run(&mut s, "text.insert", json!({"text": original}));
+                    run(&mut s, "review.trackChanges", json!({"value": true}));
+                    run(&mut s, "caret.set", json!({"pos": {"block": 0, "off": off}}));
+                    run(&mut s, "text.newParagraph", json!({}));
+                    if redo {
+                        run(&mut s, "edit.undo", json!({}));
+                        run(&mut s, "edit.redo", json!({}));
+                    }
+                    if reopen {
+                        let bytes = crate::io::save_bytes("split.docx", &s.doc).unwrap();
+                        s = Session::new(crate::io::open_bytes("split.docx", &bytes).unwrap());
+                    }
+                    let ch = run(&mut s, "review.changes", json!({}));
+                    assert_eq!(ch.as_array().unwrap().len(), 1, "the paragraph break is a reviewable change");
+                    assert_eq!(ch[0]["text"], "\n");
+                    run(&mut s, "review.rejectAll", json!({}));
+                    assert_eq!(text(&s), original, "offset {off}, redo {redo}, reopen {reopen}");
+                    assert_eq!(s.doc.para_paths(StoryRef::Body).len(), 1);
+                    run(&mut s, "edit.undo", json!({}));
+                    assert_eq!(s.doc.para_paths(StoryRef::Body).len(), 2);
+                    run(&mut s, "edit.redo", json!({}));
+                    assert_eq!(text(&s), original);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn paragraph_break_review_accepts_or_rejects_only_the_chosen_break() {
+    for accept in [false, true] {
+        let mut s = s();
+        run(&mut s, "text.insert", json!({"text": "alpha beta gamma"}));
+        run(&mut s, "review.trackChanges", json!({"value": true}));
+        run(&mut s, "caret.set", json!({"pos": {"block": 0, "off": 6}}));
+        run(&mut s, "text.newParagraph", json!({}));
+        run(&mut s, "caret.set", json!({"pos": {"block": 1, "off": 5}}));
+        run(&mut s, "text.newParagraph", json!({}));
+        run(&mut s, "caret.set", json!({"pos": {"block": 0, "off": 6}}));
+        run(&mut s, if accept { "review.accept" } else { "review.reject" }, json!({}));
+        assert_eq!(text(&s), if accept { "alpha \nbeta \ngamma" } else { "alpha beta \ngamma" });
+        let ch = run(&mut s, "review.changes", json!({}));
+        assert_eq!(ch.as_array().unwrap().len(), 1, "the other break remains tracked");
+        run(&mut s, "review.rejectAll", json!({}));
+        assert_eq!(text(&s), if accept { "alpha \nbeta gamma" } else { "alpha beta gamma" });
+    }
+}
+
+#[test]
+fn rejecting_paragraph_breaks_keeps_text_formatting_and_table_cells() {
+    let mut s = s();
+    run(&mut s, "insert.table", json!({"rows": 1, "cols": 2}));
+    run(&mut s, "text.insert", json!({"text": "alpha beta"}));
+    run(&mut s, "select.text", json!({"text": "beta"}));
+    run(&mut s, "format.bold", json!({"value": true}));
+    let at = s.sel.anchor.clone();
+    run(&mut s, "caret.set", json!({"pos": serde_json::to_value(at).unwrap()}));
+    run(&mut s, "review.trackChanges", json!({"value": true}));
+    run(&mut s, "text.newParagraph", json!({}));
+    run(&mut s, "review.rejectAll", json!({}));
+    let paths = s.doc.para_paths(StoryRef::Body);
+    let para = paths.iter().filter_map(|p| s.doc.para(StoryRef::Body, p)).find(|p| p.text == "alpha beta").unwrap();
+    assert_eq!(para.props_of_char(6).bold, Some(true));
+    assert_eq!(paths.iter().filter(|p| p.cell().is_some()).count(), 2, "cells remain separate");
+}
+
+#[test]
 fn set_author_names_tracked_changes_headlessly() {
     // Issue #90: a script or agent labels its own edits without any dialog.
     let mut s = s();

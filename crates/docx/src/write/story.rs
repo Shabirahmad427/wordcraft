@@ -94,13 +94,19 @@ impl Writer<'_> {
             pp.drop_cap = None;
         }
         let section = if top { p.section.as_deref() } else { None };
-        let has_mark = super::props::has_rpr(&p.mark);
+        let has_mark = super::props::has_rpr(&p.mark) || p.mark.ins.is_some() || p.mark.del.is_some();
         if !pp.is_empty() || has_mark || section.is_some() {
             w.open("w:pPr", &[]);
             ppr_inner(w, &pp, framed);
             if has_mark {
                 w.open("w:rPr", &[]);
                 rpr_inner(w, &p.mark);
+                for (idx, tag) in [(p.mark.ins, "w:ins"), (p.mark.del, "w:del")] {
+                    if let Some(idx) = idx {
+                        let (id, author, date) = self.rev_attrs(idx);
+                        w.empty(tag, &[("w:id", &id), ("w:author", &author), ("w:date", &date)]);
+                    }
+                }
                 w.close("w:rPr");
             }
             if let Some(s) = section {

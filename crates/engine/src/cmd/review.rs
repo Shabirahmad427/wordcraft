@@ -263,8 +263,26 @@ fn resolve_para(s: &mut Session, story: StoryRef, path: &wordcraft_doc::Path, fr
             })?;
         }
     }
-    if para.mark.ins.is_some() {
-        para.mark.ins = None;
+    Ok(())
+}
+
+/// Resolve a paragraph mark separately from its text. Joining is restricted to adjacent
+/// paragraphs in one container, so a mark can never remove a table or cross cell boundaries.
+fn resolve_mark(s: &mut Session, story: StoryRef, path: &wordcraft_doc::Path, accept: bool) -> Result<(), CmdError> {
+    let Some(para) = s.doc.para(story, path) else { return Ok(()) };
+    let remove = (para.mark.ins.is_some() && !accept) || (para.mark.del.is_some() && accept);
+    let from = Pos { story, path: path.clone(), off: para.len() };
+    if remove
+        && let Some(next) = path.last().checked_add(1).map(|i| path.with_last(i))
+        && let Some(tail) = s.doc.para(story, &next)
+    {
+        let mark = tail.mark.clone();
+        s.doc.delete_range(&from, &Pos { story, path: next, off: 0 })?;
+        s.doc.para_mut(story, path)?.mark = mark;
+    } else {
+        let mark = &mut s.doc.para_mut(story, path)?.mark;
+        mark.ins = None;
+        mark.del = None;
     }
     Ok(())
 }
@@ -275,6 +293,7 @@ fn resolve_all(s: &mut Session, accept: bool) -> CmdResult {
         for path in s.doc.para_paths(st).into_iter().rev() {
             let len = s.doc.para(st, &path).map(|p| p.len()).unwrap_or(0);
             resolve_para(s, st, &path, 0, len, accept)?;
+            resolve_mark(s, st, &path, accept)?;
         }
     }
     s.doc.revisions.clear();
@@ -292,7 +311,13 @@ fn resolve_sel(s: &mut Session, accept: bool) -> CmdResult {
             .and_then(|p| p.run_ranges().find(|(r, c)| r.start <= a.off && a.off <= r.end && (c.ins.is_some() || c.del.is_some())).map(|(r, _)| r));
         match found {
             Some(r) => (Pos { off: r.start, ..a.clone() }, Pos { off: r.end, ..a }),
-            None => return nav_change(s, 1),
+            None => {
+                let mark = changes(s).into_iter().find(|(start, end, _, _)| *start == a && start.path != end.path);
+                match mark {
+                    Some((start, end, _, _)) => (start, end),
+                    None => return nav_change(s, 1),
+                }
+            }
         }
     } else {
         (a, b)
@@ -302,6 +327,9 @@ fn resolve_sel(s: &mut Session, accept: bool) -> CmdResult {
         let from = if path == a.path { a.off } else { 0 };
         let to = if path == b.path { b.off } else { len };
         resolve_para(s, a.story, &path, from, to, accept)?;
+        if path < b.path {
+            resolve_mark(s, a.story, &path, accept)?;
+        }
     }
     s.sel = Selection::caret(a);
     s.clamp_selection();
@@ -322,6 +350,17 @@ fn changes(s: &Session) -> Vec<(Pos, Pos, &'static str, Option<u32>)> {
             };
             let mk = |off| Pos { story: StoryRef::Body, path: path.clone(), off };
             out.push((mk(r.start), mk(r.end), kind, c.ins.or(c.del)));
+        }
+        if let Some((kind, rid)) = p.mark.ins.map(|r| ("insert", r)).or_else(|| p.mark.del.map(|r| ("delete", r)))
+            && let Some(next) = path.last().checked_add(1).map(|i| path.with_last(i))
+            && s.doc.para(StoryRef::Body, &next).is_some()
+        {
+            out.push((
+                Pos { story: StoryRef::Body, path: path.clone(), off: p.len() },
+                Pos { story: StoryRef::Body, path: next, off: 0 },
+                kind,
+                Some(rid),
+            ));
         }
     }
     out
