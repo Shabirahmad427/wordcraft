@@ -1,7 +1,7 @@
 # Local WordCraft bug audit — 2026-10-10
 
-Base: upstream `004286e`. Integration: `local/test-pending-fixes`.
-These changes are local; this audit does not close GitHub issues or merge GitHub PRs.
+Base: upstream `004286e`. Integration target: `Shabirahmad427/wordcraft` main.
+Validated fixes are pushed to the fork main; upstream issues and pull requests remain open.
 
 ## Checked individually
 
@@ -17,7 +17,7 @@ These changes are local; this audit does not close GitHub issues or merge GitHub
 | #195: Close loses unsaved work | Upstream `802ba30` | Existing fix verified by `close_asks_before_quitting` and `window_close_asks_first` in the full passing suite. |
 | #187: Open replaces unsaved work | Upstream `802ba30` | Existing fix verified by `open_asks_before_discarding_unsaved_work`, cancellation, and save-prompt tests. |
 | #168: lossy exports clear dirty state | Upstream `802ba30` | Existing fix verified by `web_downloads_that_drop_content_leave_the_document_unsaved` and save-prompt tests. Browser download delivery was not manually tested. |
-| #94: synchronous Linux file dialogs freeze the UI | Unresolved | Source still uses synchronous native picker callbacks; confirmed risky main-thread path. A full asynchronous picker lifecycle fix remains to be implemented and tested. |
+| #94: synchronous Linux file dialogs freeze the UI | PR #246 plus lifecycle guard | Native dialogs now complete asynchronously. Regression tests cover delayed saves, cancellation, single-dialog enforcement, deferred Close, and stale responses after document replacement. Live desktop portal behavior remains unverified. |
 | #241: missing Chinese UI glyphs in Windows release | Unresolved | Windows release packaging report read; not reproduced on this Linux host. |
 
 ## Validation

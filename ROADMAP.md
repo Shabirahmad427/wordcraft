@@ -124,3 +124,5 @@ the icon art).
 
 ## Next
 The DOCX fidelity corpus, then footnote continuation, column balancing and native printing.
+
+- M14: Native file dialogs run asynchronously; delayed responses are cancelled after document replacement (#94, PR #246 plus regression guard).

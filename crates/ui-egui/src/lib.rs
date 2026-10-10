@@ -20,6 +20,7 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod equation_tab;
+pub mod file_dialogs;
 pub mod frame;
 pub mod i18n;
 pub mod icons;
@@ -42,6 +43,7 @@ use serde_json::{Value, json};
 use wordcraft_engine::Session;
 
 pub use control::ControlRequest;
+pub use file_dialogs::FileDialogRequest;
 
 /// Platform services injected by the host (file dialogs, file I/O).
 #[derive(Default)]
@@ -50,6 +52,11 @@ pub struct Services {
     pub pick_open: Option<Box<dyn Fn(&str) -> Option<String>>>,
     /// Pick a path to save to, given a suggested name.
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Desktop: show a native file dialog without blocking the UI thread (#94); used instead of
+    /// `pick_open` / `pick_save` when set. The host sends the picked path (`None` when cancelled)
+    /// through the returned channel once the user answers, and wakes the UI; a dropped sender
+    /// counts as cancelled. The app shows one dialog at a time ([`file_dialogs`]).
+    pub file_dialog: Option<Box<dyn Fn(FileDialogRequest) -> std::sync::mpsc::Receiver<Option<String>>>>,
     /// Web: open a file picker; the file arrives later through `inbox`.
     pub open_async: Option<Box<dyn Fn(&str)>>,
     /// Web: files (name, bytes) delivered asynchronously (picker, drag and drop).
@@ -166,6 +173,8 @@ pub struct WordApp {
     /// there. A file that was merely opened isn't rewritten until the user saves it: saving drops
     /// whatever WordCraft can't represent (content controls, charts, macros…).
     autosave_path: Option<std::path::PathBuf>,
+    /// The file dialog the host is showing, and what its answer is for ([`file_dialogs`]).
+    file_dialog: Option<file_dialogs::PendingDialog>,
 }
 
 /// The answer to "Do you want to save changes?" (`ui.saveChanges`).
@@ -221,6 +230,7 @@ impl WordApp {
             read_aloud_error: None,
             autosave_path: None,
             change_picture_target: None,
+            file_dialog: None,
         }
     }
 
@@ -347,6 +357,15 @@ impl WordApp {
         let go = match choice {
             SaveChoice::Cancel => false,
             SaveChoice::DontSave => true,
+            // A new document: ask where through Save As; the command runs once that has saved,
+            // which with the desktop's non-blocking dialog is on a later frame (#94).
+            SaveChoice::Save if self.session.path.is_none() && self.services.download.is_none() => {
+                return match self.save_as(file_dialogs::AfterSave::Continue { then, params, document }) {
+                    file_dialogs::Asked::Done(r) => r,
+                    file_dialogs::Asked::Pending => Ok(json!({"pending": "saveAs"})),
+                    file_dialogs::Asked::Busy => Ok(json!({"done": false})),
+                };
+            }
             SaveChoice::Save => self.save_for_prompt(),
         };
         if !go {
@@ -360,14 +379,15 @@ impl WordApp {
     /// image, plain text) writes a copy and leaves the document unsaved, so it doesn't count:
     /// the command is cancelled and the document stays.
     fn save_for_prompt(&mut self) -> bool {
-        let saved = if self.session.path.is_none() && self.services.download.is_none() {
-            self.save_as_dialog()
-        } else {
-            match self.execute("file.save", json!({})) {
-                Ok(v) => v.get("saved").and_then(Value::as_bool) == Some(true) || v.get("downloaded").is_some(),
-                Err(_) => false,
-            }
+        let saved = match self.execute("file.save", json!({})) {
+            Ok(v) => v.get("saved").and_then(Value::as_bool) == Some(true) || v.get("downloaded").is_some(),
+            Err(_) => false,
         };
+        self.safely_saved(saved)
+    }
+
+    /// Whether a save before New/Open/Close counts: it happened, and kept everything.
+    fn safely_saved(&mut self, saved: bool) -> bool {
         if saved && self.session.dirty {
             self.status(tl!("That format doesn't keep everything, so the document is still open. Save it as a Word document (.docx) to go on."));
             return false;
@@ -538,25 +558,6 @@ impl WordApp {
         self.status_msg = Some((s.into(), now_ms()));
     }
 
-    fn open_dialog(&mut self) {
-        if let Some(f) = &self.services.open_async {
-            f("document");
-            return;
-        }
-        let picked = self.services.pick_open.as_ref().and_then(|f| f("document"));
-        if let Some(path) = picked {
-            let _ = self.run("file.open", json!({"path": path}));
-            self.ui.backstage = false;
-        }
-    }
-
-    /// Ask where to save, then save there. True once the document is written.
-    pub fn save_as_dialog(&mut self) -> bool {
-        let name = self.default_save_name();
-        let picked = self.services.pick_save.as_ref().and_then(|f| f(&name));
-        picked.is_some_and(|path| self.run("file.save", json!({"path": path})).is_ok_and(|v| v.get("saved").and_then(Value::as_bool) == Some(true)))
-    }
-
     /// Media key of the selected picture, if any.
     pub(crate) fn selected_picture_media(&self) -> Option<String> {
         match wordcraft_engine::cmd::objects::selected(&self.session) {
@@ -582,19 +583,6 @@ impl WordApp {
             _ => false,
         };
         if stale {
-            self.change_picture_target = None;
-        }
-    }
-
-    fn pick_picture(&mut self) {
-        if let Some(f) = &self.services.open_async {
-            f("picture");
-            return;
-        }
-        let picked = self.services.pick_open.as_ref().and_then(|f| f("picture"));
-        if let Some(path) = picked {
-            let _ = self.insert_or_change_picture(json!({"path": path}));
-        } else {
             self.change_picture_target = None;
         }
     }
@@ -648,6 +636,7 @@ impl WordApp {
         zotero::poll(self, ctx);
         read_aloud::poll(self, ctx);
         self.clear_stale_change_picture();
+        let _ = self.poll_file_dialog();
         self.drain_inbox();
         self.autosave_tick(now_ms());
         if self.autosaves() && self.session.dirty {
