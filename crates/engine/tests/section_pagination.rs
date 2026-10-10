@@ -176,3 +176,54 @@ fn preceding_section_raster_matches_its_standalone_page() {
         "the following section changed the previous page's pixels"
     );
 }
+
+#[test]
+fn long_note_keeps_undo_recovery_and_docx_roundtrip_content() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-long-note-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let note_text = "Footnote continuation evidence must remain visible, ordered, and editable. ".repeat(110);
+    let mut doc = Document::from_text("Academic claim with a long source note.\nClosing body text.");
+    let note = doc.add_part(PartKind::Footnote, vec![wordcraft_engine::doc::para_block(Paragraph::with_text(&note_text, Default::default()))]);
+    doc.insert_object(
+        &Pos { story: StoryRef::Part(note), path: Path::top(0), off: 0 },
+        InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() },
+        &Default::default(),
+    )
+    .unwrap();
+    doc.insert_object(&Pos::body(0, 21), InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() }, &Default::default())
+        .unwrap();
+    let mut session = Session::new(doc);
+    let original = session.doc.clone();
+    session.run("text.insert", &json!({"text":"Reviewed: "})).unwrap();
+    let edited = session.doc.clone();
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(session.doc, original);
+    session.run("edit.redo", &json!({})).unwrap();
+    let before = session.layout();
+    assert!(before.pages.len() > 3);
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let id = store.save(&unique_id(), session.document_id(), &Snapshot::capture(&session)).unwrap();
+    let mut restored = Session::new(Document::new());
+    store.load(&id).unwrap().restore(&mut restored);
+    assert_eq!(restored.doc, edited);
+    let path = directory.join("academic-long-note.docx");
+    restored.run("file.save", &json!({"path":path})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path":path})).unwrap();
+    let restored_note = reopened.doc.parts.get(&note).expect("footnote part remains attached");
+    let restored_text = restored_note.blocks.iter().filter_map(|block| block.as_para()).map(|para| para.text.as_str()).collect::<String>();
+    assert_eq!(restored_text.chars().next(), Some(char::from_u32(0xfffc).unwrap()));
+    assert_eq!(restored_text.len() - "\u{fffc}".len(), note_text.len());
+    assert!(restored_text.ends_with(&note_text));
+    let after = reopened.layout();
+    assert_eq!(before.pages.len(), after.pages.len());
+    assert!(after.caret_on(&Pos { story: StoryRef::Part(note), path: Path::top(0), off: note_text.len() + 1 }, after.pages.len() - 1).is_some());
+    for (a, b) in before.pages.iter().zip(&after.pages) {
+        let options = wordcraft_render::RenderOptions::default();
+        assert!(
+            wordcraft_render::render_page(&session.doc, a, 1.0, &options).to_straight()
+                == wordcraft_render::render_page(&reopened.doc, b, 1.0, &options).to_straight()
+        );
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}

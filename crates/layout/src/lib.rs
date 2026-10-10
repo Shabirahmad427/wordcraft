@@ -235,6 +235,14 @@ fn has_page_fields(p: &Paragraph) -> bool {
     })
 }
 
+/// A note fragment, with its still unplaced height when it is waiting for another page.
+#[derive(Clone)]
+struct NoteChunk {
+    id: u32,
+    items: Vec<Placed>,
+    height: f32,
+}
+
 /// Walk state while paginating.
 struct Ctx<'a> {
     doc: &'a Document,
@@ -597,10 +605,14 @@ struct PageBuilder<'a> {
     y: f32,
     top: f32,
     bottom: f32,
+    /// Extra space reserved above the section's footer story.
+    footer_clearance: f32,
     number: u32,
     web: bool,
-    /// Footnotes waiting for the bottom of the current page: (part id, items, height).
-    notes: Vec<(u32, Vec<Placed>, f32)>,
+    /// Footnote fragments reserved at the bottom of the current page.
+    notes: Vec<NoteChunk>,
+    /// Unplaced footnote tails, in reference order.
+    note_continuations: Vec<NoteChunk>,
     /// Page bottom before footnotes took space.
     orig_bottom: f32,
     /// The previous paragraph: (style, contextual spacing, space after) for contextual spacing.
@@ -617,39 +629,198 @@ struct PageBuilder<'a> {
     page_finished: bool,
 }
 
+/// Split a note at a line boundary. A single line or object taller than the budget is still
+/// emitted whole, guaranteeing progress without clipping it or retrying the same page forever.
+fn split_note_chunk(note: NoteChunk, budget: f32) -> (Option<NoteChunk>, Option<NoteChunk>) {
+    if note.height <= budget + 0.01 {
+        return (Some(note), None);
+    }
+    let fallback = note.clone();
+    let id = note.id;
+    let total_height = note.height;
+    let cut = budget.max(1.0);
+    let mut head = Vec::new();
+    let mut tail = Vec::new();
+    for item in note.items {
+        match item {
+            Placed::Lines { story, path, para, l0, l1, x, y } => {
+                let Some(first) = para.lines.get(l0) else {
+                    continue;
+                };
+                let mut split = l0;
+                for k in l0..l1 {
+                    let Some(line) = para.lines.get(k) else {
+                        break;
+                    };
+                    let bottom = y + line.top - first.top + line.height;
+                    if bottom <= cut + 0.01 {
+                        split = k + 1;
+                    } else {
+                        break;
+                    }
+                }
+                if split == l0 && head.is_empty() && l0 < l1 {
+                    split = l0 + 1;
+                }
+                if split > l0 {
+                    head.push(Placed::Lines { story, path: path.clone(), para: para.clone(), l0, l1: split, x, y });
+                }
+                if split < l1 {
+                    let top = para.lines.get(split).map(|line| y + line.top - first.top).unwrap_or(cut);
+                    tail.push(Placed::Lines { story, path, para, l0: split, l1, x, y: top - cut });
+                }
+            }
+            Placed::Fill { rect, color } => {
+                let top = rect.y;
+                let bottom = rect.bottom();
+                if top < cut {
+                    head.push(Placed::Fill { rect: Rect::new(rect.x, top, rect.w, (bottom.min(cut) - top).max(0.0)), color });
+                }
+                if bottom > cut {
+                    tail.push(Placed::Fill { rect: Rect::new(rect.x, cut, rect.w, bottom - cut), color });
+                }
+            }
+            Placed::Rule { x0, y0, x1, y1, border } if (y0 - y1).abs() < 0.01 => {
+                if y0 <= cut {
+                    head.push(Placed::Rule { x0, y0, x1, y1, border });
+                } else {
+                    tail.push(Placed::Rule { x0, y0: y0 - cut, x1, y1: y1 - cut, border });
+                }
+            }
+            Placed::Rule { x0, y0, x1, y1, border } => {
+                let top = y0.min(y1);
+                let bottom = y0.max(y1);
+                if top < cut {
+                    head.push(Placed::Rule { x0, y0: top, x1, y1: bottom.min(cut), border });
+                }
+                if bottom > cut {
+                    tail.push(Placed::Rule { x0, y0: (top - cut).max(0.0), x1, y1: bottom - cut, border });
+                }
+            }
+            Placed::Cell { rect, table, row, cell, story } => {
+                if rect.y < cut {
+                    head.push(Placed::Cell {
+                        rect: Rect::new(rect.x, rect.y, rect.w, (rect.bottom().min(cut) - rect.y).max(0.0)),
+                        table: table.clone(),
+                        row,
+                        cell,
+                        story,
+                    });
+                }
+                if rect.bottom() > cut {
+                    tail.push(Placed::Cell {
+                        rect: Rect::new(rect.x, (rect.y - cut).max(0.0), rect.w, rect.bottom() - cut),
+                        table,
+                        row,
+                        cell,
+                        story,
+                    });
+                }
+            }
+            Placed::Image { rect, .. } | Placed::Shape { rect, .. } | Placed::Object { rect, .. } => {
+                if rect.y < cut || head.is_empty() {
+                    head.push(item);
+                } else {
+                    let mut item = item;
+                    item.translate(0.0, -cut);
+                    tail.push(item);
+                }
+            }
+        }
+    }
+    if head.is_empty() {
+        return (None, Some(fallback));
+    }
+    if tail.is_empty() {
+        return (Some(fallback), None);
+    }
+    let head_height = cut.min(total_height).max(note_items_height(&head));
+    let tail_height = (total_height - cut).max(note_items_height(&tail));
+    (Some(NoteChunk { id, items: head, height: head_height }), Some(NoteChunk { id, items: tail, height: tail_height }))
+}
+
+fn note_items_height(items: &[Placed]) -> f32 {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            Placed::Lines { y, para, l0, l1, .. } => item_bottom(*y, para, *l0, *l1),
+            Placed::Fill { rect, .. }
+            | Placed::Image { rect, .. }
+            | Placed::Shape { rect, .. }
+            | Placed::Cell { rect, .. }
+            | Placed::Object { rect, .. } => Some(rect.bottom()),
+            Placed::Rule { y0, y1, .. } => Some(y0.max(*y1)),
+        })
+        .fold(0.0f32, f32::max)
+}
+
 /// Gap above the footnote separator and its length.
 const NOTE_SEP: f32 = 12.0;
 
 impl PageBuilder<'_> {
     /// Space footnotes take at the bottom of the page.
     fn notes_h(&self) -> f32 {
-        if self.notes.is_empty() { 0.0 } else { NOTE_SEP + self.notes.iter().map(|n| n.2).sum::<f32>() }
+        if self.notes.is_empty() { 0.0 } else { NOTE_SEP + self.notes.iter().map(|n| n.height).sum::<f32>() }
     }
-    /// Place the collected footnotes at the bottom of the current page.
+    /// Place this page's footnote fragments, then reserve the next fragments on the next page.
     fn flush_notes(&mut self) {
-        if self.notes.is_empty() {
-            return;
-        }
-        let total = self.notes_h();
-        let x = self.sect.margin_left + self.sect.gutter;
-        let mut y = self.orig_bottom - total + NOTE_SEP;
-        let notes = std::mem::take(&mut self.notes);
-        if let Some(pg) = self.pages.last_mut() {
-            pg.items.push(Placed::Rule {
-                x0: x,
-                y0: y - NOTE_SEP / 2.0,
-                x1: x + 144.0,
-                y1: y - NOTE_SEP / 2.0,
-                border: Border { style: wordcraft_doc::props::BorderStyle::Single, width: 0.5, color: None, space: 0.0 },
-            });
-            for (_, items, h) in notes {
-                for mut it in items {
-                    it.translate(x, y);
-                    pg.items.push(it);
+        if !self.notes.is_empty() {
+            let total = self.notes_h();
+            let x = self.sect.margin_left + self.sect.gutter;
+            let mut y = self.orig_bottom - total + NOTE_SEP;
+            let notes = std::mem::take(&mut self.notes);
+            if let Some(pg) = self.pages.last_mut() {
+                pg.items.push(Placed::Rule {
+                    x0: x,
+                    y0: y - NOTE_SEP / 2.0,
+                    x1: x + 144.0,
+                    y1: y - NOTE_SEP / 2.0,
+                    border: Border { style: wordcraft_doc::props::BorderStyle::Single, width: 0.5, color: None, space: 0.0 },
+                });
+                for note in notes {
+                    for mut it in note.items {
+                        it.translate(x, y);
+                        pg.items.push(it);
+                    }
+                    y += note.height;
                 }
-                y += h;
             }
         }
+    }
+    /// Maximum footnote area WordCraft reserves on one page.
+    fn note_budget(&self) -> f32 {
+        ((self.bottom - self.top).max(36.0) * 0.4).max(24.0)
+    }
+    /// Load a bounded part of the oldest continued note onto a new page.
+    fn load_continuation(&mut self) {
+        if self.note_continuations.is_empty() {
+            return;
+        }
+        let mut budget = self.note_budget();
+        let mut pending = std::mem::take(&mut self.note_continuations).into_iter();
+        let mut carry = Vec::new();
+        while budget > 0.0 {
+            let Some(note) = pending.next() else {
+                break;
+            };
+            let (head, tail) = split_note_chunk(note.clone(), budget);
+            let Some(head) = head else {
+                carry.push(note);
+                carry.extend(&mut pending);
+                break;
+            };
+            budget -= head.height;
+            self.notes.push(head);
+            if let Some(tail) = tail {
+                carry.push(tail);
+                carry.extend(&mut pending);
+                break;
+            }
+        }
+        carry.extend(&mut pending);
+        self.note_continuations = carry;
+        let reserve = self.notes_h();
+        self.bottom -= reserve;
     }
     /// Section vertical alignment: move the page's body down (centre/bottom).
     fn apply_valign(&mut self) {
@@ -687,7 +858,8 @@ impl PageBuilder<'_> {
         let s = self.sect;
         self.number = self.number.saturating_add(1);
         let (w, h) = if self.web { (s.page_w, f32::MAX / 4.0) } else { (s.page_w, s.page_h) };
-        let body = Rect::new(s.margin_left + s.gutter, body_top, s.text_width(), (s.page_h - s.margin_bottom - body_top).max(36.0));
+        let body_bottom = (s.page_h - s.margin_bottom - self.footer_clearance).max(body_top);
+        let body = Rect::new(s.margin_left + s.gutter, body_top, s.text_width(), (body_bottom - body_top).max(0.0));
         let mut decor = Vec::new();
         if !self.web {
             // Page borders, measured from the page edge (Word's default), so they surround the
@@ -709,7 +881,7 @@ impl PageBuilder<'_> {
                 for w in cols.windows(2) {
                     if let [(ax, aw), (bx, _)] = w {
                         let x = s.margin_left + s.gutter + (ax + aw + bx) / 2.0;
-                        decor.push(Placed::Rule { x0: x, y0: body_top, x1: x, y1: s.page_h - s.margin_bottom, border: Border::single(0.5) });
+                        decor.push(Placed::Rule { x0: x, y0: body_top, x1: x, y1: body_bottom, border: Border::single(0.5) });
                     }
                 }
             }
@@ -721,9 +893,10 @@ impl PageBuilder<'_> {
         self.col = 0;
         self.cols = s.column_boxes();
         self.top = body_top;
-        self.bottom = if self.web { f32::MAX / 8.0 } else { s.page_h - s.margin_bottom };
+        self.bottom = if self.web { f32::MAX / 8.0 } else { body_bottom };
         self.orig_bottom = self.bottom;
         self.y = self.top;
+        self.load_continuation();
     }
     fn col_x(&self) -> f32 {
         self.sect.margin_left + self.sect.gutter + self.cols.get(self.col).map(|c| c.0).unwrap_or(0.0)
@@ -812,9 +985,11 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         y: 0.0,
         top: 0.0,
         bottom: 0.0,
+        footer_clearance: 0.0,
         number: 0,
         web,
         notes: Vec::new(),
+        note_continuations: Vec::new(),
         orig_bottom: 0.0,
         prev: None,
         excl: Vec::new(),
@@ -842,8 +1017,11 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         }
         pb.sect = sect;
         pb.sect_idx = si;
-        let body_top = if web { sect.margin_top } else { body_top_for(&mut ctx, sect, sect.headers.default) };
-        let first_top = if web || !sect.title_page { body_top } else { body_top_for(&mut ctx, sect, sect.headers.first) };
+        let header_set = inherited_header_set(&sections, si, true);
+        let footer_set = inherited_header_set(&sections, si, false);
+        let body_top = if web { sect.margin_top } else { body_top_for(&mut ctx, sect, header_set, false) };
+        let first_top = if web || !sect.title_page { body_top } else { body_top_for(&mut ctx, sect, header_set, true) };
+        pb.footer_clearance = if web { 0.0 } else { footer_clearance_for(&mut ctx, sect, footer_set) };
         let restart = sect.page_num_start;
         if sect.line_numbers.as_ref().is_some_and(|l| l.restart == wordcraft_doc::section::LineNumberRestart::Section) {
             pb.line_no = 0;
@@ -869,6 +1047,15 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
                 Block::Table(t) => place_table(&mut ctx, &mut pb, t, block, body_top),
             }
             block += 1;
+        }
+        let continuous_successor = sections.get(si + 1).is_some_and(|(_, next)| next.start == SectionStart::Continuous);
+        if !web
+            && !continuous_successor
+            && pb.notes.is_empty()
+            && pb.note_continuations.is_empty()
+            && let Some(page) = pb.pages.last_mut()
+        {
+            balance_last_page_columns(doc, page, sect, pb.top, pb.bottom);
         }
     }
     if pb.pages.is_empty() {
@@ -917,6 +1104,13 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         }
     }
     pb.finish_page();
+    // A document may end before a long footnote does. Keep laying out its ordered continuation
+    // pages instead of clipping the remaining note text at the last body page.
+    while !pb.note_continuations.is_empty() {
+        let body_top = pb.top;
+        pb.new_page(block, body_top);
+        pb.finish_page();
+    }
     let mut pages = pb.pages;
     if web && let Some(p) = pages.first_mut() {
         let bottom = p
@@ -952,16 +1146,172 @@ fn item_bottom(y: f32, para: &ParaLayout, l0: usize, l1: usize) -> Option<f32> {
     Some(y + l.top + l.height - f.top)
 }
 
-/// Where body text starts: the top margin, or below the header if it's taller.
-fn body_top_for(ctx: &mut Ctx, sect: &SectionProps, header: Option<u32>) -> f32 {
-    let Some(id) = header else { return sect.margin_top };
-    let Some(part) = ctx.doc.parts.get(&id) else { return sect.margin_top };
-    let blocks = part.blocks.clone();
-    // Placed as `headers_footers` draws it, so page-relative floats wrap the same way.
-    let frame = PageFrame { sect, origin: (sect.margin_left + sect.gutter, sect.header) };
-    let (_, h) = layout_box(ctx, StoryRef::Part(id), &blocks, &[], sect.text_width(), None, 0, Some(frame));
-    // Word starts the body right below a header that reaches past the top margin, no gap.
-    sect.margin_top.max(sect.header + h)
+/// Balance an otherwise plain, single-page multicolumn ending by moving complete paragraphs.
+/// Equal column widths keep existing line breaks valid; complex pages stay on the normal flow path.
+fn balance_last_page_columns(doc: &Document, page: &mut Page, sect: &SectionProps, top: f32, bottom: f32) {
+    let columns = sect.column_boxes();
+    if columns.len() < 2 || sect.page_borders.is_some() || page.section >= doc.sections().len() {
+        return;
+    }
+    if columns.windows(2).any(|pair| (pair[0].1 - pair[1].1).abs() > 0.01) {
+        return;
+    }
+    let mut groups: Vec<(Path, f32, f32, f32, Vec<usize>)> = Vec::new();
+    for (index, item) in page.items.iter().enumerate() {
+        match item {
+            Placed::Lines { story: StoryRef::Body, path, para, l0, l1, x, y } => {
+                if *l0 != 0 || *l1 != para.lines.len() || path.0.len() != 1 || para.lines.is_empty() || para.rp.borders.is_some() {
+                    return;
+                }
+                let Some(block) = path.0.first().and_then(|n| doc.body.get(*n as usize)) else {
+                    return;
+                };
+                let Some(paragraph) = block.as_para() else {
+                    return;
+                };
+                if !paragraph.objects.is_empty()
+                    || para.rp.keep_lines
+                    || para.rp.keep_next
+                    || para.lines.iter().any(|line| matches!(line.end, LineEnd::PageBreak | LineEnd::ColumnBreak))
+                {
+                    return;
+                }
+                if groups.iter().any(|(known, ..)| known == path) {
+                    return;
+                }
+                let Some(height) = item_bottom(*y, para, *l0, *l1).map(|end| end - *y) else {
+                    return;
+                };
+                groups.push((path.clone(), *x, *y, height, vec![index]));
+            }
+            Placed::Rule { y0, y1, .. } if sect.columns.separator && (*y0 - *y1).abs() > 0.01 => {}
+            Placed::Rule { .. } if sect.columns.separator => {}
+            _ => return,
+        }
+    }
+    if groups.len() < columns.len() * 2 || top >= bottom {
+        return;
+    }
+    // The input flow must already be in column order and paragraphs must fit whole; this
+    // keeps floating objects, table rows, line-number labels and forced breaks untouched.
+    let base_x = sect.margin_left + sect.gutter;
+    let column_x: Vec<f32> = columns.iter().map(|(offset, _)| base_x + offset).collect();
+    let mut used_columns = Vec::with_capacity(groups.len());
+    for (_, x, _, _, _) in &groups {
+        let Some((index, _)) = column_x.iter().enumerate().min_by(|(_, a), (_, b)| (x - **a).abs().total_cmp(&(x - **b).abs())) else {
+            return;
+        };
+        used_columns.push(index);
+    }
+    if used_columns.windows(2).any(|pair| pair[0] > pair[1]) {
+        return;
+    }
+    let mut previous_by_column = vec![None; columns.len()];
+    let mut gaps = Vec::with_capacity(groups.len());
+    for (i, group) in groups.iter().enumerate() {
+        let source_column = used_columns[i];
+        let previous_bottom = previous_by_column.get(source_column).copied().flatten();
+        let gap = previous_bottom.map_or(group.2 - top, |previous: f32| group.2 - previous);
+        gaps.push(gap);
+        if let Some(previous) = previous_by_column.get_mut(source_column) {
+            *previous = Some(group.2 + group.3);
+        }
+    }
+    let mut column = 0usize;
+    let mut start = 0usize;
+    while start < groups.len() && column < columns.len() {
+        let columns_left = columns.len() - column;
+        let groups_left = groups.len() - start;
+        if groups_left < columns_left {
+            break;
+        }
+        let remaining: f32 = (start..groups.len()).map(|i| (groups[i].3 + gaps[i]).max(0.0)).sum();
+        let target = remaining / columns_left as f32;
+        let mut end = start;
+        let mut height = 0.0f32;
+        while end < groups.len() {
+            let next = (groups[end].3 + gaps[end]).max(0.0);
+            let after = height + next;
+            let must_leave = groups.len() - end - 1 < columns_left - 1;
+            if end > start && !must_leave && after > target && (after - target) > (target - height).abs() {
+                break;
+            }
+            height = after;
+            end += 1;
+            if must_leave {
+                break;
+            }
+        }
+        if end == start {
+            end += 1;
+        }
+        let target_x = column_x.get(column).copied().unwrap_or(base_x);
+        let mut y = top;
+        for i in start..end {
+            y += gaps[i];
+            let dx = target_x - groups[i].1;
+            let dy = y - groups[i].2;
+            for item_index in &groups[i].4 {
+                if let Some(item) = page.items.get_mut(*item_index) {
+                    item.translate(dx, dy);
+                }
+            }
+            y += groups[i].3;
+        }
+        start = end;
+        column += 1;
+    }
+}
+
+/// Resolve header/footer references with Word's link-to-previous inheritance.
+fn inherited_header_set(sections: &[(usize, &SectionProps)], section: usize, header: bool) -> wordcraft_doc::section::HeaderSet {
+    let get = |props: &SectionProps| if header { props.headers } else { props.footers };
+    let mut set = sections.get(section).map(|(_, props)| get(props)).unwrap_or_default();
+    for index in (0..section).rev() {
+        if set.default.is_some() && set.first.is_some() && set.even.is_some() {
+            break;
+        }
+        if let Some((_, previous)) = sections.get(index) {
+            let prior = get(previous);
+            set.default = set.default.or(prior.default);
+            set.first = set.first.or(prior.first);
+            set.even = set.even.or(prior.even);
+        }
+    }
+    set
+}
+
+/// Measure every story a page in this section may select, so first/even/inherited pages reserve
+/// enough room before body pagination begins.
+fn story_heights(ctx: &mut Ctx, sect: &SectionProps, set: wordcraft_doc::section::HeaderSet, header: bool) -> Vec<f32> {
+    [set.default, set.first, set.even]
+        .into_iter()
+        .flatten()
+        .filter_map(|id| {
+            let part = ctx.doc.parts.get(&id)?;
+            let blocks = part.blocks.clone();
+            let frame = header.then_some(PageFrame { sect, origin: (sect.margin_left + sect.gutter, sect.header) });
+            let (_, height) = layout_box(ctx, StoryRef::Part(id), &blocks, &[], sect.text_width(), None, 0, frame);
+            Some(height)
+        })
+        .collect()
+}
+
+/// Where body text starts: the top margin, or below the tallest selectable header.
+fn body_top_for(ctx: &mut Ctx, sect: &SectionProps, set: wordcraft_doc::section::HeaderSet, first_page: bool) -> f32 {
+    let stories = if first_page {
+        wordcraft_doc::section::HeaderSet { first: set.first, ..Default::default() }
+    } else {
+        wordcraft_doc::section::HeaderSet { default: set.default, even: set.even, ..Default::default() }
+    };
+    let height = story_heights(ctx, sect, stories, true).into_iter().fold(0.0f32, f32::max);
+    // Body starts below the tallest resolved header; WordCraft leaves no additional gap.
+    sect.margin_top.max(sect.header + height)
+}
+
+/// Reserve the tallest selectable footer plus a small body/footer separation.
+fn footer_clearance_for(ctx: &mut Ctx, sect: &SectionProps, set: wordcraft_doc::section::HeaderSet) -> f32 {
+    story_heights(ctx, sect, set, false).into_iter().map(|height| (sect.footer + height + 6.0 - sect.margin_bottom).max(0.0)).fold(0.0f32, f32::max)
 }
 
 /// Where a box of laid-out items sits on its page, for floating objects positioned relative to
@@ -1245,7 +1595,7 @@ fn place_para(ctx: &mut Ctx, pb: &mut PageBuilder, p: &Paragraph, block: usize, 
         let lead = if l0 == 0 { first.top.max(0.0) } else { 0.0 };
         let mut l1 = l0;
         let mut forced_break = None;
-        let mut new_notes: Vec<(u32, Vec<Placed>, f32)> = Vec::new();
+        let mut new_notes: Vec<(usize, NoteChunk, Option<NoteChunk>)> = Vec::new();
         let notes = para_notes(ctx.doc, p, &pl);
         while l1 < n {
             let Some(l) = pl.lines.get(l1) else { break };
@@ -1255,19 +1605,29 @@ fn place_para(ctx: &mut Ctx, pb: &mut PageBuilder, p: &Paragraph, block: usize, 
                 for (ci, id) in &notes {
                     if *ci >= l.c0
                         && *ci < l.c1
-                        && !pb.notes.iter().chain(new_notes.iter()).any(|x| x.0 == *id)
+                        && !pb.notes.iter().any(|note| note.id == *id)
+                        && !new_notes.iter().any(|(_, note, _)| note.id == *id)
+                        && !line_notes.iter().any(|(_, note, _): &(usize, NoteChunk, Option<NoteChunk>)| note.id == *id)
                         && let Some(part) = ctx.doc.parts.get(id).filter(|p| p.kind == wordcraft_doc::PartKind::Footnote)
                     {
                         let blocks = part.blocks.clone();
                         let (items, h) = layout_box(ctx, StoryRef::Part(*id), &blocks, &[], pb.sect.text_width(), None, 0, None);
-                        line_notes.push((*id, items, h));
+                        let used: f32 = pb.notes.iter().map(|note| note.height).sum::<f32>()
+                            + new_notes.iter().map(|(_, note, _)| note.height).sum::<f32>()
+                            + line_notes.iter().map(|(_, note, _)| note.height).sum::<f32>();
+                        let separator = if pb.notes.is_empty() && new_notes.is_empty() && line_notes.is_empty() { NOTE_SEP } else { 0.0 };
+                        let budget = (pb.note_budget() - used - separator).max(1.0);
+                        let (head, tail) = split_note_chunk(NoteChunk { id: *id, items, height: h }, budget);
+                        if let Some(head) = head {
+                            line_notes.push((*ci, head, tail));
+                        }
                     }
                 }
             }
-            let extra: f32 = line_notes.iter().map(|n| n.2).sum::<f32>()
+            let extra: f32 = line_notes.iter().map(|(_, n, _)| n.height).sum::<f32>()
                 + if pb.notes.is_empty() && new_notes.is_empty() && !line_notes.is_empty() { NOTE_SEP } else { 0.0 };
             let limit = pb.bottom
-                - new_notes.iter().map(|n| n.2).sum::<f32>()
+                - new_notes.iter().map(|(_, n, _)| n.height).sum::<f32>()
                 - if pb.notes.is_empty() && !new_notes.is_empty() { NOTE_SEP } else { 0.0 }
                 - extra;
             let bottom = pb.y + lead + (l.top + l.height - first.top);
@@ -1312,9 +1672,14 @@ fn place_para(ctx: &mut Ctx, pb: &mut PageBuilder, p: &Paragraph, block: usize, 
         }
         // Keep only the notes of the lines that are placed.
         let placed_end = pl.lines.get(l1.saturating_sub(1)).map(|l| l.c1).unwrap_or(0);
-        new_notes.retain(|(id, ..)| notes.iter().any(|(ci, nid)| nid == id && *ci < placed_end));
+        new_notes.retain(|(ci, _, _)| *ci < placed_end);
         let before = pb.notes_h();
-        pb.notes.extend(new_notes);
+        for (_, note, tail) in new_notes {
+            pb.notes.push(note);
+            if let Some(tail) = tail {
+                pb.note_continuations.push(tail);
+            }
+        }
         pb.bottom -= pb.notes_h() - before;
         let x = pb.col_x();
         let y = pb.y + lead;

@@ -34,7 +34,8 @@ from a signed download, without losing work.
 | Never-crash standard (no panics, hostile-param fuzzing, panic guard) | done |
 | Autosave and crash recovery | AutoSave plus separate native recovery snapshots, restart restore/discard/text comparison; Linux crash tests pass, Windows/macOS power-loss verification outstanding |
 | **DOCX fidelity against a corpus of real-world files** (open, render, round-trip, fix) | Synthetic preservation regressions started; independent real-world corpus verification still missing |
-| Footnotes that continue onto the next page; column balancing | missing (≈4 h) |
+| Long footnotes that continue onto later pages | landed (40% page-area cap; continuation pages keep remaining lines visible). Page-specific note styles and Word parity are unverified |
+| Balanced multicolumn layout | missing (≈4 h) |
 | Native printing (today printing goes through PDF) | missing (≈4 h) |
 | Signed builds for macOS, Windows, Linux, FreeBSD and web | pipeline written; **needs the GitHub remote and release secrets from the owner** |
 | Real app icon / mascot art | placeholder; **needs owner art** |
@@ -97,7 +98,7 @@ the icon art).
 | M3 | Insert tab | mostly done (charts/SmartArt/icons/3D missing) |
 | M4 | Layout + Design tabs | **done** except column balancing |
 | M5 | Tables | **done** (row splitting landed) |
-| M6 | References | first version done; footnote continuation missing |
+| M6 | References | first version done; long footnote continuation landed |
 | M7 | Review | **done** (margin balloons landed) |
 | M8 | View | mostly done |
 | M9 | Mailings | done (first version) |
@@ -160,4 +161,14 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 - Audited five priority defects: section finalization/odd-even starts, note continuation, multicolumn reservation/balancing, header/footer clearance and unbreakable content overflow. See [pagination audit and regression contract](docs/pagination.md).
 - Fixed outgoing-page finalization before section geometry changes, exactly-once vertical alignment/footnote flushing, physical odd/even filler placement before numbering restarts and hostile page-number overflow. Preserved existing continuous/web flow and DOCX guarded editing restrictions.
 - Added nine regression tests covering mixed portrait/landscape sections, short academic notes, centered body text, first-page headers, restarted numbering, multipage tables, Undo/recovery/save/reopen, exact raster self-comparison and preservation-safe failures. Generated portrait/landscape pages were visually inspected. All six CI gates passed with **859 tests**, including **nine new regressions**. GUI/CLI release builds passed.
-- Long note continuation, column balancing, tall inherited/even headers, footer clearance, unbreakable overflow, native printing and independent Word/Windows/macOS comparison remain outstanding.
+- Phase 4B now covers long-note continuation, conservative final-page column balancing, resolved story clearance and oversized-content progress. Retroactive multicolumn note reflow, complex column transitions, overflow reporting, native printing and independent Word/Windows/macOS comparison remain follow-up work.
+
+
+## Phase 4B pagination reliability (2026-10-10)
+
+- Long footnotes split at line boundaries, reserve up to 40% of the page body, continue in order and emit continuation pages after body text ends.
+- Equal-width multicolumn sections balance complete plain paragraphs on their final page while preserving order and line breaks. Pages containing floats, tables, forced breaks, borders or complex paragraph rules remain on normal flow.
+- Body clearance now measures inherited/default/first/even headers and footers before pagination. It reserves the tallest selectable story across the section, favoring safe spacing; page-specific clearance is not yet optimized.
+- Oversized inline objects remain whole and permit following text to progress. Existing table pagination continues to split rows where possible and places unsplittable rows/repeated headers oversized on an empty page without retry loops. This can extend beyond page bounds and is not clipped or automatically rescaled.
+- Added regression cases for long-note continuity plus Undo/recovery/DOCX reopen, balanced paragraph order, tall first/even headers and footers, and an oversized inline image. Existing table regressions cover splittable and `cant_split` rows and oversized repeated headers.
+- All six CI gates passed with **865 tests** (47 suites); GUI and CLI release builds succeeded. Internally verified on Linux only. Long-note continuation with complex note tables/objects and mixed section transitions, retroactive multicolumn footnote reflow, complex column balancing, overflow diagnostics/choices, native printing and independent Word/Windows/macOS comparison remain open. These checks do not establish Microsoft Word pagination parity.
