@@ -1,7 +1,8 @@
 use super::*;
 use wordcraft_doc::para::InlineObject;
 use wordcraft_doc::props::{Align, Border, BorderStyle, Borders, ParaProps};
-use wordcraft_doc::{Pos, Table};
+use wordcraft_doc::section::{SectionProps, SectionStart};
+use wordcraft_doc::{Path, Pos, StoryRef, Table};
 
 fn lay(doc: &Document) -> DocLayout {
     let mut c = LayoutCache::new();
@@ -646,6 +647,18 @@ fn runs_differing_only_in_link_or_decoration_keep_their_own_style() {
     let items = display::page_display(&d, &l.pages[0], &display::DisplayOptions::default());
     let colors: Vec<_> = items.iter().filter_map(|i| if let display::Draw::Line { color, .. } = i { Some(*color) } else { None }).collect();
     assert!(colors.contains(&red) && colors.contains(&blue), "{colors:?}");
+}
+
+#[test]
+fn display_marks_section_breaks() {
+    let mut d = Document::from_text("First section\nSecond section");
+    d.para_mut(StoryRef::Body, &Path::top(0)).unwrap().section =
+        Some(Box::new(SectionProps { start: SectionStart::Continuous, ..Default::default() }));
+    let l = lay(&d);
+    let marks = display::page_display(&d, &l.pages[0], &display::DisplayOptions { marks: true, ..Default::default() });
+    assert!(marks.iter().any(|item| matches!(item, display::Draw::Mark { ch: '§', .. })));
+    let plain = display::page_display(&d, &l.pages[0], &display::DisplayOptions::default());
+    assert!(!plain.iter().any(|item| matches!(item, display::Draw::Mark { ch: '§', .. })));
 }
 
 #[test]

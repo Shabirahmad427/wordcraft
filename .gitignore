@@ -1,6 +1,7 @@
 *~
 plan/
 /target
+/.local/
 /dist
 /corpus
 /log
