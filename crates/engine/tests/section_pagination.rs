@@ -1,0 +1,178 @@
+//! Synthetic pagination and raster regressions; these are not Microsoft Word references.
+#[path = "../../docx/tests/common/preservation.rs"]
+mod fixtures;
+use serde_json::json;
+use wordcraft_engine::{
+    Session,
+    doc::{
+        Document, Paragraph, PartKind, Path, Pos, StoryRef, Table,
+        para::{InlineObject, NoteKind},
+        props::VAlign,
+        section::{SectionProps, SectionStart},
+    },
+    recovery::{Snapshot, Store, unique_id},
+};
+use wordcraft_layout::{DocLayout, Placed};
+
+fn academic_document() -> (Document, u32) {
+    let mut doc = Document::from_text("Academic introduction\nResults and measurements");
+    let old = SectionProps { valign: VAlign::Center, ..Default::default() };
+    doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap().section = Some(Box::new(old));
+    doc.last_section = SectionProps {
+        start: SectionStart::OddPage,
+        page_w: 792.0,
+        page_h: 612.0,
+        margin_top: 36.0,
+        margin_bottom: 36.0,
+        margin_left: 100.0,
+        page_num_start: Some(1),
+        ..Default::default()
+    };
+    let note = doc.add_part(
+        PartKind::Footnote,
+        vec![wordcraft_engine::doc::para_block(Paragraph::with_text("Source and methodology note", Default::default()))],
+    );
+    doc.insert_object(
+        &Pos { story: StoryRef::Part(note), path: Path::top(0), off: 0 },
+        InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() },
+        &Default::default(),
+    )
+    .unwrap();
+    doc.insert_object(&Pos::body(0, 8), InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() }, &Default::default())
+        .unwrap();
+    let mut table = Table::new(14, 2, doc.last_section.text_width());
+    table.rows[0].props.header = true;
+    for (row, cells) in table.rows.iter_mut().enumerate() {
+        for (cell, column) in cells.cells.iter_mut().enumerate() {
+            column.blocks = vec![wordcraft_engine::doc::para_block(Paragraph::with_text(
+                &format!("Measurement {row}/{cell}: {}", "Original experimental observation. ".repeat(6)),
+                Default::default(),
+            ))];
+        }
+    }
+    doc.body.push(std::sync::Arc::new(wordcraft_engine::doc::Block::Table(table)));
+    doc.body.push(wordcraft_engine::doc::para_block(Paragraph::with_text("End of measurements", Default::default())));
+    (doc, note)
+}
+
+fn assert_complete(doc: &Document, layout: &DocLayout) {
+    // Every paragraph character is represented; repeated header rows are allowed.
+    let mut placed = std::collections::HashMap::<(StoryRef, Path), Vec<(usize, usize)>>::new();
+    for page in &layout.pages {
+        for item in &page.items {
+            if let Placed::Lines { story, path, para, l0, l1, y, .. } = item {
+                placed.entry((*story, path.clone())).or_default();
+                let first = &para.lines[*l0];
+                for line in &para.lines[*l0..*l1] {
+                    assert!(*y + line.top - first.top >= page.body.y - 0.5);
+                    assert!(*y + line.top - first.top + line.height <= page.body.bottom() + 0.5);
+                    for cluster in &para.clusters[line.c0..line.c1] {
+                        placed.entry((*story, path.clone())).or_default().push((cluster.start, cluster.end));
+                    }
+                }
+            }
+        }
+    }
+    for story in std::iter::once(StoryRef::Body).chain(doc.parts.keys().copied().map(StoryRef::Part)) {
+        for path in doc.para_paths(story) {
+            let paragraph = doc.para(story, &path).unwrap();
+            let ranges =
+                placed.get(&(story, path.clone())).unwrap_or_else(|| panic!("paragraph disappeared: {story:?}/{path:?} text {:?}", paragraph.text));
+            let mut covered: Vec<bool> = vec![false; paragraph.text.len()];
+            for (a, b) in ranges {
+                for byte in covered.iter_mut().take(*b).skip(*a) {
+                    *byte = true;
+                }
+            }
+            assert!(covered.iter().all(|byte| *byte), "missing text in {story:?}/{path:?}");
+        }
+    }
+}
+
+#[test]
+fn academic_sections_roundtrip_undo_and_recovery_keep_pagination_and_pixels() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-section-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let (doc, note) = academic_document();
+    let mut session = Session::new(doc);
+    let initial = session.doc.clone();
+    session.run("text.insert", &json!({"text":"Verified: "})).unwrap();
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(session.doc, initial);
+    session.run("edit.redo", &json!({})).unwrap();
+    let before = session.layout();
+    assert!(before.pages.len() > 3);
+    assert_eq!(before.caret(&Pos::body(1, 0)).unwrap().page, 2);
+    assert_eq!(before.pages[2].number, 1);
+    assert_complete(&session.doc, &before);
+    let note_pos = Pos { story: StoryRef::Part(note), path: Path::top(0), off: 0 };
+    let nc = before.caret(&note_pos).unwrap();
+    assert_eq!(nc.page, 0);
+    assert_eq!(nc.x, 72.0);
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let id = store.save(&unique_id(), session.document_id(), &Snapshot::capture(&session)).unwrap();
+    let mut restored = Session::new(Document::new());
+    store.load(&id).unwrap().restore(&mut restored);
+    let output = directory.join("academic.docx");
+    restored.run("file.save", &json!({"path":output})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path":output})).unwrap();
+    let after = reopened.layout();
+    assert_eq!(before.pages.len(), after.pages.len());
+    assert_complete(&reopened.doc, &after);
+    for (index, (a, b)) in before.pages.iter().zip(&after.pages).enumerate() {
+        assert_eq!((a.w, a.h, a.number, a.section), (b.w, b.h, b.number, b.section));
+        let options = wordcraft_render::RenderOptions::default();
+        let original = wordcraft_render::render_page(&session.doc, a, 1.0, &options);
+        assert!(
+            original.to_straight() == wordcraft_render::render_page(&reopened.doc, b, 1.0, &options).to_straight(),
+            "pixels changed on page {index}"
+        );
+        if let Ok(path) = std::env::var("WORDCRAFT_LAYOUT_CORPUS_DIR") {
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(std::path::Path::new(&path).join(format!("section-{index}.png")), original.to_png()).unwrap();
+        }
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn layout_does_not_mutate_guarded_packages_or_enable_unsafe_section_edits() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-section-guard-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("guarded.docx");
+    let bytes = fixtures::archive(&fixtures::fixture());
+    std::fs::write(&path, &bytes).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path":path})).unwrap();
+    let original = session.doc.clone();
+    let _ = session.layout();
+    assert_eq!(session.doc, original);
+    session.run("file.save", &json!({})).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    session.run("layout.orientation", &json!({"value":"landscape"})).unwrap();
+    assert!(session.run("file.save", &json!({})).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert!(session.dirty);
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(session.doc, original);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn preceding_section_raster_matches_its_standalone_page() {
+    let (doc, _) = academic_document();
+    let mut reference = doc.clone();
+    reference.body.truncate(1);
+    reference.last_section = *reference.para_mut(StoryRef::Body, &Path::top(0)).unwrap().section.take().unwrap();
+    let mut combined = Session::new(doc);
+    let mut standalone = Session::new(reference);
+    let a = combined.layout();
+    let b = standalone.layout();
+    let options = wordcraft_render::RenderOptions::default();
+    assert!(
+        wordcraft_render::render_page(&combined.doc, &a.pages[0], 1.0, &options).to_straight()
+            == wordcraft_render::render_page(&standalone.doc, &b.pages[0], 1.0, &options).to_straight(),
+        "the following section changed the previous page's pixels"
+    );
+}

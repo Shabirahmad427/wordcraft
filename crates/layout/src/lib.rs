@@ -613,6 +613,8 @@ struct PageBuilder<'a> {
     line_no: u32,
     /// Index of the first body item of the current page (vertical alignment shifts from here).
     page_items_start: usize,
+    /// A section transition may finish the old page before replacing its setup.
+    page_finished: bool,
 }
 
 /// Gap above the footnote separator and its length.
@@ -667,16 +669,23 @@ impl PageBuilder<'_> {
             }
         }
     }
+    /// Finish exactly once, while the page's own section setup is still active.
+    fn finish_page(&mut self) {
+        if !self.page_finished {
+            self.apply_valign();
+            self.flush_notes();
+            self.page_finished = true;
+        }
+    }
     fn new_page(&mut self, first_block: usize, body_top: f32) {
-        self.apply_valign();
-        self.flush_notes();
+        self.finish_page();
         self.excl.clear();
         self.float_tables.clear();
         if self.sect.line_numbers.as_ref().is_some_and(|l| l.restart == wordcraft_doc::section::LineNumberRestart::Page) {
             self.line_no = 0;
         }
         let s = self.sect;
-        self.number += 1;
+        self.number = self.number.saturating_add(1);
         let (w, h) = if self.web { (s.page_w, f32::MAX / 4.0) } else { (s.page_w, s.page_h) };
         let body = Rect::new(s.margin_left + s.gutter, body_top, s.text_width(), (s.page_h - s.margin_bottom - body_top).max(36.0));
         let mut decor = Vec::new();
@@ -705,6 +714,8 @@ impl PageBuilder<'_> {
                 }
             }
         }
+        self.page_finished = false;
+        self.prev = None;
         self.page_items_start = decor.len();
         self.pages.push(Page { w, h, section: self.sect_idx, number: self.number, body, first_block, items: decor, ..Default::default() });
         self.col = 0;
@@ -810,10 +821,25 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         float_tables: Vec::new(),
         line_no: 0,
         page_items_start: 0,
+        page_finished: true,
     };
     let mut block = 0usize;
     for (si, (end, sect)) in sections.iter().enumerate() {
         let sect: &SectionProps = if web { sect_ref } else { sect };
+        let start = if si == 0 { SectionStart::NextPage } else { sect.start };
+        if !web && si > 0 && start != SectionStart::Continuous {
+            // Finalize footnotes and vertical alignment using the previous page's section.
+            pb.finish_page();
+            if matches!(start, SectionStart::EvenPage | SectionStart::OddPage) {
+                let next_is_even = pb.pages.len().saturating_add(1).is_multiple_of(2);
+                if next_is_even != (start == SectionStart::EvenPage) {
+                    // A physical filler page belongs to the outgoing section. It must not
+                    // consume the incoming section's restarted number or first-page header.
+                    pb.new_page(block, pb.sect.margin_top);
+                    pb.finish_page();
+                }
+            }
+        }
         pb.sect = sect;
         pb.sect_idx = si;
         let body_top = if web { sect.margin_top } else { body_top_for(&mut ctx, sect, sect.headers.default) };
@@ -822,7 +848,6 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         if sect.line_numbers.as_ref().is_some_and(|l| l.restart == wordcraft_doc::section::LineNumberRestart::Section) {
             pb.line_no = 0;
         }
-        let start = if si == 0 { SectionStart::NextPage } else { sect.start };
         if web && si > 0 {
             // one long page
         } else if pb.pages.is_empty() || start != SectionStart::Continuous {
@@ -830,12 +855,6 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
                 pb.number = n.saturating_sub(1);
             }
             pb.new_page(block, first_top);
-            if !web && matches!(start, SectionStart::EvenPage | SectionStart::OddPage) {
-                let want_even = start == SectionStart::EvenPage;
-                if pb.number.is_multiple_of(2) != want_even {
-                    pb.new_page(block, body_top);
-                }
-            }
         } else {
             // Continuous: new column layout below the current text.
             pb.cols = sect.column_boxes();
@@ -897,8 +916,7 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
             pb.y += h;
         }
     }
-    pb.apply_valign();
-    pb.flush_notes();
+    pb.finish_page();
     let mut pages = pb.pages;
     if web && let Some(p) = pages.first_mut() {
         let bottom = p
@@ -1634,3 +1652,6 @@ pub fn now_ms() -> f64 {
 mod tests;
 #[cfg(test)]
 mod tests_bidi;
+
+#[cfg(test)]
+mod tests_sections;
