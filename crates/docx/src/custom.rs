@@ -102,3 +102,40 @@ fn el_xml(e: &El, out: &mut String, depth: usize) {
     out.push_str(&e.name);
     out.push('>');
 }
+
+/// Deserialize WordCraft's source library with a cap during parsing, before a hostile array
+/// could allocate an unbounded number of source objects.
+pub(crate) fn read_sources(value: &str) -> Result<Vec<wordcraft_doc::Source>, serde_json::Error> {
+    struct Sources;
+    impl<'de> serde::de::Visitor<'de> for Sources {
+        type Value = Vec<wordcraft_doc::Source>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("at most 10000 bibliography sources")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut sources = Vec::new();
+            while let Some(source) = seq.next_element::<wordcraft_doc::Source>()? {
+                if sources.len() >= 10000 {
+                    return Err(serde::de::Error::custom("source library exceeds 10000 entries"));
+                }
+                sources.push(source);
+            }
+            Ok(sources)
+        }
+    }
+    use serde::Deserializer;
+    let mut deserializer = serde_json::Deserializer::from_str(value);
+    let sources = (&mut deserializer).deserialize_seq(Sources)?;
+    deserializer.end()?;
+    Ok(sources)
+}
+
+#[cfg(test)]
+mod source_tests {
+    #[test]
+    fn oversized_and_malformed_source_arrays_are_rejected() {
+        assert!(super::read_sources(&format!("[{}]", vec!["{}"; 10001].join(","))).is_err());
+        assert!(super::read_sources("[{\"title\":\"book\"}] trailing").is_err());
+        assert!(super::read_sources("{}").is_err());
+    }
+}

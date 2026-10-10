@@ -136,6 +136,15 @@ pub fn read(bytes: &[u8]) -> Result<Document, DocxError> {
         r.doc.passthrough.insert(VBA_PROJECT_PART.into(), Arc::new(b.to_vec()));
         r.read_vba_related(&v);
     }
+    if let Some(value) = r.doc.custom_prop("WordCraft.Sources.v1").filter(|v| v.len() <= 16 * 1024 * 1024) {
+        match crate::custom::read_sources(value) {
+            Ok(sources) => {
+                r.doc.sources = sources;
+                r.doc.remove_custom_prop("WordCraft.Sources.v1");
+            }
+            _ => log::warn!("docx: ignoring malformed WordCraft source library"),
+        }
+    }
     let mut doc = r.doc;
     doc.ensure_nonempty();
     Ok(doc)

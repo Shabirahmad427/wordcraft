@@ -130,3 +130,5 @@ The DOCX fidelity corpus, then footnote continuation, column balancing and nativ
 - M14: Release font inputs include Simplified Chinese; native UI can use installed CJK fallback faces (#241, PR #248).
 
 - M8: Interface theme can follow the operating system, with persisted Light/Dark/System choices (#115, PR #249).
+
+- M6: Mendeley tab imports RIS exports, searches references, inserts citations/bibliographies and refreshes them; source libraries survive DOCX saves. Cloud sign-in and Mendeley Cite field editing remain future work.

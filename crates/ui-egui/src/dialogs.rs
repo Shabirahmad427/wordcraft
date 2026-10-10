@@ -12,6 +12,11 @@ use crate::theme::{Tokens, semibold};
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "dialog", rename_all = "camelCase")]
 pub enum Dialog {
+    Mendeley {
+        ris: String,
+        query: String,
+        error: String,
+    },
     Recipients {
         csv: String,
         error: String,
@@ -127,6 +132,7 @@ pub enum Dialog {
 impl Dialog {
     pub fn name(&self) -> &'static str {
         match self {
+            Dialog::Mendeley { .. } => "mendeley",
             Dialog::Recipients { .. } => "recipients",
             Dialog::Font { .. } => "font",
             Dialog::Paragraph { .. } => "paragraph",
@@ -153,6 +159,7 @@ impl Dialog {
         let s = |k: &str| st.get(k).and_then(Value::as_str).unwrap_or("").to_string();
         let b = |k: &str| st.get(k).and_then(Value::as_bool).unwrap_or(false);
         Some(match name {
+            "mendeley" => Dialog::Mendeley { ris: String::new(), query: String::new(), error: String::new() },
             "recipients" => Dialog::Recipients { csv: String::new(), error: String::new() },
             "font" => Dialog::Font {
                 font: s("font"),
@@ -296,6 +303,7 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context) {
     let mut open = true;
     let mut close = false;
     let title = match &d {
+        Dialog::Mendeley { .. } => "Mendeley Library",
         Dialog::Recipients { .. } => "Select Recipients",
         Dialog::Font { .. } => "Font",
         Dialog::Paragraph { .. } => "Paragraph",
@@ -352,6 +360,76 @@ fn buttons(ui: &mut Ui, ok: &str) -> (bool, bool) {
 /// Returns true to close.
 fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     match d {
+        Dialog::Mendeley { ris, query, error } => {
+            ui.label("In Mendeley: File → Export All → RIS. Paste the exported text below.");
+            #[cfg(not(target_arch = "wasm32"))]
+            if ui.button("Choose RIS File…").clicked() {
+                let _ = app
+                    .ask_file(crate::file_dialogs::FileDialogRequest::Open { purpose: "mendeley".into() }, crate::file_dialogs::AfterPick::Mendeley);
+            }
+            ui.add(egui::TextEdit::multiline(ris).desired_rows(6).desired_width(520.0).char_limit(8 * 1024 * 1024));
+            if ui.button("Import RIS").clicked() {
+                match app.run("mendeley.import", json!({"ris": ris})) {
+                    Ok(result) => {
+                        *error = String::new();
+                        app.status(format!("Mendeley: {} added, {} updated", result["added"], result["updated"]));
+                    }
+                    Err(e) => *error = e,
+                }
+            }
+            if !error.is_empty() {
+                ui.colored_label(Tokens::get(ui.ctx()).red, error.as_str());
+            }
+            ui.separator();
+            ui.label("Search imported references");
+            ui.text_edit_singleline(query);
+            let needle = query.to_lowercase();
+            let sources: Vec<_> = app
+                .session
+                .doc
+                .sources
+                .iter()
+                .filter(|s| s.tag.starts_with("Mendeley_") && format!("{} {} {}", s.title, s.author, s.year).to_lowercase().contains(&needle))
+                .take(100)
+                .cloned()
+                .collect();
+            egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                for source in sources {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{} ({}) — {}", source.author, source.year, source.title));
+                        if ui.button("Insert Citation").clicked() {
+                            match app.run("references.citation", json!({"tag": source.tag})) {
+                                Ok(_) => *error = String::new(),
+                                Err(e) => *error = e,
+                            }
+                        }
+                    });
+                }
+            });
+            ui.label("Citation styles");
+            ui.horizontal(|ui| {
+                for style in wordcraft_engine::cmd::citations::STYLES {
+                    if ui.selectable_label(app.session.bib_style == style, style).clicked()
+                        && let Err(e) = app.run("references.citationStyle", json!({"style": style}))
+                    {
+                        *error = e;
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui.button("Insert Bibliography").clicked()
+                    && let Err(e) = app.run("references.bibliography", json!({}))
+                {
+                    *error = e;
+                }
+                if ui.button("Refresh").clicked()
+                    && let Err(e) = app.run("mendeley.refresh", json!({}))
+                {
+                    *error = e;
+                }
+            });
+            ui.button("Close").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape))
+        }
         Dialog::Recipients { csv, error } => {
             ui.label(tl!("Paste CSV data with field names in the first row."));
             ui.add(egui::TextEdit::multiline(csv).desired_rows(10).desired_width(480.0).char_limit(1_000_000));

@@ -365,9 +365,17 @@ pub fn write_as(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {
     overrides.push(("/docProps/core.xml".into(), "application/vnd.openxmlformats-package.core-properties+xml".into()));
     entries.push(("docProps/app.xml".into(), app_xml(doc)));
     overrides.push(("/docProps/app.xml".into(), "application/vnd.openxmlformats-officedocument.extended-properties+xml".into()));
-    if !doc.custom_props.is_empty() {
+    // Preserve WordCraft's source library alongside portable CITATION/BIBLIOGRAPHY fields.
+    // Use a namespaced custom property, without modifying the caller's document metadata.
+    let mut custom_props = doc.custom_props.clone();
+    custom_props.retain(|p| !p.name.eq_ignore_ascii_case("WordCraft.Sources.v1"));
+    if !doc.sources.is_empty() {
+        let value = serde_json::to_string(&doc.sources).map_err(|e| DocxError::NotWord(e.to_string()))?;
+        custom_props.push(wordcraft_doc::CustomProp { name: "WordCraft.Sources.v1".into(), kind: "lpwstr".into(), value });
+    }
+    if !custom_props.is_empty() {
         root.add(rt::CUSTOM, "docProps/custom.xml", false);
-        entries.push(("docProps/custom.xml".into(), crate::custom::write(&doc.custom_props)));
+        entries.push(("docProps/custom.xml".into(), crate::custom::write(&custom_props)));
         overrides.push(("/docProps/custom.xml".into(), "application/vnd.openxmlformats-officedocument.custom-properties+xml".into()));
     }
     entries.insert(0, ("_rels/.rels".into(), root.xml()));

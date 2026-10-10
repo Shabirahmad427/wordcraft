@@ -9,6 +9,7 @@ pub mod file;
 pub mod format;
 pub mod insert;
 pub mod mailings;
+pub mod mendeley;
 pub mod objects;
 pub mod page;
 pub mod para;
@@ -45,6 +46,7 @@ pub fn registry() -> Registry {
     v.extend(references::specs());
     v.extend(mailings::specs());
     v.extend(citations::specs());
+    v.extend(mendeley::specs());
     v.extend(objects::specs());
     v.extend(tools::specs());
     v.extend(speech::specs());

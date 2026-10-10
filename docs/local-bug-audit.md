@@ -20,6 +20,9 @@ Validated fixes are pushed to the fork main; upstream issues and pull requests r
 | #94: synchronous Linux file dialogs freeze the UI | PR #246 plus lifecycle guard | Native dialogs now complete asynchronously. Regression tests cover delayed saves, cancellation, single-dialog enforcement, deferred Close, and stale responses after document replacement. Live desktop portal behavior remains unverified. |
 | #241: missing Chinese UI glyphs in Windows release | PR #248 | Updated release font pin, required Japanese/Chinese manifest coverage, bounded installed-font fallback and coverage tests. Windows release behavior remains unverified on this Linux host. |
 
+| #115: follow operating-system appearance | `4b75680` (PR #249) | Persisted System/Light/Dark preference; migration, theme resolution and command tests pass. Live OS transitions remain unverified. |
+| Mendeley export integration | M6 implementation | RIS import, search/citation dialog, bibliography/styles/refresh, stable-ID reimport, atomic errors, Undo and DOCX source persistence. Cloud sign-in and proprietary Mendeley Cite fields are not implemented. |
+
 ## Validation
 
 Full `cargo xtask ci` passed separately for the recipient dialog, paragraph-break review, and table resizing: formatting, Clippy with warnings denied, workspace tests, attribution, dependency layering, and WASM checks. Logs: `/tmp/wordcraft-issue-{240,229,217}-ci.log`.

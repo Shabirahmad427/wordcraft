@@ -1037,6 +1037,33 @@ mod tests {
     }
 
     #[test]
+    fn mendeley_dialog_imports_then_inserts_a_citation() {
+        use egui_kittest::kittest::Queryable;
+        let mut a = app();
+        a.run("ui.dialog", json!({"name": "mendeley"})).unwrap();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+            |ui, a: &mut WordApp| {
+                a.logic(ui.ctx());
+                a.ui(ui);
+            },
+            a,
+        );
+        h.query_by_label("Import RIS").unwrap().click();
+        h.run();
+        assert!(matches!(&h.state().dialog, Some(dialogs::Dialog::Mendeley { error, .. }) if !error.is_empty()));
+        if let Some(dialogs::Dialog::Mendeley { ris, .. }) = &mut h.state_mut().dialog {
+            *ris = "TY  - BOOK\nID  - demo\nTI  - Open Spaces\nAU  - Rivera, Alex\nPY  - 2024\nER  - \n".into();
+        }
+        h.run();
+        h.query_by_label("Import RIS").unwrap().click();
+        h.run();
+        assert_eq!(h.state().session.doc.sources.len(), 1);
+        h.query_by_label("Insert Citation").unwrap().click();
+        h.run();
+        assert!(h.state().session.doc.plain_text(wordcraft_doc::StoryRef::Body).contains("Rivera"));
+    }
+
+    #[test]
     fn recipients_dialog_submits_data_and_keeps_invalid_input_open() {
         use egui_kittest::kittest::Queryable;
         let mut a = app();

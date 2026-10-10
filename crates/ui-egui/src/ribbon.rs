@@ -7,7 +7,8 @@ use crate::theme::{Tokens, medium, regular, semibold};
 use crate::widgets::{CONTENT_H, LABEL_H, big, color_grid, combo, group, menu_button, small, split};
 use crate::{WordApp, icons};
 
-pub const TABS: [&str; 12] = ["File", "Home", "Insert", "Draw", "Design", "Layout", "References", "Mailings", "Review", "View", "Zotero", "Help"];
+pub const TABS: [&str; 13] =
+    ["File", "Home", "Insert", "Draw", "Design", "Layout", "References", "Mailings", "Review", "View", "Zotero", "Mendeley", "Help"];
 
 /// True when the caret/selection touches a picture (#147).
 pub fn has_picture_selected(s: &wordcraft_engine::Session) -> bool {
@@ -163,6 +164,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                         "Review" => review(app, ui),
                         "View" => view(app, ui),
                         "Zotero" => zotero(app, ui),
+                        "Mendeley" => mendeley(app, ui),
                         "Help" => help(app, ui),
                         "Table Design" => table_design(app, ui),
                         "Table Layout" => table_layout(app, ui),
@@ -882,6 +884,17 @@ fn mailings(app: &mut WordApp, ui: &mut Ui) {
 }
 
 /// Zotero (`docs/zotero.md`): the Zotero desktop app does the work in its own window.
+fn mendeley(app: &mut WordApp, ui: &mut Ui) {
+    group(ui, "Library", None, app, |ui, app| {
+        big(ui, app, "citation", "Import / Insert\nCitation", "ui.dialog", json!({"name": "mendeley"}), false);
+        big(ui, app, "pastCitation", "Move Past\nCitation", "caret.pastCitation", json!({}), false);
+    });
+    group(ui, "Bibliography", None, app, |ui, app| {
+        big(ui, app, "bibliography", "Insert\nBibliography", "references.bibliography", json!({}), false);
+        big(ui, app, "update", "Refresh", "mendeley.refresh", json!({}), false);
+    });
+}
+
 fn zotero(app: &mut WordApp, ui: &mut Ui) {
     group(ui, "Citations", None, app, |ui, app| {
         big(ui, app, "citation", "Add/Edit\nCitation", "ui.zotero.addEditCitation", json!({}), false);
