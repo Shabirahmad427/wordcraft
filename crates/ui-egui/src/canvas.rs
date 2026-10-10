@@ -305,7 +305,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
             }
             // View › Gridlines: a grid over the text area.
             if app.session.view.gridlines {
-                page_grid(&painter, sr, page.body, geo.scale, Stroke::new(0.5, t.blue.linear_multiply(0.35)));
+                let st = &app.session.doc.settings;
+                page_grid(&painter, sr, page.body, (st.grid_h, st.grid_v), geo.scale, Stroke::new(0.5, t.blue.linear_multiply(0.35)));
             }
             // Table gridlines.
             if app.session.view.table_gridlines {
@@ -574,26 +575,26 @@ fn balloons(app: &mut WordApp, ui: &mut Ui, painter: &egui::Painter, rects: &[Re
     }
 }
 
-/// Grid pitch in points (Word's default grid is about 1/8 inch).
-const GRID_PT: f32 = 9.0;
-
-/// Lines every [`GRID_PT`] over `body` (page points) on the page drawn at `page` (screen); none when they'd crowd together.
-fn page_grid(p: &egui::Painter, page: Rect, body: wordcraft_geom::Rect, scale: f32, s: Stroke) {
-    let pitch = GRID_PT * scale;
-    if !pitch.is_finite() || pitch < 4.0 || !body.w.is_finite() || !body.h.is_finite() {
+/// The document's drawing grid (`pitch` across and down, in points) over `body` (page points) on the page drawn
+/// at `page` (screen); a direction is left out when its lines would crowd together.
+fn page_grid(p: &egui::Painter, page: Rect, body: wordcraft_geom::Rect, pitch: (f32, f32), scale: f32, s: Stroke) {
+    if !body.w.is_finite() || !body.h.is_finite() {
         return;
     }
     let r = Rect::from_min_size(pos2(page.min.x + body.x * scale, page.min.y + body.y * scale), vec2(body.w * scale, body.h * scale));
-    // Page sizes come from documents: bound the line count.
-    let cols = ((r.width() / pitch) as usize).min(2000);
-    let rows = ((r.height() / pitch) as usize).min(2000);
-    for i in 0..=cols {
-        let x = r.min.x + i as f32 * pitch;
-        p.line_segment([pos2(x, r.min.y), pos2(x, r.max.y)], s);
+    let (px, py) = (pitch.0 * scale, pitch.1 * scale);
+    // Page sizes and spacing come from documents: bound the line count.
+    if px.is_finite() && px >= 4.0 {
+        for i in 0..=((r.width() / px) as usize).min(2000) {
+            let x = r.min.x + i as f32 * px;
+            p.line_segment([pos2(x, r.min.y), pos2(x, r.max.y)], s);
+        }
     }
-    for i in 0..=rows {
-        let y = r.min.y + i as f32 * pitch;
-        p.line_segment([pos2(r.min.x, y), pos2(r.max.x, y)], s);
+    if py.is_finite() && py >= 4.0 {
+        for i in 0..=((r.height() / py) as usize).min(2000) {
+            let y = r.min.y + i as f32 * py;
+            p.line_segment([pos2(r.min.x, y), pos2(r.max.x, y)], s);
+        }
     }
 }
 
