@@ -31,5 +31,5 @@ image = { workspace = true }
 # The browser clock for `now_iso` (`SystemTime::now()` panics on wasm32).
 js-sys = "0.3"
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 zip = { workspace = true }

@@ -11,6 +11,8 @@ pub mod cmd;
 pub mod io;
 mod io_ext;
 pub mod math_gallery;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod recovery;
 pub mod sample;
 mod session;
 pub mod speech;
@@ -19,7 +21,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-pub use session::{EditSnapshot, FindState, MathEdit, Prefs, Selection, Session, ViewState};
+pub use session::{EditSnapshot, FindState, MathEdit, Prefs, Selection, Session, SourcePackage, ViewState};
 pub use wordcraft_doc as doc;
 pub use wordcraft_layout as layout;
 pub use wordcraft_render as render;

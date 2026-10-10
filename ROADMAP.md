@@ -133,3 +133,7 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 - M8: Interface theme can follow the operating system, with persisted Light/Dark/System choices (#115, PR #249).
 
 - M6: Mendeley tab imports RIS exports, searches references, inserts citations/bibliographies and refreshes them; source libraries survive DOCX saves. Cloud sign-in and Mendeley Cite field editing remain future work.
+
+## Phase 2 — professional document recovery (2026-10-10)
+
+- Arc 1: native immutable recovery archive foundation, complete editor/media/passthrough snapshots and exact source DOCX retention. Restoring requires Save As; incomplete writes are ignored and live sessions are protected by OS locks. Storage regression tests include abrupt process exit and corrupted archives. Automatic scheduling and the restore/discard/compare interface remain for arc 2. See [recovery storage contract](docs/recovery.md).

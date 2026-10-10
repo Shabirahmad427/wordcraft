@@ -66,6 +66,11 @@ pub fn save_bytes(name: &str, doc: &Document) -> Result<Vec<u8>, String> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn open_path(path: &std::path::Path) -> Result<Document, String> {
+    open_path_with_source(path).map(|(doc, _)| doc)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_path_with_source(path: &std::path::Path) -> Result<(Document, Option<crate::SourcePackage>), String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if meta.len() > 2 << 30 {
         return Err(format!("{}: file is larger than 2 GB", path.display()));
@@ -77,9 +82,11 @@ pub fn open_path(path: &std::path::Path) -> Result<Document, String> {
         let images = LocalImages::new(path.parent().unwrap_or(std::path::Path::new("")));
         let mut doc = wordcraft_formats::html::import_with(&wordcraft_formats::html::decode(&bytes), &|src| images.load(src));
         doc.ensure_nonempty();
-        return Ok(doc);
+        return Ok((doc, None));
     }
-    open_bytes(&name, &bytes)
+    let doc = open_bytes(&name, &bytes)?;
+    let source = is_word_package(&ext_of(&name)).then(|| crate::SourcePackage { name: name.to_string(), bytes: std::sync::Arc::new(bytes) });
+    Ok((doc, source))
 }
 
 /// The pictures an HTML file names by a path relative to its folder.
@@ -183,6 +190,11 @@ fn read_regular_file(path: &std::path::Path, limit: u64) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(usize::try_from(meta.len().min(limit)).unwrap_or(0));
     file.take(limit.saturating_add(1)).read_to_end(&mut out).ok()?;
     Some(out)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn open_path_with_source(path: &std::path::Path) -> Result<(Document, Option<crate::SourcePackage>), String> {
+    Err(format!("{}: files are opened through the browser on the web", path.display()))
 }
 
 #[cfg(target_arch = "wasm32")]

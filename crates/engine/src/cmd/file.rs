@@ -112,13 +112,17 @@ fn open(s: &mut Session, v: &Value) -> CmdResult {
         s.ui_requests.push(json!({"open": "openFile"}));
         return sel_result(s);
     };
-    let doc = if let Some(data) = p::str(v, "data") {
+    let (doc, source) = if let Some(data) = p::str(v, "data") {
         let bytes = super::insert::base64_decode(data).ok_or_else(|| CmdError::Params("bad base64".into()))?;
-        crate::io::open_bytes(path, &bytes).map_err(CmdError::Failed)?
+        let doc = crate::io::open_bytes(path, &bytes).map_err(CmdError::Failed)?;
+        let source = crate::io::is_word_package(path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str())
+            .then(|| crate::SourcePackage { name: path.into(), bytes: std::sync::Arc::new(bytes) });
+        (doc, source)
     } else {
-        crate::io::open_path(std::path::Path::new(path)).map_err(CmdError::Failed)?
+        crate::io::open_path_with_source(std::path::Path::new(path)).map_err(CmdError::Failed)?
     };
     s.set_document(doc);
+    s.source_package = source;
     s.path = Some(path.into());
     Ok(json!({"path": path, "paragraphs": s.doc.paragraph_count(), "words": s.doc.word_count()}))
 }

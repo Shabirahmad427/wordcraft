@@ -11,6 +11,14 @@ use wordcraft_layout::{DocLayout, LayoutCache, LayoutOptions, ViewMode};
 
 use crate::{CmdError, Registry};
 
+/// Exact source Word package retained separately from the editable model. Recovery can return
+/// unsupported parts even when the importer cannot interpret them.
+#[derive(Clone, Debug)]
+pub struct SourcePackage {
+    pub name: String,
+    pub bytes: Arc<Vec<u8>>,
+}
+
 /// A selection: anchor (where it started) and focus (where the caret is).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Selection {
@@ -195,6 +203,9 @@ pub struct Session {
     pub autocorrect_user: Vec<(String, String)>,
     /// Saved versions: (label, date, document).
     pub versions: Vec<(String, String, Document)>,
+    pub source_package: Option<SourcePackage>,
+    /// Native recovery store configured by the desktop host.
+    pub recovery_dir: Option<std::path::PathBuf>,
     /// Quick Parts / AutoText entries.
     pub building_blocks: std::collections::BTreeMap<String, Fragment>,
     pub autosave: bool,
@@ -277,6 +288,8 @@ impl Session {
             autocorrect_on: true,
             autocorrect_user: Vec::new(),
             versions: Vec::new(),
+            source_package: None,
+            recovery_dir: None,
             building_blocks: Default::default(),
             autosave: true,
             bib_style: "APA".into(),
@@ -414,6 +427,7 @@ impl Session {
 
     /// Replace the document (open/new).
     pub fn set_document(&mut self, doc: Document) {
+        self.source_package = None;
         self.document_id = self.document_id.wrapping_add(1);
         self.doc = doc;
         self.doc.ensure_nonempty();
@@ -473,6 +487,8 @@ impl Session {
             autocorrect_on: _,
             autocorrect_user: _,
             versions: _,
+            source_package: _,
+            recovery_dir: _,
             building_blocks: _,
             autosave: _,
             bib_style: _,
