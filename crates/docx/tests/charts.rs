@@ -15,13 +15,12 @@ fn scientific_thesis_and_tracked_report_charts_survive_three_generations() {
             std::fs::write(directory.join(format!("{}.docx", kind.replace(' ', "-"))), archive(&input)).unwrap();
         }
         let mut doc = wordcraft_docx::read(&archive(&input)).unwrap();
-        assert!(doc.plain_text(StoryRef::Body).contains("Chart preserved"));
         assert!(
             doc.body
                 .iter()
                 .filter_map(|b| b.as_para())
                 .flat_map(|p| &p.objects)
-                .any(|o| matches!(o, InlineObject::Opaque { format, .. } if format == "docx-chart"))
+                .any(|o| matches!(o, InlineObject::Graphic { graphic, .. } if graphic.kind == wordcraft_doc::graphic::GraphicKind::Chart))
         );
         doc.insert_text(&wordcraft_doc::Pos::body(0, 0), "Edited: ", &Default::default()).unwrap();
         for flavor in [wordcraft_docx::Flavor::Document, wordcraft_docx::Flavor::Template, wordcraft_docx::Flavor::MacroDocument] {

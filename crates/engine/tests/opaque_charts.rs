@@ -6,8 +6,15 @@ use serde_json::json;
 use wordcraft_engine::recovery::{Snapshot, Store, unique_id};
 use wordcraft_engine::{
     Session,
-    doc::{Document, StoryRef},
+    doc::{Document, InlineObject, StoryRef},
 };
+fn has_chart(doc: &Document) -> bool {
+    doc.body
+        .iter()
+        .filter_map(|block| block.as_para())
+        .flat_map(|para| &para.objects)
+        .any(|object| matches!(object, InlineObject::Graphic { graphic, .. } if graphic.kind == wordcraft_engine::doc::graphic::GraphicKind::Chart))
+}
 #[test]
 fn chart_save_reopen_undo_and_recovery_preserve_all_chart_bytes() {
     let directory = std::env::temp_dir().join(format!("wordcraft-chart-engine-{}", unique_id()));
@@ -19,6 +26,7 @@ fn chart_save_reopen_undo_and_recovery_preserve_all_chart_bytes() {
     let mut session = Session::new(Document::new());
     let opened = session.run("file.open", &json!({"path": source})).unwrap();
     assert!(!opened["compatibilityWarnings"].as_array().unwrap().is_empty());
+    assert!(has_chart(&session.doc));
     session.run("text.insert", &json!({"text": "Edited science: "})).unwrap();
     let store = Store::new(directory.join("recovery")).unwrap();
     let id = store.save(&unique_id(), session.document_id(), &Snapshot::capture(&session)).unwrap();
@@ -36,6 +44,7 @@ fn chart_save_reopen_undo_and_recovery_preserve_all_chart_bytes() {
     assert_eq!(std::fs::read(&source).unwrap(), original);
     let mut reopened = Session::new(Document::new());
     reopened.run("file.open", &json!({"path": destination})).unwrap();
+    assert!(has_chart(&reopened.doc));
     assert_eq!(reopened.doc.plain_text(StoryRef::Body), recovered.doc.plain_text(StoryRef::Body));
     let a = recovered.layout();
     let b = reopened.layout();
@@ -49,7 +58,8 @@ fn chart_save_reopen_undo_and_recovery_preserve_all_chart_bytes() {
         );
     }
     session.run("edit.undo", &json!({})).unwrap();
-    assert!(session.doc.plain_text(StoryRef::Body).contains("Chart preserved"));
+    assert!(!session.doc.plain_text(StoryRef::Body).contains("Edited science: "));
+    assert!(has_chart(&session.doc));
     assert_eq!(session.doc.passthrough, recovered.doc.passthrough);
     std::fs::remove_dir_all(directory).unwrap();
 }

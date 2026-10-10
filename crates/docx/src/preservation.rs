@@ -106,7 +106,14 @@ pub(crate) fn validate(pkg: &Package) -> Result<(), DocxError> {
             || path.ends_with(".rels")
             || content_type.ends_with("+xml")
             || matches!(content_type, "application/xml" | "text/xml");
-        let nodes = if is_xml { Some(xml::inspect(bytes)?) } else { None };
+        let nodes = if is_xml {
+            Some(xml::inspect(bytes).map_err(|e| match e {
+                DocxError::Preservation(message) => error(format!("invalid XML in {path}: {message}")),
+                other => other,
+            })?)
+        } else {
+            None
+        };
         if path.ends_with(".rels") {
             let owner = relationship_owner(path)?;
             if !owner.is_empty() && pkg.get(&owner).is_none() {

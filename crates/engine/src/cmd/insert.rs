@@ -252,8 +252,17 @@ fn shape(s: &mut Session, v: &Value) -> CmdResult {
     let stroke = p::str(v, "stroke").and_then(Rgb::parse).or(Some(Rgb(0x0E, 0x40, 0x5A)));
     let props = s.typing_props();
     let at = delete_selection(s)?;
-    let obj =
-        InlineObject::Shape { kind, w, h, fill, stroke, stroke_width: 1.0, float: Float { wrap: Wrap::Inline, ..Default::default() }, story: None };
+    let obj = InlineObject::Shape {
+        kind,
+        w,
+        h,
+        fill,
+        stroke,
+        stroke_width: 1.0,
+        float: Float { wrap: Wrap::Inline, ..Default::default() },
+        story: None,
+        effects: Default::default(),
+    };
     let end = s.doc.insert_object(&at, obj, &props)?;
     s.sel = Selection { anchor: at, focus: end };
     sel_result(s)
@@ -275,6 +284,7 @@ fn text_box(s: &mut Session, v: &Value) -> CmdResult {
         stroke_width: 0.75,
         float: Float::default(),
         story: Some(id),
+        effects: Default::default(),
     };
     s.doc.insert_object(&at, obj, &props)?;
     // Like Word, type straight into the new box.
@@ -449,20 +459,8 @@ pub fn format_date(fmt: &str) -> String {
     const MONTHS: [&str; 12] =
         ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     const DAYS: [&str; 7] = ["Thursday", "Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday"];
-    let days_since = {
-        // Days since epoch for weekday.
-        let secs = {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                0u64
-            }
-        };
-        (secs / 86_400) as usize
-    };
+    // Days since the epoch, for the weekday.
+    let days_since = (super::now_unix() / 86_400) as usize;
     let month = MONTHS.get(m.saturating_sub(1)).copied().unwrap_or("January");
     let day = DAYS.get(days_since % 7).copied().unwrap_or("Monday");
     let mut out = String::new();

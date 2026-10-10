@@ -200,7 +200,14 @@ fn long_note_keeps_undo_recovery_and_docx_roundtrip_content() {
     assert_eq!(session.doc, original);
     session.run("edit.redo", &json!({})).unwrap();
     let before = session.layout();
-    assert!(before.pages.len() > 3);
+    let note_pages: std::collections::BTreeSet<_> = before
+        .pages
+        .iter()
+        .enumerate()
+        .filter(|(_, page)| page.items.iter().any(|item| matches!(item, Placed::Lines { story: StoryRef::Part(id), .. } if *id == note)))
+        .map(|(index, _)| index)
+        .collect();
+    assert!(note_pages.len() >= 2, "long footnote should continue across pages: {note_pages:?}");
     let store = Store::new(directory.join("recovery")).unwrap();
     let id = store.save(&unique_id(), session.document_id(), &Snapshot::capture(&session)).unwrap();
     let mut restored = Session::new(Document::new());

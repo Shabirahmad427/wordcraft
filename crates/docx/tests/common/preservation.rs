@@ -35,12 +35,7 @@ pub fn fixture() -> BTreeMap<String, Vec<u8>> {
     let list = document.numbering.add_list(wordcraft_doc::numbering::ListKind::Numbered);
     document.para_mut(StoryRef::Body, &Path::top(2)).unwrap().props.numbering = Some(wordcraft_doc::props::NumRef { num: list, level: 0 });
     let mut files = unpack(&wordcraft_docx::write(&document).unwrap());
-    replace(
-        &mut files,
-        "word/document.xml",
-        "<w:document ",
-        "<w:document xmlns:future=\"urn:wordcraft:future\" xmlns:dgm=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\" future:extension=\"keep\" ",
-    );
+    replace(&mut files, "word/document.xml", "<w:document ", "<w:document xmlns:future=\"urn:wordcraft:future\" future:extension=\"keep\" ");
     let unsupported = r#"<!--keep original comment--><w:sdt future:control="keep"><w:sdtPr><w:id w:val="91"/><w:alias w:val="Bound scientific title"/><w:tag w:val="manuscript-title"/><w:lock w:val="sdtContentLocked"/><w:dataBinding w:storeItemID="{11111111-1111-1111-1111-111111111111}" w:xpath="/science/title" w:prefixMappings="xmlns:s='urn:science'"/><future:controlMetadata mode="preserve"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t xml:space="preserve">Shared text</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:r><w:drawing><wp:inline><wp:extent cx="1270000" cy="635000"/><wp:docPr id="17" name="Original synthetic SmartArt"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds r:dm="diagramData" r:lo="diagramLayout" r:qs="diagramStyle" r:cs="diagramColors" future:retained="yes"/></a:graphicData></a:graphic></wp:inline></w:drawing><w:object><o:OLEObject Type="Embed" ProgID="Synthetic.Inert" r:id="oleData"/></w:object><w:control r:id="controlData" w:name="Inert synthetic control"/><future:extension r:id="unknownData"/></w:r></w:p>"#;
     replace(&mut files, "word/document.xml", "<w:sectPr>", &format!("{unsupported}<w:sectPr>"));
     let relationships = format!(

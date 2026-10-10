@@ -6,7 +6,7 @@ use wordcraft_doc::para::{Anchor, FloatAlign, NoteKind, ShapeKind, Wrap};
 use wordcraft_doc::props::{Align, Border, BorderStyle, Rgb, TextColor, VMerge};
 use wordcraft_doc::{Block, Document, InlineObject, Paragraph};
 
-const W_NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office""#;
+const W_NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office""#;
 
 const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
 
@@ -413,6 +413,62 @@ fn vml_image_and_inline_drawing() {
 }
 
 #[test]
+fn chart_and_diagram_drawings_are_graphic_objects() {
+    // A diagram's data holds a blip: the URI decides first, so no picture is read from it.
+    let drawing = |uri: &str, data: &str| {
+        format!(
+            r#"<w:r><w:drawing><wp:inline><wp:extent cx="2743200" cy="1828800"/><wp:docPr id="5" name="G" descr="sales"/><a:graphic><a:graphicData uri="{uri}">{data}</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+        )
+    };
+    let body = format!(
+        "<w:p>{}{}</w:p>",
+        drawing("http://schemas.openxmlformats.org/drawingml/2006/chart", ""),
+        drawing("http://schemas.openxmlformats.org/drawingml/2006/diagram", r#"<a:blip r:embed="rIdImg"/>"#)
+    );
+    let bytes = docx(&body, &[("rIdImg", "image", "media/pic.png")], &[("word/media/pic.png", "image bytes")]);
+    let d = wordcraft_docx::read(&bytes).unwrap();
+    let p = paras(&d);
+    assert_eq!(p[0].objects.len(), 2);
+    match (&p[0].objects[0], &p[0].objects[1]) {
+        (InlineObject::Graphic { w: w1, h: h1, alt, graphic: g1, .. }, InlineObject::Graphic { graphic: g2, .. }) => {
+            assert_eq!((*w1, *h1, alt.as_str()), (216.0, 144.0, "sales"));
+            assert_eq!(g1.kind, wordcraft_doc::graphic::GraphicKind::Chart);
+            assert_eq!(g2.kind, wordcraft_doc::graphic::GraphicKind::Diagram);
+            assert!(g1.items.is_empty() && g2.items.is_empty());
+        }
+        o => panic!("{o:?}"),
+    }
+}
+
+#[test]
+fn a_chart_part_is_built_once_and_only_through_a_chart_relationship() {
+    let chart = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:ser><c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+    let drawing = |id: &str| {
+        format!(
+            r#"<w:r><w:drawing><wp:inline><wp:extent cx="2743200" cy="1828800"/><wp:docPr id="5" name="G"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="{id}"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+        )
+    };
+    let invalid_body = format!("<w:p>{}</w:p>", drawing("rIdNotChart"));
+    let invalid = docx(
+        &invalid_body,
+        &[("rIdChart", "chart", "charts/chart1.xml"), ("rIdNotChart", "image", "charts/chart1.xml")],
+        &[("word/charts/chart1.xml", chart)],
+    );
+    assert!(wordcraft_docx::read(&invalid).is_err(), "a chart reference with an image relationship is unsafe");
+    let body = format!("<w:p>{}{}</w:p>", drawing("rIdChart"), drawing("rIdChart"));
+    let bytes = docx(&body, &[("rIdChart", "chart", "charts/chart1.xml")], &[("word/charts/chart1.xml", chart)]);
+    let d = wordcraft_docx::read(&bytes).unwrap();
+    let graphics: Vec<_> = paras(&d)[0]
+        .objects
+        .iter()
+        .filter_map(|o| if let InlineObject::Graphic { graphic, .. } = o { Some(graphic.clone()) } else { None })
+        .collect();
+    assert_eq!(graphics.len(), 2);
+    assert!(!graphics[0].items.is_empty(), "the chart is drawn");
+    assert!(std::sync::Arc::ptr_eq(&graphics[0], &graphics[1]), "one build for both references");
+}
+
+#[test]
 fn strict_namespace_and_bad_numbers() {
     let doc = r#"<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body>
 <w:p><w:pPr><w:jc w:val="end"/><w:ind w:start="1in" w:hanging="abc"/><w:spacing w:before="-50" w:line="99999999999999999999" w:lineRule="exact"/><w:outlineLvl w:val="300"/><w:numPr><w:numId w:val="-4"/></w:numPr></w:pPr>
@@ -588,4 +644,87 @@ fn bare_break_directly_in_paragraph() {
     let out = wordcraft_docx::write(&d).unwrap();
     let d2 = wordcraft_docx::read(&out).unwrap();
     assert_eq!(paras(&d2)[0].text, "First\nSecond\n\u{C}Third");
+}
+
+/// Issue #149: an absolutely positioned VML text box in a header floats where its style puts it
+/// (relative to the page here, behind the text at a negative z-index, no wrapping) instead of
+/// sitting inline in the header's flow, and it keeps that placement when saved and read back.
+#[test]
+fn absolute_vml_text_box_in_header_floats() {
+    let w10 = r#"xmlns:w10="urn:schemas-microsoft-com:office:word""#;
+    let boxes = r##"<w:p><w:r><w:pict><v:shape id="Box" type="#_x0000_t202" style="position:absolute;left:0;margin-left:0pt;margin-top:80pt;width:405pt;height:491.4pt;z-index:-1;mso-position-horizontal-relative:page;mso-position-vertical-relative:page"><v:textbox><w:txbxContent><w:p><w:r><w:t>WATERMARK</w:t></w:r></w:p></w:txbxContent></v:textbox><w10:wrap type="none"/></v:shape></w:pict></w:r></w:p>
+<w:p><w:r><w:pict><v:rect style="position:absolute;margin-left:12pt;margin-top:-6pt;width:1in;height:36pt;z-index:3;mso-position-horizontal:center;mso-position-horizontal-relative:margin;mso-position-vertical-relative:top-margin-area;mso-wrap-distance-left:9pt;mso-wrap-distance-bottom:4pt"><v:textbox><w:txbxContent><w:p><w:r><w:t>square</w:t></w:r></w:p></w:txbxContent></v:textbox><w10:wrap type="square"/></v:rect></w:pict></w:r>
+<w:r><w:pict><v:shape style="position:absolute;margin-left:1in;margin-top:2pt;width:72pt;height:20pt;z-index:5"><v:textbox><w:txbxContent><w:p><w:r><w:t>front</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r>
+<w:r><w:pict><v:shape style="width:72pt;height:20pt"><v:textbox><w:txbxContent><w:p><w:r><w:t>inline</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>""##;
+    let header = format!(r#"<w:hdr {W_NS} {w10}><w:p><w:r><w:t>Header label</w:t></w:r></w:p>{boxes}</w:hdr>"#);
+    let body = r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="rIdH"/></w:sectPr>"#;
+    let bytes = docx(body, &[("rIdH", "header", "header1.xml")], &[("word/header1.xml", &header)]);
+    let check = |d: &Document| {
+        let hid = d.last_section.headers.default.unwrap();
+        let blocks = &d.parts.get(&hid).unwrap().blocks;
+        let shapes: Vec<_> = blocks
+            .iter()
+            .filter_map(|b| b.as_para())
+            .flat_map(|p| &p.objects)
+            .filter_map(|o| if let InlineObject::Shape { kind, w, h, float, story, .. } = o { Some((*kind, *w, *h, *float, *story)) } else { None })
+            .collect();
+        let [(k0, w0, h0, f0, s0), (_, w1, h1, f1, _), (_, _, _, f2, _), (_, _, _, f3, _)] = shapes.as_slice() else { panic!("{shapes:?}") };
+        assert_eq!(*k0, ShapeKind::TextBox);
+        assert!((w0 - 405.0).abs() < 0.01 && (h0 - 491.4).abs() < 0.01, "{w0} x {h0}");
+        assert_eq!((f0.wrap, f0.h_rel, f0.v_rel, f0.h_align, f0.v_align), (Wrap::BehindText, Anchor::Page, Anchor::Page, None, None));
+        assert!(f0.x.abs() < 0.01 && (f0.y - 80.0).abs() < 0.01, "offset {} {}", f0.x, f0.y);
+        let text = d.parts.get(&s0.unwrap()).unwrap().blocks[0].as_para().unwrap().text.clone();
+        assert_eq!(text, "WATERMARK");
+        assert_eq!((*w1, *h1), (72.0, 36.0));
+        assert_eq!(
+            (f1.wrap, f1.h_rel, f1.h_align, f1.v_rel, f1.v_align),
+            (Wrap::Square, Anchor::Margin, Some(FloatAlign::Center), Anchor::TopMargin, None)
+        );
+        assert!((f1.y + 6.0).abs() < 0.01 && (f1.dist - 9.0).abs() < 0.01 && (f1.dist_bottom - 4.0).abs() < 0.01, "{f1:?}");
+        // No wrap element: in front of the text, relative to the column and paragraph.
+        assert_eq!((f2.wrap, f2.h_rel, f2.v_rel), (Wrap::InFrontOfText, Anchor::Column, Anchor::Paragraph));
+        assert!((f2.x - 72.0).abs() < 0.01 && (f2.y - 2.0).abs() < 0.01, "{f2:?}");
+        // Not absolutely positioned: still inline.
+        assert_eq!(f3.wrap, Wrap::Inline);
+    };
+    let d = wordcraft_docx::read(&bytes).unwrap();
+    check(&d);
+    // Saved (as DrawingML anchors) and read back, the boxes keep their placement.
+    check(&wordcraft_docx::read(&wordcraft_docx::write(&d).unwrap()).unwrap());
+}
+
+#[test]
+fn hostile_vml_style_values_stay_finite() {
+    let body = r#"<w:p><w:r><w:pict><v:shape style="position:ABSOLUTE;margin-left:1e39pt;left:-1e39pt;margin-top:NaNpt;top:;width:-5pt;height:1e30in;z-index:99999999999999999999999;mso-position-horizontal:bogus;mso-wrap-distance-left:-3pt;mso-wrap-distance-top:1e9pt;;:;position"><v:textbox><w:txbxContent><w:p/></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#;
+    let d = read_body(body);
+    let p = paras(&d);
+    let Some(InlineObject::Shape { w, h, float, .. }) = p[0].objects.first() else { panic!("{:?}", p[0].objects) };
+    assert_eq!(float.wrap, Wrap::InFrontOfText);
+    assert!([*w, *h, float.x, float.y, float.dist, float.dist_top].iter().all(|v| v.is_finite()), "{w} {h} {float:?}");
+    assert_eq!((float.h_align, float.dist, float.dist_top), (None, 0.0, 1584.0));
+}
+
+/// A group as Word saves one (in `mc:AlternateContent`, needing `wpg`): its members' space
+/// starts at `a:chOff`, and a nested group is flattened into it through its own transform.
+#[test]
+fn word_group_with_nested_group() {
+    let body = r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wpg"><w:drawing><wp:anchor behindDoc="0" distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="1" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2540000" cy="1270000"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapSquare wrapText="bothSides"/><wp:docPr id="1" name="Group 1"/><wp:cNvGraphicFramePr/>
+<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"><wpg:wgp><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2540000" cy="1270000"/><a:chOff x="127000" y="127000"/><a:chExt cx="2540000" cy="1270000"/></a:xfrm></wpg:grpSpPr>
+<wps:wsp><wps:cNvPr id="2" name="Rectangle 2"/><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="127000" y="127000"/><a:ext cx="1270000" cy="635000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp>
+<wpg:grpSp><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x="1397000" y="762000"/><a:ext cx="1270000" cy="635000"/><a:chOff x="0" y="0"/><a:chExt cx="2540000" cy="1270000"/></a:xfrm></wpg:grpSpPr>
+<wps:wsp><wps:cNvPr id="3" name="Oval 3"/><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="254000" y="254000"/><a:ext cx="508000" cy="254000"/></a:xfrm><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp>
+</wpg:grpSp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:pict/></mc:Fallback></mc:AlternateContent></w:r></w:p>"#;
+    let d = read_body(body);
+    let p = paras(&d);
+    let InlineObject::Group { w, h, float, ch_w, ch_h, children } = &p[0].objects[0] else { panic!("{:?}", p[0].objects) };
+    assert_eq!((*w, *h, *ch_w, *ch_h), (200.0, 100.0, 200.0, 100.0));
+    assert_eq!(float.wrap, Wrap::Square);
+    let got: Vec<(f32, f32, ShapeKind, f32, f32)> = children
+        .iter()
+        .map(|c| match &c.obj {
+            InlineObject::Shape { kind, w, h, .. } => (c.x, c.y, *kind, *w, *h),
+            o => panic!("{o:?}"),
+        })
+        .collect();
+    assert_eq!(got, [(0.0, 0.0, ShapeKind::Rectangle, 100.0, 50.0), (110.0, 60.0, ShapeKind::Ellipse, 20.0, 10.0)]);
 }

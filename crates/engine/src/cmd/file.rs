@@ -29,9 +29,20 @@ fn set_author(s: &mut Session, v: &Value) -> CmdResult {
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("file.new", "New", "File", new).key("Mod+N").params(r#"{"template"?: "blank|sample|letter|resume|report"}"#).pure(),
-        CommandSpec::new("file.open", "Open", "File", open).key("Mod+O").params(r#"{"path": string}"#).pure(),
-        CommandSpec::new("file.save", "Save", "File", save).key("Mod+S").params(r#"{"path"?: string}"#).pure(),
-        CommandSpec::new("file.saveAs", "Save As", "File", save_as).key("F12").params(r#"{"path": string}"#).pure(),
+        CommandSpec::new("file.open", "Open", "File", open)
+            .key("Mod+O")
+            .params(r#"{"path": string, "data"?: base64 (the file's bytes; `path` then only names it), "password"?: string (for a password-protected Word document)}"#)
+            .pure(),
+        CommandSpec::new("file.save", "Save", "File", save)
+            .key("Mod+S")
+            .params(r#"{"path"?: string, "password"?: string (encrypt this and later saves with it, as file.encrypt does)}"#)
+            .pure(),
+        CommandSpec::new("file.saveAs", "Save As", "File", save_as).key("F12").params(r#"{"path": string, "password"?: string}"#).pure(),
+        // Pure: the password must not land in Repeat or a recorded macro, and it isn't an edit
+        // to undo; it marks the document as changed itself.
+        CommandSpec::new("file.encrypt", "Encrypt with Password", "File › Info › Protect Document", encrypt)
+            .params(r#"{"password": string (Word documents are saved encrypted with it) | null or "" (saved unencrypted)}"#)
+            .pure(),
         CommandSpec::new("file.exportPdf", "Export PDF", "File › Export", |s, v| {
             let path = p::req_str(v, "path")?;
             let path = if path.to_ascii_lowercase().ends_with(".pdf") { path.to_string() } else { format!("{path}.pdf") };
@@ -112,23 +123,54 @@ fn open(s: &mut Session, v: &Value) -> CmdResult {
         s.ui_requests.push(json!({"open": "openFile"}));
         return sel_result(s);
     };
-    let (doc, source) = if let Some(data) = p::str(v, "data") {
+    let password = p::str(v, "password");
+    let (doc, source, encrypted) = if let Some(data) = p::str(v, "data") {
         let bytes = super::insert::base64_decode(data).ok_or_else(|| CmdError::Params("bad base64".into()))?;
-        let doc = crate::io::open_bytes(path, &bytes).map_err(CmdError::Failed)?;
-        let source = crate::io::is_word_package(path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str())
+        let (doc, encrypted) = crate::io::open_bytes_with(path, &bytes, password).map_err(CmdError::Failed)?;
+        let source = (!encrypted && crate::io::is_word_package(path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str()))
             .then(|| crate::SourcePackage { name: path.into(), bytes: std::sync::Arc::new(bytes) });
-        (doc, source)
+        (doc, source, encrypted)
+    } else if password.is_some() {
+        let bytes = std::fs::read(path).map_err(|e| CmdError::Failed(format!("{path}: {e}")))?;
+        let (doc, encrypted) = crate::io::open_bytes_with(path, &bytes, password).map_err(CmdError::Failed)?;
+        let source = (!encrypted && crate::io::is_word_package(path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str()))
+            .then(|| crate::SourcePackage { name: path.into(), bytes: std::sync::Arc::new(bytes) });
+        (doc, source, encrypted)
     } else {
-        crate::io::open_path_with_source(std::path::Path::new(path)).map_err(CmdError::Failed)?
+        let (doc, source) = crate::io::open_path_with_source(std::path::Path::new(path)).map_err(CmdError::Failed)?;
+        (doc, source, false)
     };
     s.set_document(doc);
     s.source_package = source;
     s.path = Some(path.into());
+    if encrypted {
+        s.password = password.map(crate::io::Password::new);
+    }
     let warnings = wordcraft_docx::compatibility_warnings(&s.doc);
     if !warnings.is_empty() {
         s.status = warnings.join(" ");
     }
-    Ok(json!({"path": path, "paragraphs": s.doc.paragraph_count(), "words": s.doc.word_count(), "compatibilityWarnings": warnings}))
+    Ok(
+        json!({"path": path, "paragraphs": s.doc.paragraph_count(), "words": s.doc.word_count(), "encrypted": encrypted, "compatibilityWarnings": warnings}),
+    )
+}
+
+/// Set or clear the password used for subsequent Word-package saves.
+fn encrypt(s: &mut Session, v: &Value) -> CmdResult {
+    let password = match v.get("password") {
+        Some(Value::Null) => None,
+        Some(Value::String(value)) if value.is_empty() => None,
+        Some(Value::String(value)) => {
+            wordcraft_docx::check_password(value).map_err(|error| CmdError::Params(error.to_string()))?;
+            Some(crate::io::Password::new(value))
+        }
+        _ => return Err(CmdError::Params("`password` must be a string, or null to remove the password".into())),
+    };
+    if s.password != password {
+        s.password = password;
+        s.dirty = true;
+    }
+    Ok(json!({"encrypted": s.password.is_some()}))
 }
 
 fn save(s: &mut Session, v: &Value) -> CmdResult {
@@ -139,6 +181,16 @@ fn save(s: &mut Session, v: &Value) -> CmdResult {
             return Ok(json!({"saved": false}));
         }
     };
+    if let Some(value) = v.get("password").filter(|value| !value.is_null()) {
+        let Some(value) = value.as_str().filter(|value| !value.is_empty()) else {
+            return Err(CmdError::Params("`password` must be a non-empty string (use file.encrypt to clear it)".into()));
+        };
+        if !crate::io::can_encrypt(&path.to_string_lossy()) {
+            return Err(CmdError::Params("only Word packages can be saved with a password".into()));
+        }
+        wordcraft_docx::check_password(value).map_err(|error| CmdError::Params(error.to_string()))?;
+        s.password = Some(crate::io::Password::new(value));
+    }
     // Serialize updated metadata without changing the live document until the write succeeds.
     // A failed save must leave the document exactly as it was.
     let mut doc = s.doc.clone();
@@ -152,7 +204,8 @@ fn save(s: &mut Session, v: &Value) -> CmdResult {
         doc.core.last_modified_by = s.author.clone();
         doc.core.revision = doc.core.revision.saturating_add(1);
     }
-    crate::io::save_path(&path, &doc).map_err(CmdError::Failed)?;
+    let password = s.password.as_ref().map(crate::io::Password::as_str);
+    crate::io::save_path_with(&path, &doc, password).map_err(CmdError::Failed)?;
     s.doc.core = doc.core;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     if ["docx", "docm", "dotx", "dotm", "odt", "rtf", "json"].contains(&ext.as_str()) {
@@ -163,7 +216,7 @@ fn save(s: &mut Session, v: &Value) -> CmdResult {
     if !warnings.is_empty() {
         s.status = warnings.join(" ");
     }
-    Ok(json!({"saved": true, "path": path.to_string_lossy(), "compatibilityWarnings": warnings}))
+    Ok(json!({"saved": true, "path": path.to_string_lossy(), "encrypted": password.is_some(), "compatibilityWarnings": warnings}))
 }
 
 fn save_as(s: &mut Session, v: &Value) -> CmdResult {
@@ -241,6 +294,7 @@ fn info(s: &mut Session, _: &Value) -> CmdResult {
         "trackChanges": s.doc.settings.track_changes,
         "comments": s.doc.comments.len(),
         "sections": s.doc.sections().len(),
+        "encrypted": s.password.is_some(),
         "layoutMs": l.ms,
         "compatibilityWarnings": wordcraft_docx::compatibility_warnings(&s.doc),
     }))

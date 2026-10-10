@@ -21,7 +21,8 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-pub use session::{EditSnapshot, FindState, MathEdit, Prefs, Selection, Session, SourcePackage, ViewState};
+pub use io::Password;
+pub use session::{ColumnBlock, EditSnapshot, FindState, MathEdit, Prefs, Selection, Session, SourcePackage, ViewState};
 pub use wordcraft_doc as doc;
 pub use wordcraft_layout as layout;
 pub use wordcraft_render as render;

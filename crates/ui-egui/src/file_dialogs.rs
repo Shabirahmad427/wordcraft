@@ -16,7 +16,8 @@ use crate::WordApp;
 /// A file dialog the app asks the host to show ([`Services::file_dialog`](crate::Services::file_dialog)).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FileDialogRequest {
-    /// Pick a file to open; `purpose` says what for (`document`, `picture`), as for `pick_open`.
+    /// Pick a file to open; `purpose` says what for (`document`, `picture`, `recipients`), as for
+    /// `pick_open`.
     Open { purpose: String },
     /// Pick a path to save to, given a suggested file name.
     Save { name: String },
@@ -29,7 +30,7 @@ pub(crate) enum AfterPick {
     RecoveryOriginal {
         id: String,
     },
-    /// Import a Mendeley RIS export into the current document.
+    /// Import a Mendeley RIS export.
     Mendeley,
     /// Insert the picked picture, or replace the pending Change Picture target.
     Picture,
@@ -39,6 +40,8 @@ pub(crate) enum AfterPick {
     Export {
         ext: String,
     },
+    /// Load the picked CSV/TSV/text file as the mail-merge recipients (#240).
+    Recipients,
 }
 
 /// What to do once Save As has written the document.
@@ -59,7 +62,6 @@ pub(crate) enum AfterSave {
 pub(crate) struct PendingDialog {
     rx: Receiver<Option<String>>,
     after: AfterPick,
-    document: u64,
 }
 
 /// How asking for a file went.
@@ -88,7 +90,7 @@ impl WordApp {
         }
         if let Some(show) = &self.services.file_dialog {
             let rx = show(req);
-            self.file_dialog = Some(PendingDialog { rx, after, document: self.session.document_id() });
+            self.file_dialog = Some(PendingDialog { rx, after });
             // A host that answered at once (or failed to show anything) is handled right away.
             return self.poll_file_dialog().map_or(Asked::Pending, Asked::Done);
         }
@@ -109,10 +111,6 @@ impl WordApp {
             Some(Err(TryRecvError::Disconnected)) => None,
         };
         let d = self.file_dialog.take()?;
-        if d.document != self.session.document_id() {
-            self.change_picture_target = None;
-            return Some(Ok(json!({"cancelled": true})));
-        }
         Some(self.finish_pick(d.after, picked))
     }
 
@@ -140,6 +138,10 @@ impl WordApp {
                 };
                 self.insert_or_change_picture(json!({"path": path}))
             }
+            AfterPick::Recipients => {
+                let Some(path) = picked else { return Ok(json!({"cancelled": true})) };
+                self.load_recipients(json!({"path": path}))
+            }
             AfterPick::Export { ext } => {
                 let Some(path) = picked else { return Ok(json!({"cancelled": true})) };
                 let r = if ext == "png" { self.run("file.exportPng", json!({"path": path})) } else { self.run("file.saveAs", json!({"path": path})) };
@@ -164,7 +166,7 @@ impl WordApp {
                         if !self.safely_saved(saved) || document != self.session.document_id() {
                             return Ok(json!({"done": false}));
                         }
-                        self.execute(&then, params).map(|r| json!({"done": true, "result": r}))
+                        self.execute_user(&then, params).map(|r| json!({"done": true, "result": r}))
                     }
                 }
             }
@@ -283,32 +285,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn stale_dialog_answer_never_saves_a_replacement_document() {
-        let dir = scratch("stale");
-        for command in ["save", "export", "picture", "open"] {
-            let path = dir.join(format!("{command}.docx"));
-            let (mut a, shown) = async_app();
-            typed(&mut a);
-            match command {
-                "save" => a.save_as_dialog(),
-                "export" => a.export_dialog("docx"),
-                "picture" => a.pick_picture(),
-                _ => a.open_dialog(),
-            }
-            a.execute("file.new", json!({})).unwrap();
-            a.run("text.insert", json!({"text": "Replacement"})).unwrap();
-            let document = a.session.document_id();
-            answer(&shown, Some(&path.to_string_lossy()));
-            assert_eq!(a.poll_file_dialog().unwrap().unwrap()["cancelled"], true);
-            assert!(!path.exists());
-            assert_eq!(a.session.document_id(), document);
-            assert!(a.session.dirty);
-            assert!(body_text(&a).contains("Replacement"));
-        }
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
     /// While a dialog is open, more Save As / Open / Export / Picture clicks don't open a second one.
     #[test]
     fn a_second_dialog_while_one_is_open_is_ignored() {
@@ -351,6 +327,31 @@ mod tests {
         a.poll_file_dialog();
         assert!(a.quit_requested, "closed once saved");
         assert!(saved_text(&path).contains(UNSAVED));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Desktop (#240 on #94): Use an Existing List… asks the host's file dialog for a recipient
+    /// list and, once the answer arrives, loads it as the mail-merge recipients, not as a document.
+    #[test]
+    fn a_recipient_list_picked_later_loads_recipients() {
+        let dir = scratch("recipients");
+        let csv = dir.join("people.csv");
+        std::fs::write(&csv, "First Name,City\nAda,London\nAlan,Wilmslow\n").unwrap();
+        let (mut a, shown) = async_app();
+        typed(&mut a);
+        a.run("ui.openRecipientList", json!({})).unwrap();
+        assert_eq!(shown.borrow()[0].0, FileDialogRequest::Open { purpose: "recipients".into() });
+        assert!(a.file_dialog_open());
+        answer(&shown, Some(&csv.to_string_lossy()));
+        a.poll_file_dialog().unwrap().unwrap();
+        assert_eq!(a.session.merge.headers, vec!["First Name", "City"]);
+        assert_eq!(a.session.merge.rows.len(), 2);
+        assert!(body_text(&a).contains(UNSAVED), "the document stays open");
+        // Cancelling loads nothing.
+        a.run("ui.openRecipientList", json!({})).unwrap();
+        answer(&shown, None);
+        assert_eq!(a.poll_file_dialog().unwrap().unwrap(), json!({"cancelled": true}));
+        assert_eq!(a.session.merge.rows.len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -523,6 +523,151 @@ fn clipboard_round_trip() {
     assert_eq!(text(&s), "plain\ntext");
 }
 
+fn bold_at(s: &Session, block: usize, off: usize) -> bool {
+    let pos = Pos { story: StoryRef::Body, path: wordcraft_doc::Path::top(block), off };
+    s.doc.para_at(&pos).and_then(|p| p.props_of_char(off).bold).unwrap_or(false)
+}
+
+#[test]
+fn paste_special_lists_formats_and_pastes_text_without_formatting() {
+    let mut s = s();
+    run(&mut s, "document.setText", json!({"text": "Bold words"}));
+    run(&mut s, "select.text", json!({"text": "Bold"}));
+    run(&mut s, "format.bold", json!({}));
+    run(&mut s, "edit.copy", json!({}));
+    // No format: the formats are listed (and a front end is asked to show the dialog).
+    let r = run(&mut s, "edit.pasteSpecial", json!({}));
+    let ids: Vec<&str> = r["formats"].as_array().unwrap().iter().map(|f| f["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["formatted", "text"]);
+    assert_eq!(s.ui_requests.last().unwrap()["open"], "pasteSpecial");
+    run(&mut s, "caret.docEnd", json!({}));
+    let r = run(&mut s, "edit.pasteSpecial", json!({"as": "text"}));
+    assert_eq!(r["pastedAs"], "text");
+    assert_eq!(text(&s), "Bold wordsBold");
+    assert!(bold_at(&s, 0, 0));
+    assert!(!bold_at(&s, 0, 11), "unformatted text drops the bold");
+    // Formatted keeps it.
+    run(&mut s, "edit.pasteSpecial", json!({"as": "formatted"}));
+    assert_eq!(text(&s), "Bold wordsBoldBold");
+    assert!(bold_at(&s, 0, 15));
+    // Text that someone else copied since: our rich copy is no longer offered.
+    let r = run(&mut s, "edit.pasteSpecial", json!({"text": "elsewhere"}));
+    assert_eq!(r["formats"].as_array().unwrap().len(), 1);
+    assert!(s.run("edit.pasteSpecial", &json!({"as": "formatted", "text": "elsewhere"})).is_err());
+}
+
+#[test]
+fn paste_special_html_and_rtf_keep_bold() {
+    let mut s = s();
+    run(&mut s, "document.setText", json!({"text": "x"}));
+    run(&mut s, "caret.docEnd", json!({}));
+    let html = "<p>plain <b>strong</b></p>";
+    let r = run(&mut s, "edit.pasteSpecial", json!({"html": html, "text": "plain strong"}));
+    let ids: Vec<&str> = r["formats"].as_array().unwrap().iter().map(|f| f["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["html", "text"]);
+    run(&mut s, "edit.pasteSpecial", json!({"as": "html", "html": html}));
+    assert_eq!(text(&s), "xplain strong");
+    assert!(!bold_at(&s, 0, 2));
+    assert!(bold_at(&s, 0, 8), "the <b> run stays bold");
+    // HTML source copied as text can be pasted as HTML too.
+    run(&mut s, "document.setText", json!({"text": ""}));
+    run(&mut s, "edit.pasteSpecial", json!({"as": "html", "text": "<b>hi</b> there</p>"}));
+    assert_eq!(text(&s), "hi there");
+    assert!(bold_at(&s, 0, 0) && !bold_at(&s, 0, 4));
+    // RTF.
+    run(&mut s, "document.setText", json!({"text": ""}));
+    run(&mut s, "edit.pasteSpecial", json!({"as": "rtf", "rtf": r"{\rtf1\ansi {\b bold}\b0  then}"}));
+    assert!(text(&s).starts_with("bold"), "{}", text(&s));
+    assert!(bold_at(&s, 0, 0));
+    // Asking for a format the clipboard lacks is an error, not a panic.
+    assert!(s.run("edit.pasteSpecial", &json!({"as": "rtf", "text": "plain"})).is_err());
+    assert!(s.run("edit.pasteSpecial", &json!({"as": "bogus", "text": "plain"})).is_err());
+    let huge = "a".repeat(crate::cmd::paste::MAX_PASTE_BYTES + 1);
+    assert!(s.run("edit.pasteSpecial", &json!({"as": "text", "text": huge})).is_err());
+}
+
+#[test]
+fn paste_special_respects_track_changes_and_brings_lists() {
+    let mut s = s();
+    run(&mut s, "review.trackChanges", json!({"value": true}));
+    run(&mut s, "edit.pasteSpecial", json!({"as": "html", "html": "<ul><li>one</li><li>two</li></ul>"}));
+    assert!(text(&s).starts_with("one\ntwo"), "{}", text(&s));
+    let ch = run(&mut s, "review.changes", json!({}));
+    assert!(!ch.as_array().unwrap().is_empty(), "the paste is a tracked insertion");
+    let first = s.doc.body.first().and_then(|b| b.as_para()).unwrap();
+    let n = first.props.numbering.expect("list kept");
+    assert!(s.doc.numbering.nums.iter().any(|x| x.id == n.num), "the list definition came along");
+    run(&mut s, "review.acceptAll", json!({}));
+    assert!(text(&s).starts_with("one\ntwo"));
+}
+
+#[test]
+fn clipboard_pane_collects_copies_and_pastes_one_undoably() {
+    let mut s = s();
+    run(&mut s, "document.setText", json!({"text": "one two three"}));
+    for (a, b) in [(0, 3), (4, 7), (8, 13)] {
+        run(&mut s, "select.range", json!({"anchor": {"block": 0, "off": a}, "focus": {"block": 0, "off": b}}));
+        run(&mut s, "edit.copy", json!({}));
+    }
+    // Copying the same text again adds nothing.
+    run(&mut s, "edit.copy", json!({}));
+    let items = run(&mut s, "edit.clipboardItems", json!({}));
+    let previews: Vec<&str> = items.as_array().unwrap().iter().map(|i| i["preview"].as_str().unwrap()).collect();
+    assert_eq!(previews, ["three", "two", "one"], "newest first");
+    assert_eq!(run(&mut s, "edit.clipboardPane", json!({}))["value"], true);
+    assert!(s.view.clipboard_pane);
+
+    run(&mut s, "caret.docEnd", json!({}));
+    run(&mut s, "edit.pasteClipboardItem", json!({"index": 1}));
+    assert_eq!(text(&s), "one two threetwo");
+    assert_eq!(s.clipboard_text, "three", "the clipboard itself is unchanged");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(text(&s), "one two three");
+
+    run(&mut s, "edit.pasteAllClipboard", json!({}));
+    assert_eq!(text(&s), "one two threeonetwothree", "Paste All goes in copy order");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(text(&s), "one two three", "Paste All is one undo step");
+
+    let left = run(&mut s, "edit.deleteClipboardItem", json!({"index": 0}));
+    assert_eq!(left[0]["preview"], "two");
+    run(&mut s, "edit.clearClipboard", json!({}));
+    assert!(s.clip_history.is_empty());
+    assert!(s.run("edit.pasteClipboardItem", &json!({"index": 0})).is_err());
+}
+
+#[test]
+fn clipboard_pane_is_capped_and_rejects_bad_indexes() {
+    let mut s = s();
+    let words: Vec<String> = (0..30).map(|i| format!("w{i}")).collect();
+    run(&mut s, "document.setText", json!({"text": words.join(" ")}));
+    // Cutting each word in turn leaves the spaces: word `off` starts at `off`.
+    for (off, w) in words.iter().enumerate() {
+        run(&mut s, "select.range", json!({"anchor": {"block": 0, "off": off}, "focus": {"block": 0, "off": off + w.len()}}));
+        run(&mut s, "edit.cut", json!({}));
+    }
+    let items = run(&mut s, "edit.clipboardItems", json!({}));
+    let items = items.as_array().unwrap();
+    assert_eq!(items.len(), crate::cmd::edit::CLIP_MAX_ITEMS);
+    assert_eq!(items[0]["preview"], "w29");
+    assert_eq!(items[23]["preview"], "w6", "the oldest drop out");
+
+    let before = text(&s);
+    for bad in [json!({"index": 24}), json!({"index": -1}), json!({"index": 1e300}), json!({"index": "x"}), json!({})] {
+        assert!(s.run("edit.pasteClipboardItem", &bad).is_err(), "{bad}");
+        assert!(s.run("edit.deleteClipboardItem", &bad).is_err(), "{bad}");
+    }
+    assert_eq!(text(&s), before);
+    assert_eq!(s.clip_history.len(), 24);
+
+    // A huge copy still reaches the clipboard but is not collected.
+    run(&mut s, "document.setText", json!({"text": "x".repeat(3 << 20)}));
+    run(&mut s, "select.all", json!({}));
+    run(&mut s, "edit.copy", json!({}));
+    assert_eq!(s.clipboard_text.len(), 3 << 20);
+    assert_eq!(s.clip_history.items()[0].text, "w29");
+}
+
 #[test]
 fn tables_commands() {
     let mut s = s();
@@ -539,6 +684,163 @@ fn tables_commands() {
     run(&mut s, "table.deleteTable", json!({}));
     assert!(s.doc.body.iter().all(|b| b.as_table().is_none()));
     assert!(s.run("table.merge", &json!({})).is_err());
+}
+
+/// AutoFit Contents (#44) measures the text: a column of short words narrows, a column with a
+/// long sentence widens (wrapping within the page), and the widths are written to the grid.
+#[test]
+fn autofit_contents_sizes_columns_to_their_text() {
+    let mut s = s();
+    run(&mut s, "insert.table", json!({"rows": 2, "cols": 3}));
+    let grid = |s: &Session| s.doc.body.iter().find_map(|b| b.as_table()).unwrap().grid.clone();
+    let before = grid(&s);
+    run(&mut s, "text.insert", json!({"text": "A"}));
+    run(&mut s, "text.tab", json!({}));
+    run(
+        &mut s,
+        "text.insert",
+        json!({"text": "This cell holds a long sentence that would wrap many times in a third of the page width, so it should get most of the room."}),
+    );
+    run(&mut s, "text.tab", json!({}));
+    run(&mut s, "text.insert", json!({"text": "B"}));
+    run(&mut s, "table.autofit", json!({"mode": "contents"}));
+    let after = grid(&s);
+    let tw = cmd::page::sect(&s).text_width();
+    assert!(after[0] < before[0] / 2.0, "short column narrows: {before:?} → {after:?}");
+    assert!(after[2] < before[2] / 2.0, "short column narrows: {before:?} → {after:?}");
+    assert!(after[1] > before[1] * 1.5, "long column widens: {before:?} → {after:?}");
+    let total: f32 = after.iter().sum();
+    assert!(total <= tw + 0.5 && total > tw - 1.0, "the long text fills the page width: {total} vs {tw}");
+    let t = s.doc.body.iter().find_map(|b| b.as_table()).unwrap();
+    assert!(t.props.width_pct.is_none() && !t.props.fixed);
+    assert_eq!(t.rows[0].cells[1].props.width, Some(after[1]), "cell widths follow the grid");
+    // Short text only: every column gets just what its text needs.
+    s.doc = wordcraft_doc::Document::new();
+    s.sel = crate::Selection::caret(Pos::body(0, 0));
+    run(&mut s, "insert.table", json!({"rows": 1, "cols": 2}));
+    run(&mut s, "text.insert", json!({"text": "Name"}));
+    run(&mut s, "text.tab", json!({}));
+    run(&mut s, "text.insert", json!({"text": "Quantity"}));
+    run(&mut s, "table.autofit", json!({"mode": "contents"}));
+    let g = grid(&s);
+    assert!(g[0] < g[1] && g[1] < 100.0, "{g:?}");
+    // The layout uses the new widths.
+    let w = s.layout().pages[0].items.iter().find_map(|it| match it {
+        wordcraft_layout::Placed::Cell { rect, row: 0, cell: 0, .. } => Some(rect.w),
+        _ => None,
+    });
+    assert!(w.is_some_and(|w| (w - g[0]).abs() < 0.5), "{w:?} vs {g:?}");
+}
+
+/// The Height and Width boxes (Table Layout › Cell Size) run `table.rowHeight` and
+/// `table.columnWidth`; each edit is one Undo.
+#[test]
+fn cell_size_boxes_set_row_height_and_column_width() {
+    use wordcraft_doc::props::HeightRule;
+    let mut s = s();
+    run(&mut s, "insert.table", json!({"rows": 2, "cols": 2}));
+    run(&mut s, "table.autofit", json!({"mode": "window"}));
+    let t0 = s.doc.body.iter().find_map(|b| b.as_table()).unwrap().clone();
+    run(&mut s, "table.columnWidth", json!({"width": 100.0}));
+    run(&mut s, "table.rowHeight", json!({"height": 30.0, "rule": "exact"}));
+    let t = s.doc.body.iter().find_map(|b| b.as_table()).unwrap();
+    assert_eq!(t.grid[0], 100.0);
+    assert_eq!(t.rows[0].cells[0].props.width, Some(100.0));
+    assert!(t.props.width_pct.is_none(), "the column isn't scaled back to the window");
+    assert_eq!((t.rows[0].props.height, t.rows[0].props.height_rule), (Some(30.0), HeightRule::Exact));
+    let rect = s.layout().pages[0].items.iter().find_map(|it| match it {
+        wordcraft_layout::Placed::Cell { rect, row: 0, cell: 0, .. } => Some(*rect),
+        _ => None,
+    });
+    assert!(rect.is_some_and(|r| (r.w - 100.0).abs() < 0.5 && (r.h - 30.0).abs() < 0.5), "{rect:?}");
+    assert!(s.run("table.rowHeight", &json!({"height": 30.0, "rule": "sideways"})).is_err());
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.body.iter().find_map(|b| b.as_table()).unwrap(), &t0);
+}
+
+/// Table Properties (#44): table, row, column and cell settings land as one undo step, and
+/// without settings the command reports the current ones (the dialog's source).
+#[test]
+fn table_properties_apply_in_one_step() {
+    use wordcraft_doc::props::{Align, HeightRule, VAlign};
+    let mut s = s();
+    run(&mut s, "insert.table", json!({"rows": 2, "cols": 2}));
+    let t0 = s.doc.body.iter().find_map(|b| b.as_table()).unwrap().clone();
+    run(
+        &mut s,
+        "table.properties",
+        json!({"align": "center", "indent": 18.0, "width": 300.0, "rowHeight": 40.0, "rowHeightRule": "exact", "allowBreak": false,
+               "headerRow": true, "columnWidth": 120.0, "cellWidth": 110.0, "valign": "bottom"}),
+    );
+    let t = s.doc.body.iter().find_map(|b| b.as_table()).unwrap();
+    assert_eq!((t.props.align, t.props.indent, t.props.width), (Some(Align::Center), Some(18.0), Some(300.0)));
+    let row = &t.rows[0];
+    assert_eq!((row.props.height, row.props.height_rule, row.props.cant_split, row.props.header), (Some(40.0), HeightRule::Exact, true, true));
+    assert_eq!(t.grid[0], 120.0);
+    assert_eq!((row.cells[0].props.width, row.cells[0].props.valign), (Some(110.0), VAlign::Bottom));
+    let applied = t.clone();
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.body.iter().find_map(|b| b.as_table()).unwrap(), &t0, "one undo step per apply");
+    run(&mut s, "edit.redo", json!({}));
+    assert_eq!(s.doc.body.iter().find_map(|b| b.as_table()).unwrap(), &applied);
+    let state = run(&mut s, "table.properties", json!({}));
+    assert_eq!(state["align"], "center");
+    assert_eq!(state["row"]["heightRule"], "exact");
+    assert_eq!(state["columnWidth"], 120.0);
+    assert_eq!(state["cell"]["valign"], "bottom");
+    // Clearing the row height makes it automatic again; bad values are refused.
+    run(&mut s, "table.properties", json!({"rowHeight": null}));
+    assert_eq!(s.doc.body.iter().find_map(|b| b.as_table()).unwrap().rows[0].props.height_rule, HeightRule::Auto);
+    assert!(s.run("table.properties", &json!({"valign": "middle"})).is_err());
+}
+
+/// Table Layout › Text Direction (#226) cycles the selected cells' text through horizontal,
+/// top-to-bottom and bottom-to-top, and the layout turns the text.
+#[test]
+fn table_text_direction_cycles_and_turns_the_text() {
+    use wordcraft_doc::props::TextDirection;
+    let mut s = s();
+    run(&mut s, "insert.table", json!({"rows": 1, "cols": 3}));
+    run(&mut s, "text.insert", json!({"text": "Turned"}));
+    let dirs = |s: &Session| -> Vec<TextDirection> {
+        s.doc.body.iter().find_map(|b| b.as_table()).unwrap().rows[0].cells.iter().map(|c| c.props.text_direction).collect()
+    };
+    let turned = |s: &mut Session| {
+        s.layout().pages[0].items.iter().find_map(|it| match it {
+            wordcraft_layout::Placed::Lines { para, turn, .. } if para.lines.first().is_some_and(|l| l.stop > 0) => Some(*turn),
+            _ => None,
+        })
+    };
+    assert_eq!(turned(&mut s), Some(TextDirection::Horizontal));
+    run(&mut s, "table.textDirection", json!({}));
+    assert_eq!(dirs(&s), [TextDirection::Down, TextDirection::Horizontal, TextDirection::Horizontal]);
+    assert_eq!(turned(&mut s), Some(TextDirection::Down), "the text is drawn turned");
+    run(&mut s, "table.textDirection", json!({}));
+    assert_eq!(dirs(&s)[0], TextDirection::Up);
+    assert_eq!(turned(&mut s), Some(TextDirection::Up));
+    run(&mut s, "table.textDirection", json!({}));
+    assert_eq!(dirs(&s)[0], TextDirection::Horizontal);
+    // Every selected cell gets the caret cell's next direction (the issue's selection spans cells).
+    let a = s.sel.focus.clone();
+    let mut b = a.clone();
+    if let Some(last) = b.path.0.get_mut(2) {
+        *last = 1;
+    }
+    b.off = 0;
+    s.sel = crate::Selection { anchor: a, focus: b };
+    run(&mut s, "table.textDirection", json!({}));
+    assert_eq!(dirs(&s), [TextDirection::Down, TextDirection::Down, TextDirection::Horizontal]);
+    run(&mut s, "table.textDirection", json!({"value": "up"}));
+    assert_eq!(dirs(&s), [TextDirection::Up, TextDirection::Up, TextDirection::Horizontal]);
+    assert!(s.run("table.textDirection", &json!({"value": "sideways"})).is_err());
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(dirs(&s), [TextDirection::Down, TextDirection::Down, TextDirection::Horizontal]);
+    // Outside a table it is disabled.
+    s.sel = crate::Selection::caret(Pos::body(0, 0));
+    if s.sel.focus.path.cell().is_none() {
+        assert!(s.run("table.textDirection", &json!({})).is_err());
+    }
 }
 
 #[test]
@@ -660,6 +962,142 @@ fn tracked_split_gives_the_new_paragraph_mark_to_its_author() {
         assert_eq!(tail.mark.ins, None, "split at {off:?}");
         assert_eq!(tail.mark.del, None, "split at {off:?}");
     }
+}
+
+fn body_texts(s: &Session) -> Vec<String> {
+    s.doc.body.iter().filter_map(|b| b.as_para()).map(|p| p.text.clone()).collect()
+}
+
+/// Issue #229's steps: a paragraph split while tracking changes.
+fn tracked_split(text: &str) -> Session {
+    let mut s = s();
+    run(&mut s, "text.insert", json!({"text": text}));
+    run(&mut s, "file.setAuthor", json!({"name": "Owned Bob"}));
+    run(&mut s, "review.trackChanges", json!({"value": true}));
+    run(&mut s, "caret.set", json!({"pos": {"block": 0, "off": 12}}));
+    run(&mut s, "text.newParagraph", json!({}));
+    s
+}
+
+#[test]
+fn reject_all_removes_a_tracked_paragraph_break() {
+    // Issue #229: Reject All left the paragraph break typed with Track Changes on.
+    for (text, head) in [("Owned ALPHA Owned BETA", "Owned ALPHA "), ("Owned GAMMA Owned DELTA", "Owned GAMMA ")] {
+        let mut s = tracked_split(text);
+        assert_eq!(body_texts(&s), [head, &text[12..]]);
+        // The break is listed as a change, by its author.
+        let ch = run(&mut s, "review.changes", json!({}));
+        assert_eq!(ch.as_array().map(Vec::len), Some(1), "{ch}");
+        assert_eq!((ch[0]["kind"].as_str(), ch[0]["author"].as_str()), (Some("insert"), Some("Owned Bob")));
+        run(&mut s, "review.rejectAll", json!({}));
+        assert_eq!(body_texts(&s), [text]);
+        assert!(s.doc.revisions.is_empty());
+        let p = s.doc.para_at(&Pos::body(0, 0)).unwrap();
+        assert_eq!((p.mark.ins, p.mark.del), (None, None));
+        // Undo brings the tracked split back; redo rejects it again.
+        run(&mut s, "edit.undo", json!({}));
+        assert_eq!(body_texts(&s), [head, &text[12..]]);
+        assert!(s.doc.para_at(&Pos::body(0, 0)).unwrap().mark.ins.is_some());
+        run(&mut s, "edit.redo", json!({}));
+        assert_eq!(body_texts(&s), [text]);
+    }
+    // Split → Undo → Redo → Reject All (the issue's other variant).
+    let mut s = tracked_split("Owned ALPHA Owned BETA");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(body_texts(&s), ["Owned ALPHA Owned BETA"]);
+    run(&mut s, "edit.redo", json!({}));
+    run(&mut s, "review.rejectAll", json!({}));
+    assert_eq!(body_texts(&s), ["Owned ALPHA Owned BETA"]);
+}
+
+#[test]
+fn accept_all_keeps_a_tracked_paragraph_break() {
+    let mut s = tracked_split("Owned ALPHA Owned BETA");
+    run(&mut s, "review.acceptAll", json!({}));
+    assert_eq!(body_texts(&s), ["Owned ALPHA ", "Owned BETA"]);
+    assert!(s.doc.revisions.is_empty());
+    assert!(s.doc.body.iter().filter_map(|b| b.as_para()).all(|p| p.mark.ins.is_none() && p.mark.del.is_none()));
+    assert_eq!(run(&mut s, "review.changes", json!({})), json!([]));
+}
+
+#[test]
+fn reject_one_paragraph_break_and_rejecting_a_typed_paragraph() {
+    // Reject with the caret on the break (Next Change selects it), or at the end of its paragraph.
+    let mut s = tracked_split("Owned ALPHA Owned BETA");
+    run(&mut s, "caret.set", json!({"pos": {"block": 0, "off": 0}}));
+    run(&mut s, "review.nextChange", json!({}));
+    run(&mut s, "review.reject", json!({}));
+    assert_eq!(body_texts(&s), ["Owned ALPHA Owned BETA"]);
+    let mut s = tracked_split("Owned ALPHA Owned BETA");
+    run(&mut s, "caret.set", json!({"pos": {"block": 0, "off": 12}}));
+    run(&mut s, "review.accept", json!({}));
+    assert_eq!(body_texts(&s), ["Owned ALPHA ", "Owned BETA"]);
+    assert_eq!(run(&mut s, "review.changes", json!({})), json!([]));
+
+    // Enter at the end of a heading, then a typed paragraph: rejecting everything restores
+    // the heading alone, with its style.
+    let mut s = self::s();
+    run(&mut s, "text.insert", json!({"text": "Title"}));
+    run(&mut s, "para.style", json!({"style": "Heading1"}));
+    run(&mut s, "review.trackChanges", json!({"value": true}));
+    run(&mut s, "text.newParagraph", json!({}));
+    run(&mut s, "text.insert", json!({"text": "Body"}));
+    run(&mut s, "text.newParagraph", json!({}));
+    assert_eq!(body_texts(&s), ["Title", "Body", ""]);
+    run(&mut s, "review.rejectAll", json!({}));
+    assert_eq!(body_texts(&s), ["Title"]);
+    assert_eq!(s.doc.para_at(&Pos::body(0, 0)).unwrap().props.style.as_deref(), Some("Heading1"));
+}
+
+#[test]
+fn tracked_backspace_and_delete_mark_a_paragraph_break_deleted() {
+    let two = || {
+        let mut s = s();
+        run(&mut s, "text.insert", json!({"text": "One"}));
+        run(&mut s, "text.newParagraph", json!({}));
+        run(&mut s, "text.insert", json!({"text": "Two"}));
+        run(&mut s, "review.trackChanges", json!({"value": true}));
+        s.author = "Ana".into();
+        s
+    };
+    // Backspace at the start of "Two": the mark above is deleted, the caret moves before it.
+    for accept in [false, true] {
+        let mut s = two();
+        run(&mut s, "caret.set", json!({"pos": {"block": 1, "off": 0}}));
+        run(&mut s, "text.backspace", json!({}));
+        assert_eq!(body_texts(&s), ["One", "Two"], "a tracked deletion stays in the text");
+        assert_eq!(s.sel.focus, Pos::body(0, 3));
+        assert_eq!(author_of(&s, s.doc.para_at(&Pos::body(0, 0)).unwrap().mark.del).as_deref(), Some("Ana"));
+        let ch = run(&mut s, "review.changes", json!({}));
+        assert_eq!(ch[0]["kind"], "delete", "{ch}");
+        if accept {
+            run(&mut s, "review.acceptAll", json!({}));
+            assert_eq!(body_texts(&s), ["OneTwo"]);
+        } else {
+            run(&mut s, "review.rejectAll", json!({}));
+            assert_eq!(body_texts(&s), ["One", "Two"]);
+            assert_eq!(s.doc.para_at(&Pos::body(0, 0)).unwrap().mark.del, None);
+        }
+    }
+
+    // Delete at the end of "One": the same, and the caret steps over the deleted mark.
+    let mut s = two();
+    run(&mut s, "caret.set", json!({"pos": {"block": 0, "off": 3}}));
+    run(&mut s, "text.delete", json!({}));
+    assert_eq!(body_texts(&s), ["One", "Two"]);
+    assert_eq!(s.sel.focus, Pos::body(1, 0));
+    assert!(s.doc.para_at(&Pos::body(0, 0)).unwrap().mark.del.is_some());
+    run(&mut s, "review.acceptAll", json!({}));
+    assert_eq!(body_texts(&s), ["OneTwo"]);
+
+    // A break the same author inserted is simply removed again.
+    let mut s = two();
+    run(&mut s, "caret.set", json!({"pos": {"block": 1, "off": 3}}));
+    run(&mut s, "text.newParagraph", json!({}));
+    assert_eq!(body_texts(&s), ["One", "Two", ""]);
+    run(&mut s, "text.backspace", json!({}));
+    assert_eq!(body_texts(&s), ["One", "Two"]);
+    assert!(s.doc.body.iter().filter_map(|b| b.as_para()).all(|p| p.mark.ins.is_none() && p.mark.del.is_none()));
 }
 
 #[test]
@@ -827,6 +1265,14 @@ fn comments() {
     let l = run(&mut s, "review.comments", json!({}));
     assert_eq!(l[0]["text"], "Nice");
     assert_eq!(text(&s), "Some text here");
+    // Editing the text is one undo step; replies hang off their comment.
+    run(&mut s, "review.editComment", json!({"id": id, "text": "Nicer\nTwo lines"}));
+    assert_eq!(run(&mut s, "review.comments", json!({}))[0]["text"], "Nicer\nTwo lines");
+    assert!(s.undo());
+    assert_eq!(run(&mut s, "review.comments", json!({}))[0]["text"], "Nice");
+    assert!(s.run("review.editComment", &json!({"id": 999, "text": "x"})).is_err());
+    let r = run(&mut s, "review.reply", json!({"id": id, "text": "Agreed"}));
+    assert_eq!(s.doc.comments.get(&(r["id"].as_u64().unwrap() as u32)).unwrap().parent, Some(id as u32));
     run(&mut s, "review.deleteComment", json!({"id": id}));
     assert!(s.doc.comments.is_empty());
     assert_eq!(s.doc.para_at(&Pos::body(0, 0)).unwrap().objects.len(), 0);
