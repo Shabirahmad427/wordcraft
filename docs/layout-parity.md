@@ -28,9 +28,9 @@ font can't match Word's metrics.
 | Tabs (left, center, right, decimal, bar), leaders | 🟡 | Bar tabs untested | 1–2 |
 | Hyphenation (automatic, 0.25" zone, soft hyphens, consecutive limit) | 🟡 | English patterns only; other languages hyphenate wrongly or not at all | in localization |
 | Drop caps | ✅ | 2026-10-06 | — |
-| Columns, column breaks, separators | 🟡 | **Columns don't balance** at a continuous section break or document end | 4–6 |
+| Columns, column breaks, separators | 🟡 | Basic column flow and separators work; columns do not balance at a continuous section break or document end, and `NextColumn` section starts still behave as page starts | 4–6 |
 | Section breaks (next page, continuous, even, odd), different first page, odd/even headers | ✅ | Section breaks don't show in Draft view (#42) | 1–2 |
-| Body top below a tall header, footer pushes body up | ✅ | #138 | — |
+| Body clearance below headers and above footers | 🟡 | The default or first-page header affects body top; inherited/even headers and tall footers are not all reserved before pagination | 2–4 |
 | Footnotes at the page bottom, endnotes at the end, note numbering | 🟡 | A long note continues onto the next page at a line boundary (its first line stays with the reference), first in that page's note area under a full-width continuation separator (#352); the document's own `w:continuationSeparator`/`w:continuationNotice` aren't read (default line, no notice); per-section restart partial | 2–4 |
 | Tables: row heights (at least/exact), rows split across pages, header rows repeat, Can't Split | ✅ | 2026-10-06, #138 | — |
 | Tables: autofit to contents/window, fixed widths, Word 2013 edge | 🟡 | #137; #44: AutoFit Contents measures each column's narrowest and widest text and shares the width like Word, once (not live as you type); cell preferred widths and spans still differ | 3–5 |
@@ -69,6 +69,7 @@ font can't match Word's metrics.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-10 | trivial | Long footnotes continue onto the next page with a continuation separator (#352) |
+| 2026-10-10 | trivial | Layout reports vertical body overflow pages and the UI keeps a warning visible; horizontal overflow and text-box clipping remain undetected |
 | 2026-10-10 | trivial | Rotated and flipped objects laid out and drawn (#332) |
 | 2026-10-10 | trivial | Long display equations wrap across lines (#326) |
 | 2026-10-10 | trivial | AutoFit Contents measures the text (#44) |

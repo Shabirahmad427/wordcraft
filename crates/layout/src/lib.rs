@@ -267,6 +267,10 @@ pub struct Page {
 #[derive(Clone, Debug, Default)]
 pub struct DocLayout {
     pub pages: Vec<Page>,
+    /// Zero-based pages where body content extends below the printable body area. Oversized
+    /// indivisible objects and table rows are kept intact for progress, but callers can surface
+    /// this diagnostic rather than silently presenting the layout as ordinary.
+    pub overflow_pages: Vec<usize>,
     /// Index: (story, paragraph path) → (page, item index) of each placed piece, in order.
     pub index: HashMap<(StoryRef, Path), Vec<(usize, usize)>>,
     /// Layout time, milliseconds.
@@ -1318,7 +1322,27 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
             }
         }
     }
-    DocLayout { pages, index, ms: now_ms() - t0, text_boxes: ctx.boxes.total() }
+    let overflow_pages = pages
+        .iter()
+        .enumerate()
+        .filter_map(|(page, pg)| {
+            pg.items
+                .iter()
+                .any(|item| {
+                    let body_content = match item {
+                        Placed::Lines { story, .. }
+                        | Placed::Image { story, .. }
+                        | Placed::Graphic { story, .. }
+                        | Placed::Object { story, .. }
+                        | Placed::Cell { story, .. } => *story == StoryRef::Body,
+                        Placed::Fill { .. } | Placed::Rule { .. } | Placed::Shape { .. } => false,
+                    };
+                    body_content && v_span(item).1 > pg.body.bottom() + 0.5
+                })
+                .then_some(page)
+        })
+        .collect();
+    DocLayout { pages, overflow_pages, index, ms: now_ms() - t0, text_boxes: ctx.boxes.total() }
 }
 
 fn item_bottom(y: f32, para: &ParaLayout, l0: usize, l1: usize) -> Option<f32> {

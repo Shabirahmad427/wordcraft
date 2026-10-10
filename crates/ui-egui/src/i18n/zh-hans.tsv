@@ -1165,3 +1165,5 @@
 	Mendeley	Mendeley
 	Restore Recovery Version	恢复此版本
 	Save Original Package	保存原始包
+	Page overflow	页面溢出
+	Content exceeds page area on {count} page(s).	内容在 {count} 页超出页面区域。

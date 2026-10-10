@@ -1154,3 +1154,5 @@
 	Mendeley	Mendeley
 	Restore Recovery Version	復元バージョンを復元
 	Save Original Package	元のパッケージを保存
+	Page overflow	ページのはみ出し
+	Content exceeds page area on {count} page(s).	{count} ページでコンテンツがページ領域を超えています。

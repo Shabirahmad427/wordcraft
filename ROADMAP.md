@@ -67,10 +67,12 @@ discounts and the user evidence (120 issues from outside users, 4 praise, 0 "swi
 
 **Why alpha:** the core workflows (write, format, styles, lists, tables, references, review, mail
 merge, open and save .docx) work end to end and ship as signed builds on every desktop platform
-and the web. **Why not beta:** DOCX has never been tested on real-world files; charts, SmartArt and
-OLE objects are dropped silently; pagination differs from Word (no Aptos-metric font, no column
-balancing or footnote continuation); formatting revisions are lost; there is open field evidence of
-a startup crash and several hangs; no native printing. Gaps #1–#7 in [`docs/gaps.md`](docs/gaps.md)
+and the web. **Why not beta:** DOCX has not been independently tested on a real-world corpus;
+unsupported package parts are guarded and preserved, but several features lack rendering or editing
+depth; pagination differs from Word (no Aptos-metric font or complex column balancing); formatting
+revisions remain incomplete; there is open field evidence of a startup crash and several hangs;
+desktop printing relies on the system PDF viewer instead of WordCraft printer controls. Gaps #1–#7
+in [`docs/gaps.md`](docs/gaps.md)
 are the beta list. All six core workflows pass the
 [alpha gate](docs/roadmap.md#alpha-gate-core-workflows) end to end on macOS, with save and reopen;
 the two partial ones (real-world .docx, printing) complete, roughly.
@@ -98,7 +100,7 @@ the two partial ones (real-world .docx, printing) complete, roughly.
 | M0 | Skeleton + vertical slice (model, layout, render, engine, Word-style UI, CLI, MCP, web) | **done** |
 | M1 | DOCX I/O | **done** (first version; corpus testing next) |
 | M2 | Home tab complete | **done** |
-| M3 | Insert tab | mostly done (charts/SmartArt/icons/3D missing) |
+| M3 | Insert tab | mostly done (chart/SmartArt rendering is partial; icons/3D missing) |
 | M4 | Layout + Design tabs | **done** except column balancing |
 | M5 | Tables | **done** (row splitting landed) |
 | M6 | References | first version done; long footnote continuation landed |
@@ -122,6 +124,7 @@ the two partial ones (real-world .docx, printing) complete, roughly.
 - Ukrainian interface catalog: all existing 771 labels, Ukrainian locale detection and a persisted language choice (#85).
 - Brazilian Portuguese interface catalog: all existing 771 labels, `pt-BR` locale detection and a persisted language choice (#127).
 - Text wraps around floating pictures and shapes; text boxes lay out their own text.
+- Upstream v0.4.0 adds chart and SmartArt rendering, password-protected DOCX open/save, drawing rotation/flipping, and equation support. Unsupported package content remains guarded and preserved when editing cannot safely reproduce it.
 - Table rows split across pages between lines (Can't Split honoured, header rows repeat).
 - Drop caps; automatic hyphenation with Word's 0.25" hyphenation zone; soft hyphens.
 - Page borders measured from the page edge, line numbers, vertical alignment, column separators.
@@ -135,6 +138,8 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 - M14: Release font inputs include Simplified Chinese; native UI can use installed CJK fallback faces (#241, PR #248).
 
 - M8: Interface theme can follow the operating system, with persisted Light/Dark/System choices (#115, PR #249).
+
+- Phase 4C step 1: layout reports pages where body content extends below its available body rectangle. The desktop status bar keeps a localized warning visible while that layout is active; oversized content remains intact and pagination still advances. Detection currently checks vertical body bounds, not horizontal overflow or text clipped inside text boxes. See [pagination audit](docs/pagination.md).
 
 - M6: Mendeley tab imports RIS exports, searches references, inserts citations/bibliographies and refreshes them; source libraries survive DOCX saves. Cloud sign-in and Mendeley Cite field editing remain future work.
 
@@ -161,17 +166,25 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 
 ## Pagination correctness from 207c442 (2026-10-10)
 
-- Audited five priority defects: section finalization/odd-even starts, note continuation, multicolumn reservation/balancing, header/footer clearance and unbreakable content overflow. See [pagination audit and regression contract](docs/pagination.md).
+- Audited five priority defects: section finalization/odd-even starts, note continuation, multicolumn reservation, header/footer clearance and unbreakable content overflow. See [pagination audit and regression contract](docs/pagination.md).
 - Fixed outgoing-page finalization before section geometry changes, exactly-once vertical alignment/footnote flushing, physical odd/even filler placement before numbering restarts and hostile page-number overflow. Preserved existing continuous/web flow and DOCX guarded editing restrictions.
 - Added nine regression tests covering mixed portrait/landscape sections, short academic notes, centered body text, first-page headers, restarted numbering, multipage tables, Undo/recovery/save/reopen, exact raster self-comparison and preservation-safe failures. Generated portrait/landscape pages were visually inspected. All six CI gates passed with **859 tests**, including **nine new regressions**. GUI/CLI release builds passed.
-- Phase 4B now covers long-note continuation, conservative final-page column balancing, resolved story clearance and oversized-content progress. Retroactive multicolumn note reflow, complex column transitions, overflow reporting, native printing and independent Word/Windows/macOS comparison remain follow-up work.
+- Phase 4B covers long-note continuation and oversized-content progress, but the audit found no column-balancing pass and no complete header/footer clearance reservation in the merged implementation. Retroactive multicolumn note reflow, `NextColumn` starts, endnote continuation, complex column balancing, native printing and independent Word/Windows/macOS comparison remain open.
 
 
 ## Phase 4B pagination reliability (2026-10-10)
 
 - Long footnotes split at line boundaries, reserve up to 40% of the page body, continue in order and emit continuation pages after body text ends.
-- Equal-width multicolumn sections balance complete plain paragraphs on their final page while preserving order and line breaks. Pages containing floats, tables, forced breaks, borders or complex paragraph rules remain on normal flow.
-- Body clearance now measures inherited/default/first/even headers and footers before pagination. It reserves the tallest selectable story across the section, favoring safe spacing; page-specific clearance is not yet optimized.
+- Multicolumn text flows through configured columns and explicit column breaks; column balancing and `NextColumn` section starts are not implemented. Footnotes discovered in a later column can reduce the available body area without reflowing earlier columns.
+- Headers and footers render with inheritance and first/even selection, but pagination does not reserve the tallest selectable stories. Tall even headers and footers can overlap body content.
 - Oversized inline objects remain whole and permit following text to progress. Existing table pagination continues to split rows where possible and places unsplittable rows/repeated headers oversized on an empty page without retry loops. This can extend beyond page bounds and is not clipped or automatically rescaled.
-- Added regression cases for long-note continuity plus Undo/recovery/DOCX reopen, balanced paragraph order, tall first/even headers and footers, and an oversized inline image. Existing table regressions cover splittable and `cant_split` rows and oversized repeated headers.
-- All six CI gates passed with **865 tests** (47 suites); GUI and CLI release builds succeeded. Internally verified on Linux only. Long-note continuation with complex note tables/objects and mixed section transitions, retroactive multicolumn footnote reflow, complex column balancing, overflow diagnostics/choices, native printing and independent Word/Windows/macOS comparison remain open. These checks do not establish Microsoft Word pagination parity.
+- Added regression cases for long-note continuity plus Undo/recovery/DOCX reopen and oversized inline progress. Existing table regressions cover splittable and `cant_split` rows and oversized repeated headers; exploratory section tests are not wired into the crate test suite and are not counted as verified coverage.
+
+## Phase 4C audit and overflow diagnostics (2026-10-10)
+
+- Re-audited the merge against the earlier Phase 4B claims. Upstream chart rendering uses cached chart data; SmartArt rendering uses its saved drawing rather than recalculating the diagram; password-protected DOCX open/save is implemented. Drawing rotation/flipping and UI changes are present. These implementations have synthetic/package regression coverage, not independent Word visual verification.
+- Recovery storage and restore, guarded package editing, chart dependency preservation, Undo, failed-save protection, and academic DOCX save/reopen remain covered by workspace tests. Desktop Print exports the current layout to PDF and opens a system viewer; printer selection, ranges, duplex, scaling, and a dedicated print preview are not implemented. Web printing delegates to the browser.
+- Phase 4B documentation overstated merged column balancing and header/footer clearance: the audited layout has no balancing pass, and pagination does not reserve all inherited/even headers or tall footers. Those are recorded as open gaps in [pagination audit](docs/pagination.md).
+- Implemented `DocLayout::overflow_pages` for body content extending below the available body rectangle and a persistent localized status-bar warning. Oversized images and unsplittable table rows remain intact and have focused regression tests. Horizontal overflow and text-box clipping are not detected.
+- Validation: all six `cargo xtask ci` gates passed; the workspace lists 1,075 test cases. GUI and CLI release builds passed on Linux. A separate recount attempt hit sandbox TCP bind restrictions in desktop control-server tests. No Microsoft Word reference outputs or native Windows/macOS verification were available.
+- Phase 4B validation baseline: all six CI gates passed with **865 tests** (47 suites), and GUI/CLI release builds succeeded on Linux. Complex note objects and mixed section transitions, retroactive multicolumn footnote reflow, complex column balancing, overflow choices, native printing and independent Word/Windows/macOS comparison remained open at that baseline. These checks do not establish Microsoft Word pagination parity.

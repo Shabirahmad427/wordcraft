@@ -240,6 +240,11 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                 if app.session.doc.settings.track_changes {
                     st(ui, tl!("Track Changes: On"));
                 }
+                if !l.overflow_pages.is_empty() {
+                    let count = l.overflow_pages.len().to_string();
+                    st(ui, tl!("Page overflow"))
+                        .on_hover_text(crate::i18n::fmt(tl!("Content exceeds page area on {count} page(s)."), &[("count", &count)]));
+                }
                 if let Some((msg, at)) = &app.status_msg
                     && crate::now_ms() - at < 6000.0
                 {

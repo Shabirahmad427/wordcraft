@@ -1,7 +1,7 @@
 use super::*;
 use wordcraft_doc::para::InlineObject;
-use wordcraft_doc::props::{Align, Border, BorderStyle, Borders, ParaProps, TextDirection};
-use wordcraft_doc::{Pos, Table};
+use wordcraft_doc::props::{Align, Border, BorderStyle, Borders, HeightRule, ParaProps, TextDirection};
+use wordcraft_doc::{Block, Pos, Table};
 
 fn lay(doc: &Document) -> DocLayout {
     let mut c = LayoutCache::new();
@@ -17,11 +17,51 @@ fn empty_doc_has_one_page() {
     let d = Document::new();
     let l = lay(&d);
     assert_eq!(l.pages.len(), 1);
+    assert!(l.overflow_pages.is_empty());
     assert_eq!(lines_of(&l), 1);
     let c = l.caret(&Pos::body(0, 0)).unwrap();
     assert_eq!(c.page, 0);
     assert!((c.x - 72.0).abs() < 0.5, "{c:?}");
     assert!(c.top >= 72.0 && c.height > 8.0);
+}
+
+#[test]
+fn oversized_inline_content_reports_its_overflow_page_and_keeps_following_text() {
+    let mut doc = Document::from_text("Before image\nAfter image remains reachable");
+    doc.last_section.page_h = 220.0;
+    doc.last_section.margin_top = 30.0;
+    doc.last_section.margin_bottom = 30.0;
+    doc.insert_object(
+        &Pos::body(0, 6),
+        InlineObject::Image {
+            media: "synthetic-oversized".into(),
+            w: 48.0,
+            h: 900.0,
+            alt: "Oversized regression object".into(),
+            float: Default::default(),
+            crop: [0.0; 4],
+        },
+        &Default::default(),
+    )
+    .unwrap();
+    let result = lay(&doc);
+    assert_eq!(result.overflow_pages, vec![0]);
+    assert!(result.caret(&Pos::body(1, 0)).is_some());
+}
+
+#[test]
+fn oversized_unsplittable_table_row_reports_its_overflow_page() {
+    let mut doc = Document::new();
+    doc.last_section.page_h = 220.0;
+    doc.last_section.margin_top = 30.0;
+    doc.last_section.margin_bottom = 30.0;
+    let mut table = Table::new(1, 1, 468.0);
+    table.rows[0].props.height = Some(900.0);
+    table.rows[0].props.height_rule = HeightRule::Exact;
+    table.rows[0].props.cant_split = true;
+    doc.insert_block(StoryRef::Body, &Path::top(0), Block::Table(table)).unwrap();
+    let result = lay(&doc);
+    assert_eq!(result.overflow_pages, vec![0]);
 }
 
 #[test]
