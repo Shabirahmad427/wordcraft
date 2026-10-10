@@ -141,6 +141,18 @@ pub fn geometry(app: &WordApp, l: &DocLayout, avail: egui::Vec2) -> Geometry {
     Geometry { rects, size: vec2(content_w, y.max(avail.y)), scale }
 }
 
+/// While a fit mode (Page Width, One Page, Multiple Pages) sizes the page, keep the session's zoom
+/// equal to what is shown, as Word does. Zoom In/Out, the Zoom dialog and `view.state` then start
+/// from the visible zoom; before, they stepped from the stale manual zoom, so Zoom In from a 163%
+/// Page Width jumped to 110% (issue #67).
+pub fn sync_fit_zoom(app: &mut WordApp, scale: f32) {
+    let v = &mut app.session.view;
+    if v.fit.is_empty() || v.read_mode || v.mode != wordcraft_layout::ViewMode::Print || !scale.is_finite() {
+        return;
+    }
+    v.zoom = (scale / PX_PER_PT).clamp(0.1, 5.0);
+}
+
 /// Fingerprint of a page's content for the texture cache.
 fn page_key(app: &WordApp, page: &Page, scale_px: f32, dim_body: bool) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -209,6 +221,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     }
     let geo = geometry(app, &layout, area.size() - vec2(14.0, 0.0));
     app.canvas.scale = geo.scale;
+    sync_fit_zoom(app, geo.scale);
     let caret = layout.caret_on(&app.session.sel.focus, app.session.page_hint);
     // Editing a header/footer (or a note) dims the body; once per frame, for every page.
     let dim_body = dims_body(app, &layout);
@@ -303,8 +316,13 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                     }
                 }
             }
-            // Table gridlines.
+            // View › Gridlines: a grid over the text area.
             if app.session.view.gridlines {
+                let st = &app.session.doc.settings;
+                page_grid(&painter, sr, page.body, (st.grid_h, st.grid_v), geo.scale, Stroke::new(0.5, t.blue.linear_multiply(0.35)));
+            }
+            // Table gridlines.
+            if app.session.view.table_gridlines {
                 for it in &page.items {
                     if let Placed::Cell { rect, .. } = it {
                         let r = Rect::from_min_size(
@@ -567,6 +585,29 @@ fn balloons(app: &mut WordApp, ui: &mut Ui, painter: &egui::Painter, rects: &[Re
     if let Some(p) = clicked {
         app.session.sel = wordcraft_engine::Selection::caret(p);
         app.canvas.want_focus = true;
+    }
+}
+
+/// The document's drawing grid (`pitch` across and down, in points) over `body` (page points) on the page drawn
+/// at `page` (screen); a direction is left out when its lines would crowd together.
+fn page_grid(p: &egui::Painter, page: Rect, body: wordcraft_geom::Rect, pitch: (f32, f32), scale: f32, s: Stroke) {
+    if !body.w.is_finite() || !body.h.is_finite() {
+        return;
+    }
+    let r = Rect::from_min_size(pos2(page.min.x + body.x * scale, page.min.y + body.y * scale), vec2(body.w * scale, body.h * scale));
+    let (px, py) = (pitch.0 * scale, pitch.1 * scale);
+    // Page sizes and spacing come from documents: bound the line count.
+    if px.is_finite() && px >= 4.0 {
+        for i in 0..=((r.width() / px) as usize).min(2000) {
+            let x = r.min.x + i as f32 * px;
+            p.line_segment([pos2(x, r.min.y), pos2(x, r.max.y)], s);
+        }
+    }
+    if py.is_finite() && py >= 4.0 {
+        for i in 0..=((r.height() / py) as usize).min(2000) {
+            let y = r.min.y + i as f32 * py;
+            p.line_segment([pos2(r.min.x, y), pos2(r.max.x, y)], s);
+        }
     }
 }
 
