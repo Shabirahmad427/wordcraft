@@ -108,6 +108,7 @@ the icon art).
 | M14 | 1.0 polish, packaging, signing | pipeline written; waiting on remote and secrets |
 
 ## Recently landed
+- M5: Drag unmerged column borders and unsplit row borders to resize tables, with one undo step and Escape cancellation (#217, local fix).
 - M7: Accept/Reject resolves tracked paragraph breaks; DOCX preserves their revision tags across saves (#229, local fix).
 - M9: Select Recipients opens a CSV entry dialog; invalid input stays open for correction (#240, local fix).
 - Right-to-left and Persian text: bidi reordering (UAX #9), Arabic-script shaping, right-to-left

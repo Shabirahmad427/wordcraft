@@ -44,6 +44,7 @@ pub struct CanvasState {
     pub mini_anchor: Option<Rect>,
     /// A picture, shape or text box being dragged by its frame.
     pub(crate) obj_drag: Option<crate::objects::ObjectDrag>,
+    pub(crate) table_drag: Option<crate::table_resize::TableDrag>,
 }
 
 impl CanvasState {
@@ -74,6 +75,7 @@ impl Default for CanvasState {
             context_issue: None,
             context_synonyms: None,
             obj_drag: None,
+            table_drag: None,
             context_menu_open: false,
             mini_anchor: None,
         }
@@ -488,9 +490,10 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
     // Stand down while the context menu owns the pointer so the two never double up;
     // `context_menu_opened` also covers the click that dismisses the menu.
     app.canvas.context_menu_open = resp.context_menu_opened();
-    if resp.hovered() || app.canvas.obj_drag.is_some() {
+    if resp.hovered() || app.canvas.obj_drag.is_some() || app.canvas.table_drag.is_some() {
         let over_object = ui.input(|i| i.pointer.latest_pos()).and_then(|p| crate::objects::cursor(app, &layout, &rects, geo.scale, p));
-        ui.ctx().set_cursor_icon(over_object.unwrap_or(egui::CursorIcon::Text));
+        let over_table = ui.input(|i| i.pointer.latest_pos()).and_then(|p| crate::table_resize::cursor(app, &layout, &rects, geo.scale, p));
+        ui.ctx().set_cursor_icon(over_object.or(over_table).unwrap_or(egui::CursorIcon::Text));
     }
     // While "Save changes?" is up, keys answer it rather than edit the document behind it.
     if app.canvas.focused && !matches!(app.dialog, Some(crate::dialogs::Dialog::SaveChanges { .. })) {
@@ -642,6 +645,9 @@ pub fn nearest_page(rects: &[Rect], p: Pos2) -> Option<usize> {
 }
 
 fn mouse(app: &mut WordApp, ui: &Ui, resp: &egui::Response, rects: &[Rect], layout: &DocLayout, scale: f32) {
+    if crate::table_resize::pointer(app, ui, resp, layout, rects, scale) {
+        return;
+    }
     let pointer = resp.interact_pointer_pos().or_else(|| resp.hover_pos());
     // An object drag follows the pointer anywhere until it's released.
     let object_pointer = pointer.or_else(|| app.canvas.obj_drag.as_ref().and_then(|_| ui.input(|i| i.pointer.latest_pos())));

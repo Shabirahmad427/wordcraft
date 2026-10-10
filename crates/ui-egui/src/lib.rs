@@ -31,6 +31,7 @@ pub mod panes;
 pub mod previews;
 pub mod read_aloud;
 pub mod ribbon;
+mod table_resize;
 pub mod theme;
 pub mod widgets;
 pub mod window_geometry;

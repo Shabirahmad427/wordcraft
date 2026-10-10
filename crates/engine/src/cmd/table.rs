@@ -130,15 +130,29 @@ pub fn specs() -> Vec<CommandSpec> {
         })),
         t(CommandSpec::new("table.columnWidth", "Table Column Width", "Table Layout › Cell Size", |s, v| {
             let w = p::req_f32(v, "width")?.clamp(6.0, 1584.0);
+            let shown_width = p::f32(v, "tableWidth").map(|w| w.clamp(6.0, 100_000.0));
             let (_, r, c) = cell(s)?;
             with_table(s, |t| {
                 let g = t.grid_col(r, c);
+                // Normalize the displayed grid before a manual resize, then use fixed widths.
+                let total: f32 = t.grid.iter().sum();
+                if total.is_finite()
+                    && total > 0.0
+                    && let Some(target) = shown_width.or(t.props.width).filter(|w| w.is_finite() && *w > 0.0)
+                {
+                    for x in &mut t.grid {
+                        *x *= target / total;
+                    }
+                }
                 if let Some(x) = t.grid.get_mut(g) {
                     *x = w;
                 }
+                t.props.width = Some(t.grid.iter().copied().fold(0.0f32, |a, b| (a + b).min(100_000.0)));
+                t.props.width_pct = None;
+                t.props.fixed = true;
             })
         })
-        .params(r#"{"width": pt}"#)),
+        .params(r#"{"width": pt, "tableWidth"?: pt (current displayed table width)}"#)),
         t(CommandSpec::new("table.rowHeight", "Table Row Height", "Table Layout › Cell Size", |s, v| {
             let h = p::req_f32(v, "height")?.clamp(1.0, 1584.0);
             let (_, r, _) = cell(s)?;
