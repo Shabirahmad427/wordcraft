@@ -627,6 +627,15 @@ impl Reader<'_> {
     // ---- drawings ----
 
     fn read_drawing(&mut self, sc: &mut StoryCtx, d: &El, rels: &Rels) -> Option<InlineObject> {
+        if d.find("c:chart").is_some() {
+            return match self.opaque.capture(d, rels) {
+                Ok(object) => Some(object),
+                Err(error) => {
+                    self.preservation_error = Some(error);
+                    None
+                }
+            };
+        }
         let (c, anchored) = match d.child("wp:inline") {
             Some(c) => (c, false),
             None => (d.child("wp:anchor")?, true),
@@ -659,7 +668,13 @@ impl Reader<'_> {
         if let Some(wsp) = gd.find("wps:wsp") {
             return Some(self.read_wsp(sc, wsp, rels, w, h, float));
         }
-        None
+        match self.opaque.capture(d, rels) {
+            Ok(object) => Some(object),
+            Err(error) => {
+                self.preservation_error = Some(error);
+                None
+            }
+        }
     }
 
     fn read_wsp(&mut self, sc: &mut StoryCtx, wsp: &El, rels: &Rels, w: f32, h: f32, float: Float) -> InlineObject {

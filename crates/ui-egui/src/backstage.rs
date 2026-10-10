@@ -205,6 +205,14 @@ fn info_page(app: &mut WordApp, ui: &mut Ui) {
     }
     ui.add_space(8.0);
     let info = app.session.run("file.info", &json!({})).unwrap_or_default();
+    if let Some(warnings) = info.get("compatibilityWarnings").and_then(serde_json::Value::as_array) {
+        for warning in warnings.iter().filter_map(serde_json::Value::as_str) {
+            ui.label(warning);
+        }
+        if !warnings.is_empty() {
+            ui.add_space(8.0);
+        }
+    }
     ui.columns(2, |cols| {
         let ui = &mut cols[0];
         ui.label(egui::RichText::new(tl!("Properties")).font(semibold(15.0)));

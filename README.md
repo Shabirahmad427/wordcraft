@@ -160,6 +160,9 @@ can check their work through `inspect_document` without screenshots. See [docs/m
 and the [control protocol](docs/control-protocol.md). Macros record any sequence of commands and
 play it back (`tools.recordMacro`, `tools.macros`).
 
+DOCX chart data and embedded workbooks are preserved with explicit compatibility warnings.
+See [the preservation contract and current limitations](docs/docx-compatibility.md).
+
 ## Document recovery
 
 The desktop app keeps separate recovery snapshots of modified documents, including never-saved

@@ -33,6 +33,16 @@ impl PartRels {
         self.index.insert(key, id.clone());
         id
     }
+    pub(crate) fn preserve_id(&mut self, id: &str, kind: &str, target: &str, external: bool) -> Result<(), DocxError> {
+        if let Some(old) = self.list.iter().find(|(old, _, _, _)| old == id) {
+            if old.1 != kind || old.2 != target || old.3 != external {
+                return Err(DocxError::Preservation("opaque relationship ID collision".into()));
+            }
+        } else {
+            self.list.push((id.into(), kind.into(), target.into(), external));
+        }
+        Ok(())
+    }
     fn is_empty(&self) -> bool {
         self.list.is_empty()
     }
@@ -53,6 +63,8 @@ impl PartRels {
 
 pub(crate) struct Writer<'d> {
     doc: &'d Document,
+    opaque: crate::opaque::Preservation,
+    preservation_error: Option<DocxError>,
     /// Numbered display equations written so far (automatic numbers are written as text).
     pub(crate) eq_number: u32,
     /// Media key → file name under `word/media/`.
@@ -106,6 +118,8 @@ pub fn write_as(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {
         doc
     };
     let mut wr = Writer {
+        opaque: crate::opaque::Preservation::from_doc(doc)?,
+        preservation_error: None,
         eq_number: 0,
         doc,
         media_files: BTreeMap::new(),
@@ -351,7 +365,11 @@ pub fn write_as(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {
         }
     }
 
+    if let Some(error) = wr.preservation_error {
+        return Err(error);
+    }
     crate::custom_xml::write(doc, &mut entries, &mut overrides, &mut rels)?;
+    wr.opaque.append(doc, &mut entries, &mut overrides)?;
 
     // Main part goes first in the zip after content types.
     entries.insert(0, ("word/document.xml".into(), body));

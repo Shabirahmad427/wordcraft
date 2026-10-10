@@ -22,6 +22,7 @@ pub const NAMESPACES: &[(&str, &str)] = &[
     ("wp", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"),
     ("a", "http://schemas.openxmlformats.org/drawingml/2006/main"),
     ("pic", "http://schemas.openxmlformats.org/drawingml/2006/picture"),
+    ("c", "http://schemas.openxmlformats.org/drawingml/2006/chart"),
     ("mc", "http://schemas.openxmlformats.org/markup-compatibility/2006"),
     ("w14", "http://schemas.microsoft.com/office/word/2010/wordml"),
     ("w15", "http://schemas.microsoft.com/office/word/2012/wordml"),
@@ -55,6 +56,7 @@ const STRICT: &[(&str, &str)] = &[
     ("wp", "http://purl.oclc.org/ooxml/drawingml/wordprocessingDrawing"),
     ("a", "http://purl.oclc.org/ooxml/drawingml/main"),
     ("pic", "http://purl.oclc.org/ooxml/drawingml/picture"),
+    ("c", "http://purl.oclc.org/ooxml/drawingml/chart"),
     ("m", "http://purl.oclc.org/ooxml/officeDocument/math"),
 ];
 

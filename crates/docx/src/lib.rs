@@ -9,6 +9,7 @@
 
 mod custom;
 mod custom_xml;
+mod opaque;
 mod package;
 mod read;
 mod units;
@@ -17,6 +18,11 @@ mod xml;
 
 pub use read::read;
 pub use write::{write, write_as};
+
+/// Known preservation-only features; this is not a complete compatibility certification.
+pub fn compatibility_warnings(doc: &wordcraft_doc::Document) -> Vec<String> {
+    opaque::warnings(doc)
+}
 
 /// Which kind of WordprocessingML package to write. The main part's content type differs per
 /// kind, and Word refuses a file whose content type doesn't match its extension.
@@ -76,6 +82,9 @@ pub enum DocxError {
     /// The input exceeds a safety limit (size, nesting, element count).
     #[error("limit exceeded: {0}")]
     Limit(String),
+    /// Imported content cannot be exported safely without losing data.
+    #[error("cannot safely preserve DOCX content: {0}")]
+    Preservation(String),
     /// The package is readable but isn't a WordprocessingML document.
     #[error("not a Word document: {0}")]
     NotWord(String),

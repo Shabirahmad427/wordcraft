@@ -22,10 +22,10 @@ struct Root {
     kind: String,
     target: String,
 }
-#[derive(Serialize, Deserialize)]
-struct Part {
-    name: String,
-    content_type: String,
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct Part {
+    pub(crate) name: String,
+    pub(crate) content_type: String,
 }
 #[derive(Default, Serialize, Deserialize)]
 struct Manifest {
@@ -63,8 +63,6 @@ fn reserved(path: &str) -> bool {
 
 pub(crate) fn read(pkg: &Package, rels: &Rels, main: &str, doc: &mut Document) -> Result<(), DocxError> {
     let mut manifest = Manifest::default();
-    let mut queue = VecDeque::new();
-    let mut queued = BTreeSet::new();
     for rel in rels.list.iter().filter(|r| r.kind.rsplit('/').next() == Some("customXml")) {
         if rel.kind.len() > MAX_LABEL {
             return Err(limit());
@@ -79,12 +77,39 @@ pub(crate) fn read(pkg: &Package, rels: &Rels, main: &str, doc: &mut Document) -
             return Err(limit());
         }
         manifest.roots.push(Root { kind: rel.kind.clone(), target: rel.target.clone() });
-        if queued.insert(rel.target.to_ascii_lowercase()) {
-            queue.push_back(rel.target.clone());
-        }
     }
     if manifest.roots.is_empty() {
         return Ok(());
+    }
+    manifest.parts = preserve_graph(pkg, main, manifest.roots.iter().map(|r| r.target.as_str()), doc)?;
+    let metadata = serde_json::to_vec(&manifest).map_err(|e| invalid(&e.to_string()))?;
+    if metadata.len() > MAX_MANIFEST {
+        return Err(limit());
+    }
+    doc.passthrough.insert(MANIFEST.into(), Arc::new(metadata));
+    Ok(())
+}
+
+/// Shared bounded OPC dependency traversal for custom XML and opaque drawings.
+pub(crate) fn preserve_graph<'a>(
+    pkg: &Package,
+    main: &str,
+    targets: impl Iterator<Item = &'a str>,
+    doc: &mut Document,
+) -> Result<Vec<Part>, DocxError> {
+    let mut manifest = Manifest::default();
+    let mut queue = VecDeque::new();
+    let mut queued = BTreeSet::new();
+    for target in targets {
+        if !valid_path(target) {
+            return Err(invalid("invalid root part name"));
+        }
+        if queued.insert(target.to_ascii_lowercase()) {
+            queue.push_back(target.to_string());
+        }
+        if queued.len() > MAX_PARTS {
+            return Err(limit());
+        }
     }
     let types = ContentTypes::read(pkg);
     let mut total = 0usize;
@@ -102,7 +127,7 @@ pub(crate) fn read(pkg: &Package, rels: &Rels, main: &str, doc: &mut Document) -
                 return Err(invalid("invalid relationships root"));
             }
             preserve(pkg, &types, &rp, &mut manifest, &mut total, doc)?;
-            for rel in pkg.rels(&path).list {
+            for rel in pkg.rels_checked(&path)?.list {
                 if rel.external {
                     continue;
                 }
@@ -118,12 +143,7 @@ pub(crate) fn read(pkg: &Package, rels: &Rels, main: &str, doc: &mut Document) -
             }
         }
     }
-    let metadata = serde_json::to_vec(&manifest).map_err(|e| invalid(&e.to_string()))?;
-    if metadata.len() > MAX_MANIFEST {
-        return Err(limit());
-    }
-    doc.passthrough.insert(MANIFEST.into(), Arc::new(metadata));
-    Ok(())
+    Ok(manifest.parts)
 }
 
 fn preserve(

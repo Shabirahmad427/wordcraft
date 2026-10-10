@@ -486,7 +486,19 @@ impl Writer<'_> {
                 self.rev_close(w, props);
             }
             InlineObject::Opaque { format, xml, text } => {
-                if format == "docx" && crate::xml::parse(xml.as_bytes()).is_ok() {
+                if format == crate::opaque::FORMAT {
+                    match self.opaque.emit(xml, rels, &mut self.docpr) {
+                        Ok(xml) => {
+                            self.rev_open(w, props);
+                            w.open("w:r", &[]);
+                            rpr(w, props);
+                            w.raw(&xml);
+                            w.close("w:r");
+                            self.rev_close(w, props);
+                        }
+                        Err(error) => self.preservation_error = Some(error),
+                    }
+                } else if format == "docx" && crate::xml::parse(xml.as_bytes()).is_ok() {
                     w.raw(xml);
                 } else if !text.is_empty() {
                     self.rev_open(w, props);

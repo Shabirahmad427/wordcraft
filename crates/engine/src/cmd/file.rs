@@ -124,7 +124,11 @@ fn open(s: &mut Session, v: &Value) -> CmdResult {
     s.set_document(doc);
     s.source_package = source;
     s.path = Some(path.into());
-    Ok(json!({"path": path, "paragraphs": s.doc.paragraph_count(), "words": s.doc.word_count()}))
+    let warnings = wordcraft_docx::compatibility_warnings(&s.doc);
+    if !warnings.is_empty() {
+        s.status = warnings.join(" ");
+    }
+    Ok(json!({"path": path, "paragraphs": s.doc.paragraph_count(), "words": s.doc.word_count(), "compatibilityWarnings": warnings}))
 }
 
 fn save(s: &mut Session, v: &Value) -> CmdResult {
@@ -151,7 +155,11 @@ fn save(s: &mut Session, v: &Value) -> CmdResult {
         s.path = Some(path.clone());
         s.dirty = false;
     }
-    Ok(json!({"saved": true, "path": path.to_string_lossy()}))
+    let warnings = wordcraft_docx::compatibility_warnings(&s.doc);
+    if !warnings.is_empty() {
+        s.status = warnings.join(" ");
+    }
+    Ok(json!({"saved": true, "path": path.to_string_lossy(), "compatibilityWarnings": warnings}))
 }
 
 fn save_as(s: &mut Session, v: &Value) -> CmdResult {
@@ -230,6 +238,7 @@ fn info(s: &mut Session, _: &Value) -> CmdResult {
         "comments": s.doc.comments.len(),
         "sections": s.doc.sections().len(),
         "layoutMs": l.ms,
+        "compatibilityWarnings": wordcraft_docx::compatibility_warnings(&s.doc),
     }))
 }
 

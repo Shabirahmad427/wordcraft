@@ -65,15 +65,10 @@ impl Package {
             return Err(DocxError::Limit(format!("{} zip entries", zip.len())));
         }
         let mut files = BTreeMap::new();
+        let mut names = std::collections::BTreeSet::new();
         let mut total: u64 = 0;
         for i in 0..zip.len() {
-            let mut f = match zip.by_index(i) {
-                Ok(f) => f,
-                Err(e) => {
-                    log::warn!("docx: skipping unreadable zip entry {i}: {e}");
-                    continue;
-                }
-            };
+            let mut f = zip.by_index(i).map_err(|e| DocxError::Zip(format!("unreadable entry {i}: {e}")))?;
             if f.is_dir() {
                 continue;
             }
@@ -85,14 +80,15 @@ impl Package {
             let mut buf = Vec::with_capacity(f.size().min(16 * 1024 * 1024) as usize);
             let read = (&mut f).take(room + 1).read_to_end(&mut buf);
             if let Err(e) = read {
-                // A corrupt entry: keep going unless it's a part we can't do without.
-                log::warn!("docx: zip entry {name} unreadable: {e}");
-                continue;
+                return Err(DocxError::Zip(format!("unreadable part {name}: {e}; refusing an import that would lose data")));
             }
             if buf.len() as u64 > room {
                 return Err(DocxError::Limit(format!("part {name} decompresses past the size limit")));
             }
             total = total.saturating_add(buf.len() as u64);
+            if !names.insert(name.to_ascii_lowercase()) {
+                return Err(DocxError::NotWord(format!("duplicate or ambiguous package part {name}")));
+            }
             files.insert(name, buf);
         }
         Ok(Package { files })
@@ -116,24 +112,36 @@ impl Package {
 
     /// Relationships of `part` (from `dir/_rels/name.rels`).
     pub fn rels(&self, part: &str) -> Rels {
+        self.rels_checked(part).unwrap_or_else(|error| {
+            log::warn!("docx: ignoring unreadable relationships: {error}");
+            Rels::default()
+        })
+    }
+    pub fn rels_checked(&self, part: &str) -> Result<Rels, DocxError> {
         let (dir, file) = split_dir(part);
         let path = if dir.is_empty() { format!("_rels/{file}.rels") } else { format!("{dir}/_rels/{file}.rels") };
         let mut rels = Rels::default();
         let root = match self.xml(&path) {
             Ok(Some(root)) => root,
-            Ok(None) => return rels,
-            Err(e) => {
-                log::warn!("docx: ignoring unreadable relationships {path}: {e}");
-                return rels;
-            }
+            Ok(None) => return Ok(rels),
+            Err(e) => return Err(e),
         };
+        if root.local() != "Relationships" {
+            return Err(DocxError::NotWord(format!("invalid relationships root in {path}")));
+        }
+        let mut ids = std::collections::BTreeSet::new();
         for r in root.els().filter(|e| e.local() == "Relationship") {
-            let (Some(id), Some(target)) = (r.attr("Id"), r.attr("Target")) else { continue };
+            let (Some(id), Some(target), Some(kind)) = (r.attr("Id"), r.attr("Target"), r.attr("Type")) else {
+                return Err(DocxError::NotWord(format!("incomplete relationship in {path}")));
+            };
+            if id.is_empty() || target.is_empty() || kind.is_empty() || !ids.insert(id.to_string()) {
+                return Err(DocxError::NotWord(format!("empty or duplicate relationship in {path}")));
+            }
             let external = r.attr("TargetMode").is_some_and(|m| m.eq_ignore_ascii_case("External"));
             let resolved = if external { target.to_string() } else { resolve(dir, target) };
             rels.list.push(Rel { id: id.to_string(), kind: r.attr("Type").unwrap_or("").to_string(), target: resolved, external });
         }
-        rels
+        Ok(rels)
     }
 }
 
@@ -281,5 +289,16 @@ mod tests {
         assert_eq!(resolve("word", "/word/styles.xml"), "word/styles.xml");
         assert_eq!(resolve("", "word/document.xml"), "word/document.xml");
         assert_eq!(resolve("word", "../../../x"), "x");
+    }
+    #[test]
+    fn corrupt_secondary_part_and_duplicate_names_are_rejected() {
+        let mut bytes = zip_of(&[("word/document.xml", b"<document/>".to_vec()), ("word/embeddings/book.xlsx", b"binary workbook data".to_vec())]);
+        let mut zip = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let offset = zip.by_name("word/embeddings/book.xlsx").unwrap().data_start();
+        drop(zip);
+        *bytes.get_mut(usize::try_from(offset).unwrap()).unwrap() ^= 0xff;
+        assert!(Package::open(&bytes).is_err());
+        let duplicates = zip_of(&[("word/Chart.xml", b"first".to_vec()), ("word/chart.xml", b"second".to_vec())]);
+        assert!(Package::open(&duplicates).is_err());
     }
 }

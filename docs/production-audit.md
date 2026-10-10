@@ -50,3 +50,7 @@ Validation command: cargo xtask ci (format, Clippy with warnings denied, workspa
 ## Phase 2 follow-up: document recovery
 
 The durable recovery deficiency is addressed by a separate immutable archive containing the editor model, media, preserved package data and exact opened Word package. Background snapshots and restart restore/discard/text comparison are implemented; existing AutoSave and in-memory Version History remain separate. Original source files are never written by recovery, and unsupported parts remain recoverable from the untouched original package. This does not solve ordinary DOCX export loss. See [the recovery contract and verification limits](recovery.md), including Linux process-kill tests and outstanding Windows/macOS power-loss verification.
+
+## Chart preservation follow-up from 199822f
+
+The next audited data-loss defect was complete removal of charts and their embedded workbook graphs. The chart preservation arc reuses opaque objects and the bounded graph traversal, provides preservation warnings and fails checked unsafe cases explicitly. Ten added regressions bring the passing CI suite to 831 tests. This addresses chart package loss; broad unknown markup, OLE, SmartArt and content controls remain incomplete. See [the current DOCX contract and remaining deficiencies](docx-compatibility.md).

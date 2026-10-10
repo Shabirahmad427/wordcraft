@@ -40,12 +40,14 @@ pub(crate) struct Reader<'p> {
     pub comment_map: HashMap<String, u32>,
     pub comments_ended: HashSet<u32>,
     pub bookmarks: HashMap<String, String>,
+    opaque: crate::opaque::Preservation,
+    preservation_error: Option<DocxError>,
 }
 
 /// Read a `.docx` package.
 pub fn read(bytes: &[u8]) -> Result<Document, DocxError> {
     let pkg = Package::open(bytes)?;
-    let root_rels = pkg.rels("");
+    let root_rels = pkg.rels_checked("")?;
     let main = root_rels.by_type(rt::OFFICE_DOC).filter(|r| !r.external).map(|r| r.target.clone()).unwrap_or_else(|| "word/document.xml".to_string());
     let Some(root) = pkg.xml(&main)? else {
         return Err(DocxError::MissingPart(main));
@@ -53,7 +55,7 @@ pub fn read(bytes: &[u8]) -> Result<Document, DocxError> {
     if root.name != "w:document" {
         return Err(DocxError::NotWord(format!("root element is {}", root.name)));
     }
-    let rels = pkg.rels(&main);
+    let rels = pkg.rels_checked(&main)?;
     let mut doc = Document::new();
     doc.body.clear();
     let mut r = Reader {
@@ -69,6 +71,8 @@ pub fn read(bytes: &[u8]) -> Result<Document, DocxError> {
         comment_map: HashMap::new(),
         comments_ended: HashSet::new(),
         bookmarks: HashMap::new(),
+        opaque: Default::default(),
+        preservation_error: None,
     };
     r.pc.major_font = r.doc.settings.major_font.clone();
     r.pc.minor_font = r.doc.settings.minor_font.clone();
@@ -145,6 +149,10 @@ pub fn read(bytes: &[u8]) -> Result<Document, DocxError> {
             _ => log::warn!("docx: ignoring malformed WordCraft source library"),
         }
     }
+    if let Some(error) = r.preservation_error {
+        return Err(error);
+    }
+    r.opaque.preserve(&pkg, &main, &mut r.doc)?;
     crate::custom_xml::read(&pkg, &rels, &main, &mut r.doc)?;
     let mut doc = r.doc;
     doc.ensure_nonempty();
