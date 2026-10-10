@@ -108,6 +108,7 @@ the icon art).
 | M14 | 1.0 polish, packaging, signing | pipeline written; waiting on remote and secrets |
 
 ## Recently landed
+- M9: Select Recipients opens a CSV entry dialog; invalid input stays open for correction (#240, local fix).
 - Right-to-left and Persian text: bidi reordering (UAX #9), Arabic-script shaping, right-to-left
   paragraphs (Left-to-Right / Right-to-Left Text Direction), visual arrow keys, `w:rtl`/`w:cs`/`w:szCs`
   /`w:bCs`/`w:iCs`/`w:rFonts w:cs`/`w:lang w:bidi` round-trip, Persian font substitutes.

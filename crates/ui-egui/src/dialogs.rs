@@ -12,6 +12,10 @@ use crate::theme::{Tokens, semibold};
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "dialog", rename_all = "camelCase")]
 pub enum Dialog {
+    Recipients {
+        csv: String,
+        error: String,
+    },
     Font {
         font: String,
         size: String,
@@ -123,6 +127,7 @@ pub enum Dialog {
 impl Dialog {
     pub fn name(&self) -> &'static str {
         match self {
+            Dialog::Recipients { .. } => "recipients",
             Dialog::Font { .. } => "font",
             Dialog::Paragraph { .. } => "paragraph",
             Dialog::Find { replace_mode: false, .. } => "find",
@@ -148,6 +153,7 @@ impl Dialog {
         let s = |k: &str| st.get(k).and_then(Value::as_str).unwrap_or("").to_string();
         let b = |k: &str| st.get(k).and_then(Value::as_bool).unwrap_or(false);
         Some(match name {
+            "recipients" => Dialog::Recipients { csv: String::new(), error: String::new() },
             "font" => Dialog::Font {
                 font: s("font"),
                 size: st.get("size").and_then(Value::as_f64).map(|v| v.to_string()).unwrap_or_default(),
@@ -290,6 +296,7 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context) {
     let mut open = true;
     let mut close = false;
     let title = match &d {
+        Dialog::Recipients { .. } => "Select Recipients",
         Dialog::Font { .. } => "Font",
         Dialog::Paragraph { .. } => "Paragraph",
         Dialog::Find { replace_mode: false, .. } => "Find",
@@ -345,6 +352,25 @@ fn buttons(ui: &mut Ui, ok: &str) -> (bool, bool) {
 /// Returns true to close.
 fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     match d {
+        Dialog::Recipients { csv, error } => {
+            ui.label(tl!("Paste CSV data with field names in the first row."));
+            ui.add(egui::TextEdit::multiline(csv).desired_rows(10).desired_width(480.0).char_limit(1_000_000));
+            if !error.is_empty() {
+                ui.colored_label(Tokens::get(ui.ctx()).red, error.as_str());
+            }
+            // Enter adds a CSV row; only the button submits this multiline form.
+            let (ok, cancel) = ui.horizontal(|ui| (ui.button(tl!("Use Recipients")).clicked(), ui.button(tl!("Cancel")).clicked())).inner;
+            if cancel || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                return true;
+            }
+            if ok {
+                match app.run("mailings.recipients", json!({"csv": csv})) {
+                    Ok(_) => return true,
+                    Err(e) => *error = e,
+                }
+            }
+            false
+        }
         Dialog::Font { font, size, bold, italic, underline, strike, sup, sub, small_caps, caps, hidden, color, spacing } => {
             // Build the sample text format for the preview pane below.
             let preview_size = size.trim().parse::<f32>().unwrap_or(12.0).clamp(6.0, 72.0);

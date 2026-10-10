@@ -259,6 +259,10 @@ impl WordApp {
     /// Close, Envelopes, Labels and Finish & Merge on a document with unsaved changes first ask
     /// Save / Don't Save / Cancel, and the command runs once that is answered (`ui.saveChanges`).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        if id == "mailings.recipients" && !["csv", "path", "rows"].iter().any(|k| params.get(*k).is_some()) {
+            self.dialog = dialogs::Dialog::open("recipients", self);
+            return Ok(json!({"pending": "recipients"}));
+        }
         if self.session.dirty && discards_document(id, &params) {
             let name =
                 self.session.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| self.title_stem());
@@ -1012,6 +1016,35 @@ mod tests {
         }
         a.run("view.zoom100", json!({})).unwrap();
         assert!((frame(&mut a) - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn recipients_dialog_submits_data_and_keeps_invalid_input_open() {
+        use egui_kittest::kittest::Queryable;
+        let mut a = app();
+        assert!(a.execute("mailings.recipients", json!({})).is_err(), "scripts still require data");
+        assert!(a.dialog.is_none());
+        assert_eq!(a.run("mailings.recipients", json!({})).unwrap()["pending"], "recipients");
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+            |ui, a: &mut WordApp| {
+                a.logic(ui.ctx());
+                a.ui(ui);
+            },
+            a,
+        );
+        h.query_by_label("Use Recipients").unwrap().click();
+        h.run();
+        assert!(matches!(&h.state().dialog, Some(dialogs::Dialog::Recipients { error, .. }) if !error.is_empty()));
+        if let Some(dialogs::Dialog::Recipients { csv, .. }) = &mut h.state_mut().dialog {
+            *csv = "Name,City\nAda,London\nAlan,Manchester".into();
+        }
+        h.run();
+        h.query_by_label("Use Recipients").unwrap().click();
+        h.run();
+        assert!(h.state().dialog.is_none());
+        assert_eq!(h.state().session.merge.headers, ["Name", "City"]);
+        assert_eq!(h.state().session.merge.rows.len(), 2);
+        assert_eq!(h.state().session.merge.rows[0], ["Ada", "London"]);
     }
 
     #[test]
