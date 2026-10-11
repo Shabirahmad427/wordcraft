@@ -1796,6 +1796,23 @@ mod tests {
         assert!(items.iter().any(|it| matches!(it, GraphicItem::Text { text, .. } if text == "Q2")));
     }
 
+    #[test]
+    fn value_axis_bounds_and_number_formats_are_used_by_the_shared_chart_renderer() {
+        let plot = format!(
+            r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>{}<c:axId val="1"/><c:axId val="2"/></c:barChart><c:catAx><c:axId val="1"/><c:axPos val="b"/></c:catAx><c:valAx><c:axId val="2"/><c:scaling><c:max val="1"/><c:min val="0"/></c:scaling><c:axPos val="l"/><c:numFmt formatCode="0%" sourceLinked="0"/></c:valAx>"#,
+            ser(0, "Series", None, &["A", "B"], &["0.2", "0.8"])
+        );
+        let items = chart_items(&space(&plot), &theme(), 320.0, 220.0);
+        let labels: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                GraphicItem::Text { text, .. } if text.ends_with('%') => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(labels, ["0%", "20%", "40%", "60%", "80%", "100%"]);
+    }
+
     fn cartesian_with_axis_titles(kind: &str, position: &str, legend: Option<&str>) -> String {
         let chart = match kind {
             "bar" => r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>"#,

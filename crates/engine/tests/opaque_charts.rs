@@ -384,6 +384,76 @@ fn chart_and_axis_title_command_preserves_formatting_workbook_and_undo_state() {
 }
 
 #[test]
+fn axis_scaling_and_number_format_command_is_undoable_recoverable_and_keeps_xlsx_unchanged() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-chart-axis-scale-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.docx");
+    let destination = directory.join("edited.docx");
+    let original = editable_chart_fixture_with_titles();
+    std::fs::write(&source, &original).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source})).unwrap();
+    let document_id = session.document_id();
+    let before = wordcraft_docx::write(&session.doc).unwrap();
+    let before_parts = unpack(&before);
+    let snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(snapshot["horizontalAxis"]["role"], "category");
+    assert_eq!(snapshot["verticalAxis"]["role"], "value");
+
+    session
+        .run(
+            "chart.editData",
+            &json!({
+                "documentId": document_id,
+                "chartPart": "word/charts/chart1.xml",
+                "expected": snapshot,
+                "verticalAxis": {
+                    "minimum": {"mode": "manual", "value": 0.0},
+                    "maximum": {"mode": "manual", "value": 100.0},
+                    "numberFormat": "0.0"
+                },
+                "series": [{}]
+            }),
+        )
+        .unwrap();
+    let changed = wordcraft_docx::write(&session.doc).unwrap();
+    let changed_parts = unpack(&changed);
+    assert_eq!(changed_parts["word/embeddings/data.xlsx"], before_parts["word/embeddings/data.xlsx"]);
+    let changed_snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(changed_snapshot["verticalAxis"]["minimum"], 0.0);
+    assert_eq!(changed_snapshot["verticalAxis"]["maximum"], 100.0);
+    assert_eq!(changed_snapshot["verticalAxis"]["numberFormat"], "0.0");
+    let rendered_layout = session.layout();
+    let rendered = wordcraft_render::render_page(&session.doc, &rendered_layout.pages[0], 1.0, &Default::default()).to_straight();
+
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let recovery_id = store.save(&unique_id(), document_id, &Snapshot::capture(&session)).unwrap();
+    let mut recovered = Session::new(Document::new());
+    store.load(&recovery_id).unwrap().restore(&mut recovered);
+    let recovered_snapshot =
+        recovered.run("chart.inspectData", &json!({"documentId": recovered.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(recovered_snapshot["verticalAxis"], changed_snapshot["verticalAxis"]);
+
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), before);
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), changed);
+    session.run("file.save", &json!({"path": destination})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": destination})).unwrap();
+    let reopened_snapshot =
+        reopened.run("chart.inspectData", &json!({"documentId": reopened.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(reopened_snapshot["verticalAxis"], changed_snapshot["verticalAxis"]);
+    let reopened_layout = reopened.layout();
+    let reopened_render = wordcraft_render::render_page(&reopened.doc, &reopened_layout.pages[0], 1.0, &Default::default()).to_straight();
+    assert_eq!(rendered, reopened_render, "DOCX reopen keeps the same layout and axis formatting");
+    let pdf = directory.join("edited.pdf");
+    reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
+    assert!(std::fs::metadata(pdf).unwrap().len() > 100, "PDF export uses the reopened chart layout");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn axis_title_only_edit_refreshes_preview_and_undo_redo_without_workbook_writes() {
     let directory = std::env::temp_dir().join(format!("wordcraft-axis-title-render-{}", unique_id()));
     std::fs::create_dir_all(&directory).unwrap();

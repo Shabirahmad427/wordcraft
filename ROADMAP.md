@@ -9,6 +9,12 @@
 - Default nfpm, Trunk and actionlint downloads have pinned SHA-256 checks. Rust `stable`, FreeBSD's rustup bootstrap, WiX/NuGet package bytes, OS repositories and hosted runner images remain mutable dependencies; see [security notes](docs/save-security.md). The source review is focused, not an independent supply-chain audit.
 - PyYAML parsing, actionlint 1.7.12, full-SHA existence checks, all six `cargo xtask ci` gates, Linux GUI/CLI release builds, and release-mode Windows GNU/macOS target checks passed. GitHub Packaging lint passed on the fork after fixing its ShellCheck finding. FreeBSD and Windows ARM64 runs on the same commit are still in progress; native release publishing was not triggered. This update has no Rust-source changes.
 
+## Chart-axis scaling and number formats (2026-10-11)
+
+- Extended the existing `chart.editData` transaction and Chart Design dialog with Auto/Manual minimum and maximum bounds and safe General, integer, decimal, percentage and scientific number formats. The chart parser already used these OOXML fields in its shared preview/PDF renderer; axis-only edits now feed that same path and do not change embedded XLSX data.
+- Controls are exposed only for uniquely resolved numeric value axes. Scatter charts distinguish X and Y; category axes are explicitly read-only. Logarithmic, reversed, malformed, duplicate and ambiguous axes reject edits. Unsupported existing custom number formats are preserved and not rewritten. Explicit major tick intervals remain unsupported because layout does not yet model `c:majorUnit` accurately.
+- Synthetic package, UI, engine, Undo/redo, recovery and save/reopen regressions were added. `cargo xtask ci` passed all six gates; Linux GUI/CLI release builds passed. The prior base commit `8aa01db` has successful hosted FreeBSD and Windows ARM64 checks; this new commit will receive its own hosted runs after push. No independent Word/Excel comparison was available; this is not a claim of application parity.
+
 ## Upstream synchronization (2026-10-11)
 
 - Integrated upstream `storytold/wordcraft` main through `dba6e66` (25 commits since shared base `e4b7d15`). The update adds configurable ribbon/Quick Access Toolbar and keyboard shortcuts, field-code commands, object contour/wrap-side behavior, drawing group/rotation fixes, equation and citation fixes, `.doc` and text-format import/export fixes, mail-merge fields, spelling vocabulary, interface sizing, Russian/Turkish localization, and CLI closed-output handling.
@@ -16,7 +22,7 @@
 - Upstream's open PRs were reviewed but not merged. Synthetic tests and local builds are not independent Microsoft Word/Excel compatibility verification.
 - Merge commit: `f01498726e1a2421f72a8a21ebff646573f74d42`. `cargo xtask ci`: all six gates passed; workspace tests: **1,266 passed, 0 failed, 1 ignored**. Linux GUI/CLI release builds and release-mode `x86_64-pc-windows-gnu` / `aarch64-apple-darwin` compile checks passed. See [the upstream audit](docs/upstream-audit-2026-10-11.md) for open PRs/issues and residual risk.
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** integrated atomic chart transactions with engine Undo/redo, recovery, rendering and guarded DOCX save · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** added guarded chart-axis bounds and number-format editing · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and
 agent control. This page is the summary; the assessment is

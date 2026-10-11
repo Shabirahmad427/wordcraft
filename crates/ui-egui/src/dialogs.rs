@@ -296,6 +296,10 @@ pub struct ChartDataForm {
     original_horizontal_axis_title: Option<String>,
     vertical_axis_title: String,
     original_vertical_axis_title: Option<String>,
+    horizontal_axis: Option<ChartAxisForm>,
+    original_horizontal_axis: Option<Value>,
+    vertical_axis: Option<ChartAxisForm>,
+    original_vertical_axis: Option<Value>,
     series: Vec<ChartSeriesForm>,
     #[serde(skip)]
     original: Vec<ChartSeriesForm>,
@@ -303,6 +307,22 @@ pub struct ChartDataForm {
     read_only_reason: String,
     #[serde(skip)]
     error: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct ChartAxisForm {
+    role: String,
+    editable: bool,
+    number_format_editable: bool,
+    diagnostic: Option<String>,
+    minimum_manual: bool,
+    minimum: String,
+    original_minimum: Option<f64>,
+    maximum_manual: bool,
+    maximum: String,
+    original_maximum: Option<f64>,
+    number_format: String,
+    original_number_format: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -945,6 +965,10 @@ impl Dialog {
                 form.horizontal_axis_title = form.original_horizontal_axis_title.clone().unwrap_or_default();
                 form.original_vertical_axis_title = snapshot.get("verticalAxisTitle").and_then(Value::as_str).map(str::to_string);
                 form.vertical_axis_title = form.original_vertical_axis_title.clone().unwrap_or_default();
+                form.original_horizontal_axis = snapshot.get("horizontalAxis").cloned().filter(|value| !value.is_null());
+                form.horizontal_axis = form.original_horizontal_axis.as_ref().and_then(chart_axis_form);
+                form.original_vertical_axis = snapshot.get("verticalAxis").cloned().filter(|value| !value.is_null());
+                form.vertical_axis = form.original_vertical_axis.as_ref().and_then(chart_axis_form);
                 form.series = snapshot
                     .get("series")
                     .and_then(Value::as_array)
@@ -1439,6 +1463,15 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
             }
         });
         if !matches!(form.chart_kind.as_str(), "pie" | "doughnut") {
+            if let Some(axis) = form.horizontal_axis.as_mut() {
+                chart_axis_controls(ui, tl!(tl!(chart_axis_label("Horizontal", &axis.role))), axis);
+            }
+            if let Some(axis) = form.vertical_axis.as_mut() {
+                chart_axis_controls(ui, tl!(tl!(chart_axis_label("Vertical", &axis.role))), axis);
+            }
+            if form.horizontal_axis.is_none() && form.vertical_axis.is_none() {
+                ui.label(tl!(tl!("Axis controls are unavailable because the chart axes cannot be mapped safely.")));
+            }
             ui.horizontal(|ui| {
                 if form.original_horizontal_axis_title.is_some() {
                     ui.label(tl!(tl!("Horizontal axis title")));
@@ -1534,15 +1567,33 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                 })
             })
         });
+        let invalid_axis = [form.horizontal_axis.as_ref(), form.vertical_axis.as_ref()].into_iter().flatten().find_map(|axis| {
+            if !axis.editable {
+                return None;
+            }
+            let minimum = if axis.minimum_manual { axis.minimum.trim().parse::<f64>().ok().filter(|value| value.is_finite()) } else { None };
+            let maximum = if axis.maximum_manual { axis.maximum.trim().parse::<f64>().ok().filter(|value| value.is_finite()) } else { None };
+            ((axis.minimum_manual && minimum.is_none())
+                || (axis.maximum_manual && maximum.is_none())
+                || minimum.zip(maximum).is_some_and(|(a, b)| a >= b || !(b - a).is_finite()))
+            .then(|| "Axis bounds must be finite numbers and the minimum must be less than the maximum.".to_string())
+        });
         let legend_changed = form.original_legend_position.as_deref().is_some_and(|original| form.legend_position != original);
         let chart_title_change = changed_existing_title(form.original_chart_title.as_deref(), &form.chart_title);
         let horizontal_axis_title_change = changed_existing_title(form.original_horizontal_axis_title.as_deref(), &form.horizontal_axis_title);
         let vertical_axis_title_change = changed_existing_title(form.original_vertical_axis_title.as_deref(), &form.vertical_axis_title);
+        let horizontal_axis_change = form.horizontal_axis.as_ref().and_then(axis_change_json);
+        let vertical_axis_change = form.vertical_axis.as_ref().and_then(axis_change_json);
         let chart_title_changed = chart_title_change.is_some();
         let horizontal_axis_title_changed = horizontal_axis_title_change.is_some();
         let vertical_axis_title_changed = vertical_axis_title_change.is_some();
-        let changed =
-            form.series != form.original || legend_changed || chart_title_changed || horizontal_axis_title_changed || vertical_axis_title_changed;
+        let changed = form.series != form.original
+            || legend_changed
+            || chart_title_changed
+            || horizontal_axis_title_changed
+            || vertical_axis_title_changed
+            || horizontal_axis_change.is_some()
+            || vertical_axis_change.is_some();
         let invalid_title = [
             (chart_title_changed, form.chart_title.as_str()),
             (horizontal_axis_title_changed, form.horizontal_axis_title.as_str()),
@@ -1550,9 +1601,12 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
         ]
         .iter()
         .any(|(changed, value)| *changed && (value.trim().is_empty() || value.trim() != *value || value.len() > 4096));
-        let can_apply = changed && invalid_value.is_none() && !invalid_title;
+        let can_apply = changed && invalid_value.is_none() && invalid_axis.is_none() && !invalid_title;
         if let Some(message) = invalid_value {
             ui.colored_label(Tokens::get(ui.ctx()).red, message);
+        }
+        if let Some(message) = invalid_axis {
+            ui.colored_label(Tokens::get(ui.ctx()).red, tl!(tl!(message.as_str())));
         }
         if invalid_title {
             ui.colored_label(
@@ -1590,12 +1644,16 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                         "chartTitle": form.original_chart_title,
                         "horizontalAxisTitle": form.original_horizontal_axis_title,
                         "verticalAxisTitle": form.original_vertical_axis_title,
+                        "horizontalAxis": form.original_horizontal_axis,
+                        "verticalAxis": form.original_vertical_axis,
                         "series": expected_series
                     },
                     "legendPosition": legend_changed.then_some(form.legend_position.as_str()),
                     "chartTitle": chart_title_change,
                     "horizontalAxisTitle": horizontal_axis_title_change,
                     "verticalAxisTitle": vertical_axis_title_change,
+                    "horizontalAxis": horizontal_axis_change,
+                    "verticalAxis": vertical_axis_change,
                     "series": series
                 }),
             ) {
@@ -1617,6 +1675,101 @@ fn legend_position_label(position: &str) -> String {
         "b" => tl!(tl!("Bottom")).to_string(),
         _ => tl!(tl!("Right")).to_string(),
     }
+}
+
+fn chart_axis_form(value: &Value) -> Option<ChartAxisForm> {
+    let minimum = value.get("minimum").and_then(Value::as_f64);
+    let maximum = value.get("maximum").and_then(Value::as_f64);
+    Some(ChartAxisForm {
+        role: value.get("role")?.as_str()?.to_string(),
+        editable: value.get("editable").and_then(Value::as_bool).unwrap_or(false),
+        number_format_editable: value.get("numberFormatEditable").and_then(Value::as_bool).unwrap_or(false),
+        diagnostic: value.get("diagnostic").and_then(Value::as_str).map(str::to_string),
+        minimum_manual: minimum.is_some(),
+        minimum: minimum.map_or_else(String::new, |number| number.to_string()),
+        original_minimum: minimum,
+        maximum_manual: maximum.is_some(),
+        maximum: maximum.map_or_else(String::new, |number| number.to_string()),
+        original_maximum: maximum,
+        number_format: value.get("numberFormat").and_then(Value::as_str).unwrap_or("General").to_string(),
+        original_number_format: value.get("numberFormat").and_then(Value::as_str).map(str::to_string),
+    })
+}
+
+fn chart_axis_label(physical: &str, role: &str) -> &'static str {
+    match (physical, role) {
+        (_, "scatterX") => "Scatter X axis",
+        (_, "scatterY") => "Scatter Y axis",
+        ("Horizontal", "category") => "Horizontal category axis",
+        ("Vertical", "category") => "Vertical category axis",
+        ("Horizontal", _) => "Horizontal value axis",
+        _ => "Vertical value axis",
+    }
+}
+
+fn chart_axis_controls(ui: &mut Ui, label: &str, axis: &mut ChartAxisForm) {
+    ui.group(|ui| {
+        ui.label(format!("{label} · {}", axis.role));
+        if let Some(diagnostic) = &axis.diagnostic {
+            ui.label(egui::RichText::new(diagnostic).small().weak());
+        }
+        ui.add_enabled_ui(axis.editable, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(tl!(tl!("Minimum")));
+                egui::ComboBox::from_id_salt(("chart_axis_min_mode", &axis.role))
+                    .selected_text(if axis.minimum_manual { tl!(tl!("Manual")) } else { tl!(tl!("Auto")) })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut axis.minimum_manual, false, tl!(tl!("Auto")));
+                        ui.selectable_value(&mut axis.minimum_manual, true, tl!(tl!("Manual")));
+                    });
+                if axis.minimum_manual {
+                    ui.add_sized([100.0, 24.0], egui::TextEdit::singleline(&mut axis.minimum));
+                }
+                ui.label(tl!(tl!("Maximum")));
+                egui::ComboBox::from_id_salt(("chart_axis_max_mode", &axis.role))
+                    .selected_text(if axis.maximum_manual { tl!(tl!("Manual")) } else { tl!(tl!("Auto")) })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut axis.maximum_manual, false, tl!(tl!("Auto")));
+                        ui.selectable_value(&mut axis.maximum_manual, true, tl!(tl!("Manual")));
+                    });
+                if axis.maximum_manual {
+                    ui.add_sized([100.0, 24.0], egui::TextEdit::singleline(&mut axis.maximum));
+                }
+            });
+            ui.add_enabled_ui(axis.number_format_editable, |ui| {
+                ui.label(tl!(tl!("Number format")));
+                egui::ComboBox::from_id_salt(("chart_axis_number_format", &axis.role)).selected_text(&axis.number_format).show_ui(ui, |ui| {
+                    for format in ["General", "0", "#,##0", "0.0", "0.00", "0%", "0.0%", "0.00%", "0.00E+00"] {
+                        ui.selectable_value(&mut axis.number_format, format.to_string(), format);
+                    }
+                });
+            });
+        });
+    });
+}
+
+fn axis_change_json(axis: &ChartAxisForm) -> Option<Value> {
+    if !axis.editable {
+        return None;
+    }
+    let bound = |manual: bool, value: &str, original: Option<f64>| -> Option<Value> {
+        if !manual {
+            return original.map(|_| json!({"mode":"auto"}));
+        }
+        let parsed = value.trim().parse::<f64>().ok().filter(|value| value.is_finite())?;
+        (Some(parsed) != original).then(|| json!({"mode":"manual", "value":parsed}))
+    };
+    let minimum = bound(axis.minimum_manual, &axis.minimum, axis.original_minimum);
+    let maximum = bound(axis.maximum_manual, &axis.maximum, axis.original_maximum);
+    let format = (axis.number_format_editable && axis.number_format != axis.original_number_format.as_deref().unwrap_or("General"))
+        .then(|| axis.number_format.clone());
+    (minimum.is_some() || maximum.is_some() || format.is_some()).then(|| {
+        let mut change = serde_json::Map::new();
+        change.insert("minimum".into(), minimum.unwrap_or(Value::Null));
+        change.insert("maximum".into(), maximum.unwrap_or(Value::Null));
+        change.insert("numberFormat".into(), format.map_or(Value::Null, Value::String));
+        Value::Object(change.into_iter().filter(|(_, value)| !value.is_null()).collect())
+    })
 }
 
 fn changed_existing_title<'a>(original: Option<&str>, draft: &'a str) -> Option<&'a str> {
@@ -3113,6 +3266,31 @@ mod tests {
         assert_eq!(legend_position_label("t"), "Top");
         assert_eq!(legend_position_label("b"), "Bottom");
         assert_eq!(legend_position_label("r"), "Right");
+    }
+
+    #[test]
+    fn chart_axis_draft_serializes_only_supported_changed_values() {
+        let original = json!({
+            "role":"value",
+            "minimum":null,
+            "maximum":100.0,
+            "numberFormat":"General",
+            "editable":true,
+            "numberFormatEditable":true,
+            "diagnostic":null
+        });
+        let mut axis = chart_axis_form(&original).unwrap();
+        assert_eq!(axis_change_json(&axis), None);
+        axis.minimum_manual = true;
+        axis.minimum = "0".into();
+        axis.number_format = "0.00".into();
+        assert_eq!(axis_change_json(&axis), Some(json!({"minimum":{"mode":"manual","value":0.0}, "numberFormat":"0.00"})));
+        axis.minimum_manual = false;
+        axis.original_minimum = Some(0.0);
+        assert_eq!(axis_change_json(&axis), Some(json!({"minimum":{"mode":"auto"}, "numberFormat":"0.00"})));
+
+        let read_only = chart_axis_form(&json!({"role":"category", "editable":false, "numberFormatEditable":false})).unwrap();
+        assert_eq!(axis_change_json(&read_only), None, "read-only axes cannot generate changes");
     }
 
     #[test]

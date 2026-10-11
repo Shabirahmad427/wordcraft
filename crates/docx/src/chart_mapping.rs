@@ -21,7 +21,7 @@ const DRAWING_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main"
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Classification {
-    Mappable(ChartMapping),
+    Mappable(Box<ChartMapping>),
     Unsupported(String),
     Ambiguous(String),
     Inconsistent(String),
@@ -35,7 +35,37 @@ pub(crate) struct ChartMapping {
     pub chart_title: Option<String>,
     pub horizontal_axis_title: Option<String>,
     pub vertical_axis_title: Option<String>,
+    pub horizontal_axis: Option<ChartAxisSnapshot>,
+    pub vertical_axis: Option<ChartAxisSnapshot>,
     pub series: Vec<SeriesMapping>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChartAxisSnapshot {
+    /// `value`, `scatterX`, `scatterY`, or `category` (deliberately read-only).
+    pub role: String,
+    pub minimum: Option<f64>,
+    pub maximum: Option<f64>,
+    pub number_format: Option<String>,
+    pub editable: bool,
+    pub number_format_editable: bool,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[serde(tag = "mode", rename_all = "camelCase", deny_unknown_fields)]
+pub enum AxisBoundChange {
+    Auto,
+    Manual { value: f64 },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AxisChanges {
+    pub minimum: Option<AxisBoundChange>,
+    pub maximum: Option<AxisBoundChange>,
+    pub number_format: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -114,7 +144,7 @@ enum CellValue {
 /// This API is read-only: it receives immutable part bytes and returns value copies only.
 pub(crate) fn map_chart(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, workbook: &[u8]) -> Classification {
     match map_chart_inner(chart_xml, chart_rels, workbook_part, workbook) {
-        Ok(mapping) => Classification::Mappable(mapping),
+        Ok(mapping) => Classification::Mappable(Box::new(mapping)),
         Err(Reason::Unsupported(s)) => Classification::Unsupported(s),
         Err(Reason::Ambiguous(s)) => Classification::Ambiguous(s),
         Err(Reason::Inconsistent(s)) => Classification::Inconsistent(s),
@@ -469,6 +499,7 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
     let chart_title = title_nodes.chart.and_then(|index| editable_title_text(&title_nodes.nodes, index).map(|(_, value)| value));
     let horizontal_axis_title = title_nodes.horizontal_axis.and_then(|index| editable_title_text(&title_nodes.nodes, index).map(|(_, value)| value));
     let vertical_axis_title = title_nodes.vertical_axis.and_then(|index| editable_title_text(&title_nodes.nodes, index).map(|(_, value)| value));
+    let (horizontal_axis, vertical_axis) = inspect_axis_settings(&chart, chart_kind);
     Ok(ChartMapping {
         chart_kind: chart_kind.into(),
         workbook_part: workbook_part.into(),
@@ -476,8 +507,150 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
         chart_title,
         horizontal_axis_title,
         vertical_axis_title,
+        horizontal_axis,
+        vertical_axis,
         series: mapped,
     })
+}
+
+fn inspect_axis_settings(chart: &El, chart_kind: &str) -> (Option<ChartAxisSnapshot>, Option<ChartAxisSnapshot>) {
+    if matches!(chart_kind, "pie" | "doughnut") {
+        return (None, None);
+    }
+    let Some(plot) = chart.find("c:plotArea") else { return (None, None) };
+    let kinds: Vec<_> =
+        plot.els().filter(|element| matches!(element.name.as_str(), "c:barChart" | "c:lineChart" | "c:areaChart" | "c:scatterChart")).collect();
+    let Some(kind) = (kinds.len() == 1).then(|| kinds[0]) else { return (None, None) };
+    let ids: Vec<_> = kind.children("c:axId").filter_map(|node| node.attr("val")).collect();
+    if ids.len() != 2 || ids.first() == ids.get(1) {
+        return (None, None);
+    }
+    let axes: Vec<_> = plot
+        .els()
+        .filter(|axis| matches!(axis.name.as_str(), "c:catAx" | "c:dateAx" | "c:valAx"))
+        .filter(|axis| axis.child("c:axId").and_then(|id| id.attr("val")).is_some_and(|id| ids.contains(&id)))
+        .collect();
+    if axes.len() != 2
+        || ids.iter().any(|id| axes.iter().filter(|axis| axis.child("c:axId").and_then(|node| node.attr("val")) == Some(*id)).count() != 1)
+    {
+        return (None, None);
+    }
+    let mut horizontal = None;
+    let mut vertical = None;
+    for axis in axes {
+        let Some(position) = axis.child("c:axPos").and_then(|node| node.attr("val")) else { return (None, None) };
+        let slot = match position {
+            "b" | "t" => &mut horizontal,
+            "l" | "r" => &mut vertical,
+            _ => return (None, None),
+        };
+        if slot.is_some() {
+            return (None, None);
+        }
+        let value_axis = axis.local() == "valAx";
+        let scatter = chart_kind == "scatter";
+        let scaling = axis.child("c:scaling");
+        let parse_bound = |name: &str| {
+            scaling
+                .and_then(|element| element.child(name))
+                .and_then(|element| element.attr("val"))
+                .and_then(|value| value.parse::<f64>().ok())
+                .filter(|value| value.is_finite())
+        };
+        let number_format =
+            axis.child("c:numFmt").filter(|node| node.attr("sourceLinked") != Some("1")).and_then(|node| node.attr("formatCode")).map(str::to_string);
+        let number_format_editable = number_format.as_deref().is_none_or(safe_axis_format);
+        let unsafe_scaling = scaling.is_some_and(|scale| {
+            scale.child("c:logBase").is_some()
+                || scale.child("c:orientation").and_then(|orientation| orientation.attr("val")).is_some_and(|value| value != "minMax")
+                || scale.els().any(|child| !matches!(child.name.as_str(), "c:logBase" | "c:orientation" | "c:max" | "c:min" | "c:extLst"))
+        });
+        let invalid_bounds = scaling.is_some_and(|scale| {
+            ["c:min", "c:max"].into_iter().any(|name| {
+                scale.children(name).count() > 1
+                    || scale
+                        .child(name)
+                        .is_some_and(|bound| bound.attr("val").and_then(|value| value.parse::<f64>().ok()).is_none_or(|value| !value.is_finite()))
+            })
+        });
+        // Editing known fields in an axis with an unfamiliar direct child risks changing
+        // semantics that this version does not understand. Keep the whole axis read-only.
+        let unsupported_axis_children = axis.els().any(|child| {
+            !matches!(
+                child.name.as_str(),
+                "c:axId"
+                    | "c:scaling"
+                    | "c:delete"
+                    | "c:axPos"
+                    | "c:majorGridlines"
+                    | "c:minorGridlines"
+                    | "c:title"
+                    | "c:numFmt"
+                    | "c:majorTickMark"
+                    | "c:minorTickMark"
+                    | "c:tickLblPos"
+                    | "c:spPr"
+                    | "c:txPr"
+                    | "c:crossAx"
+                    | "c:crosses"
+                    | "c:crossesAt"
+                    | "c:crossBetween"
+                    | "c:majorUnit"
+                    | "c:minorUnit"
+                    | "c:dispUnits"
+                    | "c:extLst"
+                    | "c:auto"
+                    | "c:lblOffset"
+                    | "c:tickLblSkip"
+                    | "c:tickMarkSkip"
+                    | "c:noMultiLvlLabels"
+                    | "c:baseTimeUnit"
+            )
+        });
+        let role = if !value_axis {
+            "category"
+        } else if scatter && position == "b" || scatter && position == "t" {
+            "scatterX"
+        } else if scatter {
+            "scatterY"
+        } else {
+            "value"
+        };
+        let editable = value_axis
+            && !unsafe_scaling
+            && !invalid_bounds
+            && !unsupported_axis_children
+            && axis.children("c:scaling").count() <= 1
+            && axis.children("c:numFmt").count() <= 1;
+        *slot = Some(ChartAxisSnapshot {
+            role: role.to_string(),
+            minimum: parse_bound("c:min"),
+            maximum: parse_bound("c:max"),
+            number_format,
+            editable,
+            number_format_editable: editable && number_format_editable,
+            diagnostic: if !value_axis {
+                Some("Category axes are read-only; scaling controls apply only to numeric value axes.".into())
+            } else if unsafe_scaling {
+                Some("Logarithmic or reversed axes are read-only.".into())
+            } else if invalid_bounds {
+                Some("The existing axis bounds are malformed or duplicated.".into())
+            } else if unsupported_axis_children {
+                Some("This axis contains unsupported OOXML and remains read-only.".into())
+            } else if !editable {
+                Some("This axis has ambiguous or unsupported OOXML properties.".into())
+            } else if !number_format_editable {
+                Some("The existing custom number format is preserved and cannot be changed safely.".into())
+            } else {
+                None
+            },
+        });
+    }
+    (horizontal, vertical)
+}
+
+fn safe_axis_format(format: &str) -> bool {
+    matches!(format, "General" | "0" | "#,##0" | "0.0" | "0.00" | "0%" | "0.0%" | "0.00%" | "0.00E+00")
 }
 
 fn contains_local(root: &El, local: &str, depth: usize) -> bool {
@@ -828,6 +1001,10 @@ pub struct ChartDataChanges {
     pub horizontal_axis_title: Option<String>,
     #[serde(default)]
     pub vertical_axis_title: Option<String>,
+    #[serde(default)]
+    pub horizontal_axis: Option<AxisChanges>,
+    #[serde(default)]
+    pub vertical_axis: Option<AxisChanges>,
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
@@ -855,6 +1032,10 @@ pub struct ChartDataSnapshot {
     pub horizontal_axis_title: Option<String>,
     #[serde(default)]
     pub vertical_axis_title: Option<String>,
+    #[serde(default)]
+    pub horizontal_axis: Option<ChartAxisSnapshot>,
+    #[serde(default)]
+    pub vertical_axis: Option<ChartAxisSnapshot>,
     pub series: Vec<ChartSeriesSnapshot>,
 }
 
@@ -913,7 +1094,7 @@ pub fn prepare_chart_edit(docx: &[u8], chart_part: &str) -> Result<ChartEditPlan
     }
     let workbook = package.get(&workbook_rel.target).ok_or_else(|| transaction_error("embedded workbook part is missing"))?;
     let mapping = match map_chart(chart, &chart_rels.list, &workbook_rel.target, workbook) {
-        Classification::Mappable(mapping) => mapping,
+        Classification::Mappable(mapping) => *mapping,
         Classification::Unsupported(reason) => return Err(transaction_error(format!("chart is read-only: {reason}"))),
         Classification::Ambiguous(reason) => return Err(transaction_error(format!("chart mapping is ambiguous: {reason}"))),
         Classification::Inconsistent(reason) => return Err(transaction_error(format!("chart data is inconsistent: {reason}"))),
@@ -940,6 +1121,8 @@ pub fn inspect_chart_data(docx: &[u8], chart_part: &str) -> Result<ChartDataSnap
         chart_title: plan.mapping.chart_title,
         horizontal_axis_title: plan.mapping.horizontal_axis_title,
         vertical_axis_title: plan.mapping.vertical_axis_title,
+        horizontal_axis: plan.mapping.horizontal_axis,
+        vertical_axis: plan.mapping.vertical_axis,
         series: plan
             .mapping
             .series
@@ -982,7 +1165,7 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
     }
     let workbook = package.get(&plan.workbook_part).ok_or_else(|| transaction_error("planned workbook part is missing"))?;
     let fresh = match map_chart(chart, &rels.list, &plan.workbook_part, workbook) {
-        Classification::Mappable(mapping) => mapping,
+        Classification::Mappable(mapping) => *mapping,
         Classification::Unsupported(reason) => return Err(transaction_error(format!("chart became read-only: {reason}"))),
         Classification::Ambiguous(reason) => return Err(transaction_error(format!("chart mapping became ambiguous: {reason}"))),
         Classification::Inconsistent(reason) => return Err(transaction_error(format!("chart data became inconsistent: {reason}"))),
@@ -993,6 +1176,7 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
 
     let mut expected = fresh.clone();
     let chart_bytes = update_chart_caches(chart, &fresh, changes)?;
+    let chart_bytes = apply_axis_changes(&chart_bytes, &fresh, changes)?;
     let cell_edits = build_cell_edits(&fresh, changes, &mut expected)?;
     if let Some(position) = &changes.legend_position {
         expected.legend_position = Some(position.clone());
@@ -1005,6 +1189,12 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
     }
     if let Some(title) = &changes.vertical_axis_title {
         expected.vertical_axis_title = Some(title.clone());
+    }
+    if let Some(axis) = &changes.horizontal_axis {
+        expected.horizontal_axis = apply_axis_snapshot(expected.horizontal_axis.as_ref(), axis)?;
+    }
+    if let Some(axis) = &changes.vertical_axis {
+        expected.vertical_axis = apply_axis_snapshot(expected.vertical_axis.as_ref(), axis)?;
     }
     let workbook_bytes = if cell_edits.is_empty() { workbook.to_vec() } else { apply_workbook_edits(workbook, &cell_edits)? };
     let mut replacements = BTreeMap::from([(plan.chart_part.clone(), chart_bytes), (plan.workbook_part.clone(), workbook_bytes)]);
@@ -1021,7 +1211,7 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
     let result_rels = reopened.rels_checked(&plan.chart_part)?;
     let result_workbook = reopened.get(&plan.workbook_part).ok_or_else(|| transaction_error("updated workbook part is missing"))?;
     match map_chart(result_chart, &result_rels.list, &plan.workbook_part, result_workbook) {
-        Classification::Mappable(mapping) if mapping == expected => Ok(output),
+        Classification::Mappable(mapping) if *mapping == expected => Ok(output),
         Classification::Mappable(_) => Err(transaction_error("post-update chart/workbook values do not match the requested edit")),
         Classification::Unsupported(reason) | Classification::Ambiguous(reason) | Classification::Inconsistent(reason) => {
             Err(transaction_error(format!("post-update validation failed: {reason}")))
@@ -1064,6 +1254,10 @@ fn validate_changes(mapping: &ChartMapping, changes: &ChartDataChanges) -> Resul
         return Err(transaction_error("change set must contain exactly one entry per chart series"));
     }
     let mut any = false;
+    validate_axis_change(mapping.horizontal_axis.as_ref(), changes.horizontal_axis.as_ref(), "horizontal")?;
+    validate_axis_change(mapping.vertical_axis.as_ref(), changes.vertical_axis.as_ref(), "vertical")?;
+    any |= changes.horizontal_axis.as_ref().is_some_and(axis_change_nonempty);
+    any |= changes.vertical_axis.as_ref().is_some_and(axis_change_nonempty);
     if let Some(position) = &changes.legend_position {
         any = true;
         if !matches!(position.as_str(), "l" | "r" | "t" | "b") {
@@ -1149,6 +1343,58 @@ fn validate_changes(mapping: &ChartMapping, changes: &ChartDataChanges) -> Resul
         return Err(transaction_error("change set contains no edits"));
     }
     Ok(())
+}
+
+fn axis_change_nonempty(change: &AxisChanges) -> bool {
+    change.minimum.is_some() || change.maximum.is_some() || change.number_format.is_some()
+}
+
+fn validate_axis_change(current: Option<&ChartAxisSnapshot>, change: Option<&AxisChanges>, label: &str) -> Result<(), DocxError> {
+    let Some(change) = change else { return Ok(()) };
+    if !axis_change_nonempty(change) {
+        return Err(transaction_error(format!("{label} axis change is empty")));
+    }
+    let current = current.ok_or_else(|| transaction_error(format!("{label} axis is not uniquely mapped")))?;
+    if !current.editable {
+        return Err(transaction_error(current.diagnostic.clone().unwrap_or_else(|| format!("{label} axis is read-only"))));
+    }
+    let bound = |change: &Option<AxisBoundChange>, original: Option<f64>| match change {
+        Some(AxisBoundChange::Auto) => Ok(None),
+        Some(AxisBoundChange::Manual { value }) if value.is_finite() => Ok(Some(*value)),
+        Some(AxisBoundChange::Manual { .. }) => Err(transaction_error("axis bounds must be finite numbers")),
+        None => Ok(original),
+    };
+    let minimum = bound(&change.minimum, current.minimum)?;
+    let maximum = bound(&change.maximum, current.maximum)?;
+    if minimum.zip(maximum).is_some_and(|(minimum, maximum)| minimum >= maximum || !(maximum - minimum).is_finite()) {
+        return Err(transaction_error("axis minimum must be less than its maximum"));
+    }
+    if let Some(format) = &change.number_format
+        && (!current.number_format_editable || !safe_axis_format(format))
+    {
+        return Err(transaction_error("axis number format is unsupported or preserved as read-only"));
+    }
+    Ok(())
+}
+
+fn apply_axis_snapshot(current: Option<&ChartAxisSnapshot>, change: &AxisChanges) -> Result<Option<ChartAxisSnapshot>, DocxError> {
+    let mut current = current.cloned().ok_or_else(|| transaction_error("axis mapping is missing"))?;
+    if let Some(bound) = &change.minimum {
+        current.minimum = match bound {
+            AxisBoundChange::Auto => None,
+            AxisBoundChange::Manual { value } => Some(*value),
+        };
+    }
+    if let Some(bound) = &change.maximum {
+        current.maximum = match bound {
+            AxisBoundChange::Auto => None,
+            AxisBoundChange::Manual { value } => Some(*value),
+        };
+    }
+    if let Some(format) = &change.number_format {
+        current.number_format = Some(format.clone());
+    }
+    Ok(Some(current))
 }
 
 fn validate_label(value: &str) -> Result<(), DocxError> {
@@ -1323,6 +1569,249 @@ fn update_chart_caches(chart: &[u8], mapping: &ChartMapping, changes: &ChartData
         }
     }
     apply_splices(chart, splices)
+}
+
+fn apply_axis_changes(chart: &[u8], mapping: &ChartMapping, changes: &ChartDataChanges) -> Result<Vec<u8>, DocxError> {
+    let mut output = chart.to_vec();
+    for (position, axis_change) in [("horizontal", changes.horizontal_axis.as_ref()), ("vertical", changes.vertical_axis.as_ref())] {
+        let Some(change) = axis_change else { continue };
+        output = edit_axis_property(&output, mapping, position, change)?;
+    }
+    Ok(output)
+}
+
+fn edit_axis_property(chart: &[u8], mapping: &ChartMapping, position: &str, change: &AxisChanges) -> Result<Vec<u8>, DocxError> {
+    let mut current = chart.to_vec();
+    for (name, requested) in [("min", change.minimum.as_ref()), ("max", change.maximum.as_ref())] {
+        let Some(requested) = requested else { continue };
+        let nodes = preserved_xml::inspect(&current)?;
+        let axis = axis_node_for_position(&nodes, &mapping.chart_kind, position)?;
+        current = set_axis_bound(&current, &nodes, axis, name, requested)?;
+    }
+    if let Some(format) = &change.number_format {
+        current = set_axis_number_format(&current, mapping, position, format)?;
+    }
+    Ok(current)
+}
+
+fn axis_node_for_position(nodes: &[Element], chart_kind: &str, position: &str) -> Result<usize, DocxError> {
+    let chart_types: Vec<_> =
+        ["barChart", "lineChart", "areaChart", "scatterChart"].into_iter().flat_map(|local| descendants(nodes, 0, CHART_NS, local)).collect();
+    if chart_types.len() != 1 {
+        return Err(transaction_error("chart axis structure is ambiguous"));
+    }
+    let chart_type = *chart_types.first().ok_or_else(|| transaction_error("chart axis structure is missing"))?;
+    let chart_ids = child_indices(nodes, chart_type, CHART_NS, "axId");
+    let ids: Vec<_> = chart_ids.iter().filter_map(|index| nodes.get(*index)?.attrs.get(&qualified("", "val")).cloned()).collect();
+    if chart_ids.len() != 2 || ids.len() != 2 || ids.first() == ids.get(1) {
+        return Err(transaction_error("secondary or ambiguous chart axes are read-only"));
+    }
+    let plot = nodes.iter().position(|node| node.children.contains(&chart_type)).ok_or_else(|| transaction_error("chart plot area is missing"))?;
+    let val_axes: Vec<_> = child_indices(nodes, plot, CHART_NS, "valAx")
+        .into_iter()
+        .filter(|index| {
+            nodes
+                .get(*index)
+                .and_then(|_node| child_index(nodes, *index, CHART_NS, "axId"))
+                .and_then(|id_node| nodes.get(id_node))
+                .and_then(|id_node| id_node.attrs.get(&qualified("", "val")))
+                .is_some_and(|id| ids.contains(id))
+        })
+        .filter(|index| {
+            nodes
+                .get(*index)
+                .and_then(|_node| child_index(nodes, *index, CHART_NS, "axPos"))
+                .and_then(|pos| nodes.get(pos))
+                .and_then(|pos| pos.attrs.get(&qualified("", "val")))
+                .is_some_and(|value| if position == "horizontal" { matches!(value.as_str(), "b" | "t") } else { matches!(value.as_str(), "l" | "r") })
+        })
+        .collect();
+    if val_axes.len() != 1 {
+        return Err(transaction_error(format!("{position} numeric axis is not uniquely mapped")));
+    }
+    let axis = *val_axes.first().ok_or_else(|| transaction_error("numeric axis is missing"))?;
+    let actual_position = child_index(nodes, axis, CHART_NS, "axPos")
+        .and_then(|index| nodes.get(index))
+        .and_then(|node| node.attrs.get(&qualified("", "val")))
+        .ok_or_else(|| transaction_error("numeric axis position is malformed"))?;
+    if chart_kind == "scatter" && ((position == "horizontal") != matches!(actual_position.as_str(), "b" | "t")) {
+        return Err(transaction_error("scatter X/Y axis mapping is inconsistent"));
+    }
+    Ok(axis)
+}
+
+fn set_axis_bound(chart: &[u8], nodes: &[Element], axis: usize, name: &str, value: &AxisBoundChange) -> Result<Vec<u8>, DocxError> {
+    let scaling = child_indices(nodes, axis, CHART_NS, "scaling");
+    if scaling.len() > 1 {
+        return Err(transaction_error("axis has duplicate scaling elements"));
+    }
+    let Some(scale) = scaling.first().copied() else {
+        if matches!(value, AxisBoundChange::Auto) {
+            return Ok(chart.to_vec());
+        }
+        let axis_node = nodes.get(axis).ok_or_else(|| transaction_error("numeric axis is missing"))?;
+        let prefix = element_prefix(chart, axis_node)?;
+        let numeric = match value {
+            AxisBoundChange::Manual { value } if value.is_finite() => value.to_string(),
+            _ => return Err(transaction_error("axis bound is invalid")),
+        };
+        let ax_id = child_index(nodes, axis, CHART_NS, "axId")
+            .and_then(|index| nodes.get(index))
+            .ok_or_else(|| transaction_error("axis identifier is missing"))?;
+        return insert_at(chart, ax_id.span.end, format!("<{prefix}scaling><{prefix}{name} val=\"{numeric}\"/></{prefix}scaling>").as_bytes());
+    };
+    let property = child_indices(nodes, scale, CHART_NS, name);
+    if property.len() > 1 {
+        return Err(transaction_error(format!("axis has duplicate {name} bounds")));
+    }
+    match (property.first().copied(), value) {
+        (Some(index), AxisBoundChange::Auto) => remove_element(chart, nodes, index),
+        (Some(index), AxisBoundChange::Manual { value }) if value.is_finite() => set_attribute(chart, nodes, index, "val", &value.to_string()),
+        (None, AxisBoundChange::Auto) => Ok(chart.to_vec()),
+        (None, AxisBoundChange::Manual { value }) if value.is_finite() => {
+            let scale_node = nodes.get(scale).ok_or_else(|| transaction_error("axis scaling is missing"))?;
+            let prefix = element_prefix(chart, nodes.get(axis).ok_or_else(|| transaction_error("axis is missing"))?)?;
+            let markup = format!("<{prefix}{name} val=\"{}\"/>", value);
+            let before = if name == "max" {
+                child_indices(nodes, scale, CHART_NS, "min").first().copied()
+            } else {
+                child_indices(nodes, scale, CHART_NS, "extLst").first().copied()
+            };
+            insert_child(chart, scale_node, before.and_then(|index| nodes.get(index)), &markup)
+        }
+        _ => Err(transaction_error("axis bound must be finite")),
+    }
+}
+
+fn set_axis_number_format(chart: &[u8], mapping: &ChartMapping, position: &str, format: &str) -> Result<Vec<u8>, DocxError> {
+    if !safe_axis_format(format) {
+        return Err(transaction_error("axis number format is unsupported"));
+    }
+    let nodes = preserved_xml::inspect(chart)?;
+    let axis = axis_node_for_position(&nodes, &mapping.chart_kind, position)?;
+    let formats = child_indices(&nodes, axis, CHART_NS, "numFmt");
+    if formats.len() > 1 {
+        return Err(transaction_error("axis has duplicate number formats"));
+    }
+    let Some(format_node) = formats.first().copied() else {
+        let axis_node = nodes.get(axis).ok_or_else(|| transaction_error("numeric axis is missing"))?;
+        let prefix = element_prefix(chart, axis_node)?;
+        let markup = format!("<{prefix}numFmt formatCode=\"{format}\" sourceLinked=\"0\"/>");
+        let later = [
+            "majorTickMark",
+            "minorTickMark",
+            "tickLblPos",
+            "spPr",
+            "txPr",
+            "crossAx",
+            "crosses",
+            "crossesAt",
+            "crossBetween",
+            "majorUnit",
+            "minorUnit",
+            "dispUnits",
+            "extLst",
+        ];
+        let anchor = later.iter().find_map(|local| child_index(&nodes, axis, CHART_NS, local).and_then(|index| nodes.get(index)));
+        let output = insert_child(chart, nodes.get(axis).ok_or_else(|| transaction_error("numeric axis is missing"))?, anchor, &markup)?;
+        let parsed = preserved_xml::inspect(&output)?;
+        let axis = axis_node_for_position(&parsed, &mapping.chart_kind, position)?;
+        let format_node = child_index(&parsed, axis, CHART_NS, "numFmt").ok_or_else(|| transaction_error("number format insertion failed"))?;
+        return set_attribute(&output, &parsed, format_node, "formatCode", format);
+    };
+    let code = nodes.get(format_node).and_then(|node| node.attrs.get(&qualified("", "formatCode")));
+    if code.is_none() {
+        return Err(transaction_error("axis number format has no explicit formatCode attribute"));
+    }
+    let updated = set_attribute(chart, &nodes, format_node, "formatCode", format)?;
+    let reparsed = preserved_xml::inspect(&updated)?;
+    // sourceLinked=0 is required so Word uses the explicit formatCode.
+    let axis = axis_node_for_position(&reparsed, &mapping.chart_kind, position)?;
+    let formats = child_indices(&reparsed, axis, CHART_NS, "numFmt");
+    let format_node = *formats.first().ok_or_else(|| transaction_error("axis number format disappeared during editing"))?;
+    let source_linked = reparsed.get(format_node).and_then(|node| node.attrs.get(&qualified("", "sourceLinked"))).map(String::as_str);
+    if source_linked == Some("1") { set_attribute(&updated, &reparsed, format_node, "sourceLinked", "0") } else { Ok(updated) }
+}
+
+fn element_prefix(source: &[u8], node: &Element) -> Result<String, DocxError> {
+    let raw = source.get(node.span.clone()).ok_or_else(|| transaction_error("XML element range is invalid"))?;
+    let name = raw
+        .get(1..)
+        .and_then(|tail| tail.split(|byte| byte.is_ascii_whitespace() || matches!(*byte, b'>' | b'/')).next())
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .ok_or_else(|| transaction_error("XML element name is malformed"))?;
+    let (prefix, _) = name.split_once(':').ok_or_else(|| transaction_error("chart XML uses an unsupported unprefixed namespace"))?;
+    Ok(format!("{prefix}:"))
+}
+
+fn insert_child(source: &[u8], parent: &Element, before: Option<&Element>, markup: &str) -> Result<Vec<u8>, DocxError> {
+    if let Some(before) = before {
+        return insert_at(source, before.span.start, markup.as_bytes());
+    }
+    if !parent.empty {
+        return insert_at(source, parent.content.end, markup.as_bytes());
+    }
+    let raw = source.get(parent.span.clone()).ok_or_else(|| transaction_error("empty XML element range is invalid"))?;
+    let close = raw.iter().rposition(|byte| *byte == b'>').ok_or_else(|| transaction_error("empty XML element is malformed"))?;
+    let slash = raw
+        .get(..close)
+        .and_then(|bytes| bytes.iter().rposition(|byte| *byte == b'/'))
+        .ok_or_else(|| transaction_error("empty XML element lacks a close slash"))?;
+    let name_raw = raw
+        .get(1..)
+        .and_then(|tail| tail.split(|byte| byte.is_ascii_whitespace() || matches!(*byte, b'>' | b'/')).next())
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .ok_or_else(|| transaction_error("empty XML element name is malformed"))?;
+    let mut replacement = raw.get(..slash).ok_or_else(|| transaction_error("empty XML tag range is invalid"))?.to_vec();
+    replacement.extend_from_slice(b">");
+    replacement.extend_from_slice(markup.as_bytes());
+    replacement.extend_from_slice(format!("</{name_raw}>").as_bytes());
+    let mut splices = vec![Splice { range: parent.span.clone(), replacement }];
+    apply_splices(source, std::mem::take(&mut splices))
+}
+
+fn insert_at(source: &[u8], offset: usize, bytes: &[u8]) -> Result<Vec<u8>, DocxError> {
+    if offset > source.len() {
+        return Err(transaction_error("XML insertion point is out of bounds"));
+    }
+    apply_splices(source, vec![Splice { range: offset..offset, replacement: bytes.to_vec() }])
+}
+
+fn remove_element(source: &[u8], nodes: &[Element], index: usize) -> Result<Vec<u8>, DocxError> {
+    let node = nodes.get(index).ok_or_else(|| transaction_error("axis XML element is missing"))?;
+    apply_splices(source, vec![Splice { range: node.span.clone(), replacement: Vec::new() }])
+}
+
+fn set_attribute(source: &[u8], nodes: &[Element], index: usize, attribute: &str, value: &str) -> Result<Vec<u8>, DocxError> {
+    let node = nodes.get(index).ok_or_else(|| transaction_error("axis XML attribute node is missing"))?;
+    if !node.attrs.contains_key(&qualified("", attribute)) {
+        return Err(transaction_error(format!("axis attribute {attribute} is not explicitly present")));
+    }
+    let raw = source.get(node.span.clone()).ok_or_else(|| transaction_error("axis XML attribute range is invalid"))?;
+    let needle = format!("{attribute}=\"");
+    let start = raw
+        .windows(needle.len())
+        .position(|window| window == needle.as_bytes())
+        .map(|offset| offset + needle.len())
+        .ok_or_else(|| transaction_error(format!("axis attribute {attribute} is not explicitly present")))?;
+    let end = raw
+        .get(start..)
+        .and_then(|tail| tail.iter().position(|byte| *byte == b'\"'))
+        .map(|offset| start + offset)
+        .ok_or_else(|| transaction_error("axis attribute value is unterminated"))?;
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '"' => escaped.push_str("&quot;"),
+            c if c >= '\u{20}' => escaped.push(c),
+            _ => return Err(transaction_error("axis attribute contains an invalid XML character")),
+        }
+    }
+    let absolute_start = node.span.start.checked_add(start).ok_or_else(|| transaction_error("axis attribute offset overflow"))?;
+    let absolute_end = node.span.start.checked_add(end).ok_or_else(|| transaction_error("axis attribute offset overflow"))?;
+    apply_splices(source, vec![Splice { range: absolute_start..absolute_end, replacement: escaped.into_bytes() }])
 }
 
 fn splices_in_cache_index(nodes: &[Element], cache: usize, point: usize) -> Result<usize, DocxError> {
@@ -1796,6 +2285,20 @@ mod tests {
         zip(&files)
     }
 
+    fn axis_docx_fixture() -> Vec<u8> {
+        let base = docx_fixture(false, false, false, false);
+        let package = Package::open(&base).unwrap();
+        let mut files = package.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let chart = String::from_utf8(files.get("word/charts/chart1.xml").unwrap().clone()).unwrap()
+            .replace("<c:axId val=\"1\"/></c:barChart>", "<c:axId val=\"1\"/><c:axId val=\"2\"/></c:barChart>")
+            .replace(
+                "</c:barChart></c:plotArea>",
+                "</c:barChart><c:catAx><c:axId val=\"1\"/><c:axPos val=\"b\"/><c:crossAx val=\"2\"/></c:catAx><c:valAx><c:axId val=\"2\"/><c:axPos val=\"l\"/><c:crossAx val=\"1\"/></c:valAx></c:plotArea>",
+            );
+        files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+        zip(&files)
+    }
+
     fn scatter_docx_fixture(second_series: bool) -> Vec<u8> {
         let base = docx_fixture(false, false, false, false);
         let mut files = Package::open(&base).unwrap().entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
@@ -1806,9 +2309,243 @@ mod tests {
 
     fn mapped(result: Classification) -> ChartMapping {
         match result {
-            Classification::Mappable(v) => v,
+            Classification::Mappable(v) => *v,
             other => panic!("expected mapping, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn numeric_axis_bounds_and_safe_number_formats_are_transactional() {
+        let source = axis_docx_fixture();
+        let original = Package::open(&source).unwrap();
+        let chart_part = "word/charts/chart1.xml";
+        let snapshot = inspect_chart_data(&source, chart_part).unwrap();
+        assert_eq!(snapshot.horizontal_axis.as_ref().map(|axis| axis.role.as_str()), Some("category"));
+        assert!(!snapshot.horizontal_axis.as_ref().is_some_and(|axis| axis.editable));
+        let vertical = snapshot.vertical_axis.as_ref().unwrap();
+        assert_eq!(vertical.role, "value");
+        assert!(vertical.editable);
+        assert_eq!(vertical.minimum, None);
+
+        let plan = prepare_chart_edit(&source, chart_part).unwrap();
+        let output = apply_chart_edit(
+            &source,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges::default()],
+                vertical_axis: Some(AxisChanges {
+                    minimum: Some(AxisBoundChange::Manual { value: -2.5 }),
+                    maximum: Some(AxisBoundChange::Manual { value: 100.0 }),
+                    number_format: Some("0.00".into()),
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let updated = inspect_chart_data(&output, chart_part).unwrap();
+        let vertical = updated.vertical_axis.as_ref().unwrap();
+        assert_eq!(vertical.minimum, Some(-2.5));
+        assert_eq!(vertical.maximum, Some(100.0));
+        assert_eq!(vertical.number_format.as_deref(), Some("0.00"));
+        let updated_package = Package::open(&output).unwrap();
+        assert_eq!(updated_package.get("word/embeddings/book.xlsx"), original.get("word/embeddings/book.xlsx"));
+        let chart_xml = std::str::from_utf8(updated_package.get(chart_part).unwrap()).unwrap();
+        assert!(chart_xml.contains("<c:max val=\"100\"/>"));
+        assert!(chart_xml.contains("<c:min val=\"-2.5\"/>"));
+        assert!(chart_xml.contains("<c:numFmt formatCode=\"0.00\" sourceLinked=\"0\"/>"));
+
+        let auto_plan = prepare_chart_edit(&output, chart_part).unwrap();
+        let automatic = apply_chart_edit(
+            &output,
+            &auto_plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges::default()],
+                vertical_axis: Some(AxisChanges { minimum: Some(AxisBoundChange::Auto), maximum: Some(AxisBoundChange::Auto), number_format: None }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let automatic_snapshot = inspect_chart_data(&automatic, chart_part).unwrap();
+        assert_eq!(automatic_snapshot.vertical_axis.as_ref().unwrap().minimum, None);
+        assert_eq!(automatic_snapshot.vertical_axis.as_ref().unwrap().maximum, None);
+        assert_eq!(Package::open(&automatic).unwrap().get("word/embeddings/book.xlsx"), original.get("word/embeddings/book.xlsx"));
+    }
+
+    #[test]
+    fn numeric_axis_with_unknown_ooxml_child_is_read_only() {
+        let source = axis_docx_fixture();
+        let package = Package::open(&source).unwrap();
+        let mut files = package.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let chart = String::from_utf8(files.get("word/charts/chart1.xml").unwrap().clone())
+            .unwrap()
+            .replace("<c:valAx><c:axId val=\"2\"/>", "<c:valAx><c:axId val=\"2\"/><c:unknownAxisFeature val=\"keep\"/>");
+        files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+        let source = zip(&files);
+        let snapshot = inspect_chart_data(&source, "word/charts/chart1.xml").unwrap();
+        let axis = snapshot.vertical_axis.as_ref().unwrap();
+        assert!(!axis.editable);
+        assert_eq!(axis.diagnostic.as_deref(), Some("This axis contains unsupported OOXML and remains read-only."));
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let result = apply_chart_edit(
+            &source,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges::default()],
+                vertical_axis: Some(AxisChanges { minimum: Some(AxisBoundChange::Manual { value: 0.0 }), maximum: None, number_format: None }),
+                ..Default::default()
+            },
+        );
+        assert!(result.is_err());
+        assert!(std::str::from_utf8(Package::open(&source).unwrap().get("word/charts/chart1.xml").unwrap()).unwrap().contains("unknownAxisFeature"));
+    }
+
+    #[test]
+    fn physical_axis_controls_follow_horizontal_bar_orientation_and_scatter_xy_ids() {
+        let base = axis_docx_fixture();
+        let package = Package::open(&base).unwrap();
+        let mut files = package.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let chart = String::from_utf8(files.get("word/charts/chart1.xml").unwrap().clone())
+            .unwrap()
+            .replace("<c:barDir val=\"col\"/>", "<c:barDir val=\"bar\"/>")
+            .replace("<c:catAx><c:axId val=\"1\"/><c:axPos val=\"b\"/>", "<c:catAx><c:axId val=\"1\"/><c:axPos val=\"l\"/>")
+            .replace("<c:valAx><c:axId val=\"2\"/><c:axPos val=\"l\"/>", "<c:valAx><c:axId val=\"2\"/><c:axPos val=\"b\"/>");
+        files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+        let horizontal_bar = zip(&files);
+        let snapshot = inspect_chart_data(&horizontal_bar, "word/charts/chart1.xml").unwrap();
+        assert_eq!(snapshot.horizontal_axis.as_ref().map(|axis| axis.role.as_str()), Some("value"));
+        assert_eq!(snapshot.vertical_axis.as_ref().map(|axis| axis.role.as_str()), Some("category"));
+        let plan = prepare_chart_edit(&horizontal_bar, "word/charts/chart1.xml").unwrap();
+        let edited_bar = apply_chart_edit(
+            &horizontal_bar,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges::default()],
+                horizontal_axis: Some(AxisChanges {
+                    minimum: Some(AxisBoundChange::Manual { value: 0.0 }),
+                    maximum: Some(AxisBoundChange::Manual { value: 100.0 }),
+                    number_format: None,
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let edited_bar_snapshot = inspect_chart_data(&edited_bar, "word/charts/chart1.xml").unwrap();
+        assert_eq!(edited_bar_snapshot.horizontal_axis.as_ref().unwrap().minimum, Some(0.0));
+        assert_eq!(edited_bar_snapshot.vertical_axis.as_ref().unwrap().role, "category");
+
+        let scatter = scatter_docx_fixture(false);
+        let scatter_before = Package::open(&scatter).unwrap();
+        let scatter_snapshot = inspect_chart_data(&scatter, "word/charts/chart1.xml").unwrap();
+        assert_eq!(scatter_snapshot.horizontal_axis.as_ref().map(|axis| axis.role.as_str()), Some("scatterX"));
+        assert_eq!(scatter_snapshot.vertical_axis.as_ref().map(|axis| axis.role.as_str()), Some("scatterY"));
+        let scatter_plan = prepare_chart_edit(&scatter, "word/charts/chart1.xml").unwrap();
+        let scaled_scatter = apply_chart_edit(
+            &scatter,
+            &scatter_plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges::default()],
+                horizontal_axis: Some(AxisChanges {
+                    minimum: Some(AxisBoundChange::Manual { value: 0.0 }),
+                    maximum: Some(AxisBoundChange::Manual { value: 100.0 }),
+                    number_format: None,
+                }),
+                vertical_axis: Some(AxisChanges { minimum: None, maximum: None, number_format: Some("0.00E+00".into()) }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let scaled_snapshot = inspect_chart_data(&scaled_scatter, "word/charts/chart1.xml").unwrap();
+        assert_eq!(scaled_snapshot.horizontal_axis.as_ref().unwrap().role, "scatterX");
+        assert_eq!(scaled_snapshot.horizontal_axis.as_ref().unwrap().minimum, Some(0.0));
+        assert_eq!(scaled_snapshot.vertical_axis.as_ref().unwrap().role, "scatterY");
+        assert_eq!(scaled_snapshot.vertical_axis.as_ref().unwrap().number_format.as_deref(), Some("0.00E+00"));
+        assert_eq!(Package::open(&scaled_scatter).unwrap().get("word/embeddings/book.xlsx"), scatter_before.get("word/embeddings/book.xlsx"));
+    }
+
+    #[test]
+    fn axis_transactions_reject_invalid_bounds_logarithmic_and_reversed_axes() {
+        let source = axis_docx_fixture();
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let invalid = ChartDataChanges {
+            series: vec![SeriesChanges::default()],
+            vertical_axis: Some(AxisChanges {
+                minimum: Some(AxisBoundChange::Manual { value: 20.0 }),
+                maximum: Some(AxisBoundChange::Manual { value: 10.0 }),
+                number_format: None,
+            }),
+            ..Default::default()
+        };
+        assert!(apply_chart_edit(&source, &plan, &invalid).is_err());
+        let invalid_number = ChartDataChanges {
+            series: vec![SeriesChanges::default()],
+            vertical_axis: Some(AxisChanges { minimum: Some(AxisBoundChange::Manual { value: f64::NAN }), maximum: None, number_format: None }),
+            ..Default::default()
+        };
+        assert!(apply_chart_edit(&source, &plan, &invalid_number).is_err());
+
+        let original = Package::open(&source).unwrap();
+        for scaling in ["<c:logBase val=\"10\"/>", "<c:orientation val=\"maxMin\"/>"] {
+            let mut files = original.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+            let chart = String::from_utf8(files.get("word/charts/chart1.xml").unwrap().clone()).unwrap();
+            let chart = chart.replace("<c:valAx><c:axId val=\"2\"/>", &format!("<c:valAx><c:axId val=\"2\"/><c:scaling>{scaling}</c:scaling>"));
+            files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+            let unsafe_docx = zip(&files);
+            let unsafe_snapshot = inspect_chart_data(&unsafe_docx, "word/charts/chart1.xml").unwrap();
+            assert!(!unsafe_snapshot.vertical_axis.as_ref().unwrap().editable);
+            let unsafe_plan = prepare_chart_edit(&unsafe_docx, "word/charts/chart1.xml").unwrap();
+            assert!(
+                apply_chart_edit(
+                    &unsafe_docx,
+                    &unsafe_plan,
+                    &ChartDataChanges {
+                        series: vec![SeriesChanges::default()],
+                        vertical_axis: Some(AxisChanges {
+                            minimum: Some(AxisBoundChange::Manual { value: 0.0 }),
+                            maximum: None,
+                            number_format: None,
+                        }),
+                        ..Default::default()
+                    }
+                )
+                .is_err()
+            );
+        }
+
+        let mut files = original.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let chart = String::from_utf8(files.get("word/charts/chart1.xml").unwrap().clone()).unwrap().replace(
+            "<c:valAx><c:axId val=\"2\"/><c:axPos val=\"l\"/>",
+            "<c:valAx><c:axId val=\"2\"/><c:axPos val=\"l\"/><c:numFmt formatCode=\"yyyy-mm-dd\" sourceLinked=\"0\"/>",
+        );
+        files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+        let custom_format_docx = zip(&files);
+        let custom_snapshot = inspect_chart_data(&custom_format_docx, "word/charts/chart1.xml").unwrap();
+        assert!(custom_snapshot.vertical_axis.as_ref().unwrap().editable, "bounds remain independently editable");
+        assert!(!custom_snapshot.vertical_axis.as_ref().unwrap().number_format_editable);
+        let custom_plan = prepare_chart_edit(&custom_format_docx, "word/charts/chart1.xml").unwrap();
+        assert!(
+            apply_chart_edit(
+                &custom_format_docx,
+                &custom_plan,
+                &ChartDataChanges {
+                    series: vec![SeriesChanges::default()],
+                    vertical_axis: Some(AxisChanges { minimum: None, maximum: None, number_format: Some("0".into()) }),
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+        let bound_only = apply_chart_edit(
+            &custom_format_docx,
+            &custom_plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges::default()],
+                vertical_axis: Some(AxisChanges { minimum: Some(AxisBoundChange::Manual { value: 0.0 }), maximum: None, number_format: None }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let updated_chart = Package::open(&bound_only).unwrap();
+        assert!(std::str::from_utf8(updated_chart.get("word/charts/chart1.xml").unwrap()).unwrap().contains("yyyy-mm-dd"));
     }
 
     #[test]
@@ -1832,6 +2569,10 @@ mod tests {
         for (multiple, expected_series) in [(false, 1), (true, 2)] {
             let mapping = mapped(map_chart(&scatter_chart(multiple), &rels(false), "word/embeddings/book.xlsx", &workbook));
             assert_eq!(mapping.chart_kind, "scatter");
+            assert_eq!(mapping.horizontal_axis.as_ref().map(|axis| axis.role.as_str()), Some("scatterX"));
+            assert_eq!(mapping.vertical_axis.as_ref().map(|axis| axis.role.as_str()), Some("scatterY"));
+            assert!(mapping.horizontal_axis.as_ref().is_some_and(|axis| axis.editable));
+            assert!(mapping.vertical_axis.as_ref().is_some_and(|axis| axis.editable));
             assert_eq!(mapping.series.len(), expected_series);
             assert_eq!(mapping.series[0].name.address, "A1");
             assert_eq!(mapping.series[0].x_values().iter().map(|cell| cell.address.as_str()).collect::<Vec<_>>(), ["C1", "C2", "C3"]);
@@ -1896,6 +2637,8 @@ mod tests {
             chart_title: None,
             horizontal_axis_title: None,
             vertical_axis_title: None,
+            horizontal_axis: None,
+            vertical_axis: None,
             series: vec![
                 SeriesChanges { x_values: Some(vec![11.0, 22.0, 33.0]), values: Some(vec![110.0, 220.0, 330.0]), ..Default::default() },
                 SeriesChanges { x_values: Some(vec![4.0, 5.0, 6.0]), values: Some(vec![44.0, 55.0, 66.0]), ..Default::default() },
@@ -1934,6 +2677,8 @@ mod tests {
                 chart_title: None,
                 horizontal_axis_title: None,
                 vertical_axis_title: None,
+                horizontal_axis: None,
+                vertical_axis: None,
                 series: vec![SeriesChanges { x_values: Some(vec![1.0]), values: Some(vec![1.0, 2.0, 3.0]), ..Default::default() }],
             },
             ChartDataChanges {
@@ -1941,6 +2686,8 @@ mod tests {
                 chart_title: None,
                 horizontal_axis_title: None,
                 vertical_axis_title: None,
+                horizontal_axis: None,
+                vertical_axis: None,
                 series: vec![SeriesChanges { x_values: Some(vec![1.0, f64::INFINITY, 3.0]), ..Default::default() }],
             },
             ChartDataChanges {
@@ -1948,6 +2695,8 @@ mod tests {
                 chart_title: None,
                 horizontal_axis_title: None,
                 vertical_axis_title: None,
+                horizontal_axis: None,
+                vertical_axis: None,
                 series: vec![SeriesChanges { categories: Some(vec!["a".into(), "b".into(), "c".into()]), ..Default::default() }],
             },
         ] {
@@ -1966,6 +2715,8 @@ mod tests {
                     chart_title: None,
                     horizontal_axis_title: None,
                     vertical_axis_title: None,
+                    horizontal_axis: None,
+                    vertical_axis: None,
                     series: vec![SeriesChanges { values: Some(vec![1.0, 2.0, 3.0]), ..Default::default() }]
                 }
             )
@@ -1995,6 +2746,8 @@ mod tests {
                 chart_title: None,
                 horizontal_axis_title: None,
                 vertical_axis_title: None,
+                horizontal_axis: None,
+                vertical_axis: None,
                 series: vec![SeriesChanges {
                     name: Some("Horizontal".into()),
                     categories: Some(vec!["North".into(), "South".into(), "West".into()]),
@@ -2040,6 +2793,8 @@ mod tests {
                 chart_title: None,
                 horizontal_axis_title: None,
                 vertical_axis_title: None,
+                horizontal_axis: None,
+                vertical_axis: None,
                 series: vec![SeriesChanges {
                     name: Some("Line measurements".into()),
                     categories: Some(vec!["First".into(), "Second".into(), "Third".into()]),
@@ -2085,6 +2840,8 @@ mod tests {
                 chart_title: None,
                 horizontal_axis_title: None,
                 vertical_axis_title: None,
+                horizontal_axis: None,
+                vertical_axis: None,
                 series: vec![SeriesChanges {
                     name: Some("Area measurements".into()),
                     categories: Some(vec!["First".into(), "Second".into(), "Third".into()]),
@@ -2131,6 +2888,8 @@ mod tests {
                     chart_title: None,
                     horizontal_axis_title: None,
                     vertical_axis_title: None,
+                    horizontal_axis: None,
+                    vertical_axis: None,
                     series: vec![SeriesChanges {
                         name: Some("Revised series".into()),
                         categories: Some(vec!["Cyan".into(), "Magenta".into(), "Yellow".into()]),
@@ -2193,6 +2952,8 @@ mod tests {
                     chart_title: None,
                     horizontal_axis_title: None,
                     vertical_axis_title: None,
+                    horizontal_axis: None,
+                    vertical_axis: None,
                     series: vec![SeriesChanges::default()],
                 },
             )
@@ -2214,6 +2975,8 @@ mod tests {
                 chart_title: None,
                 horizontal_axis_title: None,
                 vertical_axis_title: None,
+                horizontal_axis: None,
+                vertical_axis: None,
                 series: vec![SeriesChanges::default()],
             };
             assert!(apply_chart_edit(&source, &plan, &changes).is_err());
@@ -2234,6 +2997,8 @@ mod tests {
                     chart_title: None,
                     horizontal_axis_title: None,
                     vertical_axis_title: None,
+                    horizontal_axis: None,
+                    vertical_axis: None,
                     series: vec![SeriesChanges::default()]
                 }
             )
@@ -2482,6 +3247,8 @@ mod tests {
             chart_title: None,
             horizontal_axis_title: None,
             vertical_axis_title: None,
+            horizontal_axis: None,
+            vertical_axis: None,
             series: vec![SeriesChanges {
                 name: Some("Updated series".into()),
                 categories: Some(vec!["Alpha".into(), "Beta & gamma".into(), "Gamma".into()]),
@@ -2524,6 +3291,8 @@ mod tests {
                 chart_title: None,
                 horizontal_axis_title: None,
                 vertical_axis_title: None,
+                horizontal_axis: None,
+                vertical_axis: None,
                 series: vec![
                     SeriesChanges {
                         name: Some("Primary".into()),
@@ -2567,6 +3336,8 @@ mod tests {
             chart_title: None,
             horizontal_axis_title: None,
             vertical_axis_title: None,
+            horizontal_axis: None,
+            vertical_axis: None,
             series: vec![
                 SeriesChanges { categories: Some(vec!["First".into(), "Second".into(), "Third".into()]), ..Default::default() },
                 SeriesChanges { categories: Some(vec!["Conflict".into(), "Second".into(), "Third".into()]), ..Default::default() },
@@ -2578,6 +3349,8 @@ mod tests {
             chart_title: None,
             horizontal_axis_title: None,
             vertical_axis_title: None,
+            horizontal_axis: None,
+            vertical_axis: None,
             series: vec![SeriesChanges { values: Some(vec![f64::NAN, 1.0, 2.0]), ..Default::default() }, SeriesChanges::default()],
         };
         assert!(apply_chart_edit(&source, &plan, &invalid_number).is_err());
@@ -2595,6 +3368,8 @@ mod tests {
                     chart_title: None,
                     horizontal_axis_title: None,
                     vertical_axis_title: None,
+                    horizontal_axis: None,
+                    vertical_axis: None,
                     series: vec![SeriesChanges { values: Some(vec![1.0, 2.0, 3.0]), ..Default::default() }, SeriesChanges::default()]
                 }
             )
@@ -2631,6 +3406,8 @@ mod tests {
             chart_title: None,
             horizontal_axis_title: None,
             vertical_axis_title: None,
+            horizontal_axis: None,
+            vertical_axis: None,
             series: vec![SeriesChanges { categories: Some(vec!["Changed".into(), "Other".into(), "Changed".into()]), ..Default::default() }],
         };
         let mut rich_files = Package::open(&source).unwrap().entries().map(|(n, b)| (n.to_string(), b.to_vec())).collect::<BTreeMap<_, _>>();
@@ -2668,6 +3445,8 @@ mod tests {
             chart_title: None,
             horizontal_axis_title: None,
             vertical_axis_title: None,
+            horizontal_axis: None,
+            vertical_axis: None,
             series: vec![SeriesChanges { name: Some("Renamed".into()), ..Default::default() }],
         };
         assert!(apply_chart_edit(&alias_source, &alias_plan, &label_edit).is_err());

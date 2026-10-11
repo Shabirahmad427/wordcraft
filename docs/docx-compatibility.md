@@ -38,6 +38,22 @@ Selecting an embedded chart exposes **Chart Design → Edit Chart Data** and the
 
 The same dialog can edit an existing chart title and existing physical horizontal/vertical axis titles when each is represented as one rich-text run with one text node. Updates replace only that text node, retaining run properties and surrounding title XML, and are included in the same guarded transaction as chart data, Undo/redo, recovery and save. The preview now renders supported axis titles for bar/column, horizontal bar, line, area and scatter charts, resolves physical horizontal/vertical axes through chart axis IDs and `axPos`, rotates vertical titles through the shared display-list path, and reserves plot space beside tick labels and legends. It carries simple run/default size, font, bold, color and paragraph alignment; mixed-run styling falls back to chart defaults while preserving the DOCX markup. Long text is shortened with an ellipsis to remain inside small chart bounds. Pie and doughnut charts expose no axis titles. Formatting-only changes do not rewrite embedded XLSX parts. Missing titles cannot yet be added or removed, and formula-linked, duplicated/ambiguous-axis or complex title structures remain read-only. Synthetic layout, raster, PDF-text, editing, Undo/redo and DOCX save/reopen tests pass; Microsoft Word/Excel visual interoperability has not been independently tested.
 
+### Axis scaling and number formats
+
+The same validated `chart.editData` transaction and Chart Design dialog expose minimum/maximum
+Auto or Manual bounds and a constrained number-format list for uniquely mapped numeric value axes.
+Supported formats are General, integer, decimal, percentage and scientific notation codes already
+handled by the chart renderer. Bounds must be finite and ordered. Standard Cartesian charts expose
+their value axis by physical position; scatter charts expose numeric X and Y axes separately.
+Category axes are identified but read-only. Logarithmic, reversed, malformed, duplicate, secondary
+or ambiguous axis structures are preserved and rejected for editing. Existing unsupported custom
+formats remain unchanged and read-only. Major tick intervals are not exposed because the renderer
+does not yet reproduce explicit OOXML major-unit behavior. Preview and PDF consume the same parsed
+OOXML axis settings. Axis-only edits preserve the embedded XLSX bytes and use the existing Undo,
+recovery, guarded-save and reopen path. Synthetic tests cover bounds, formats, category/scatter
+roles, rejected axes, Undo/redo, recovery, DOCX reopen and workbook preservation; no independent
+Word or Excel comparison has been performed.
+
 Inspection is read-only through `chart.inspectData`. A selected chart whose package, workbook or ranges do not pass the mapper opens as read-only and displays the engine diagnostic; no guessed values are made editable. Both commands require the open `documentId` and chart part. The dialog also submits its original validated snapshot; if the chart changes while it is open, the engine rejects the stale draft before making any change. The engine checks that the part belongs to that document, and `chart.editData` rebuilds and revalidates the package mapping before applying a transaction. Category/value example: `{"documentId": 3, "chartPart": "word/charts/chart1.xml", "series": [{"name": "Measurements", "categories": ["A", "B"], "values": [12, 18]}]}`. Scatter example: `{"documentId": 3, "chartPart": "word/charts/chart1.xml", "series": [{"name": "Measurements", "xValues": [1.5, 2.5], "values": [12, 18]}]}`. Omitted properties remain unchanged.
 
 #### Scatter chart editing limits

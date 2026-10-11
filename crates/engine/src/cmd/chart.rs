@@ -10,7 +10,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .pure()
             .params(r#"{"documentId": integer, "chartPart": string}"#),
         CommandSpec::new("chart.editData", "Edit Chart Data", "Agents", edit_data)
-            .params(r#"{"documentId": integer, "chartPart": string, "legendPosition"?: "l"|"r"|"t"|"b", "chartTitle"?: string, "horizontalAxisTitle"?: string, "verticalAxisTitle"?: string, "series": [{"name"?: string, "categories"?: [string], "xValues"?: [number], "values"?: [number]}], "expected"?: validated chart snapshot}"#),
+            .params(r#"{"documentId": integer, "chartPart": string, "legendPosition"?: "l"|"r"|"t"|"b", "chartTitle"?: string, "horizontalAxisTitle"?: string, "verticalAxisTitle"?: string, "horizontalAxis"?: {"minimum"?: {"mode":"auto"}|{"mode":"manual","value":number}, "maximum"?: {"mode":"auto"}|{"mode":"manual","value":number}, "numberFormat"?: string}, "verticalAxis"?: object, "series": [{"name"?: string, "categories"?: [string], "xValues"?: [number], "values"?: [number]}], "expected"?: validated chart snapshot}"#),
     ]
 }
 
@@ -51,6 +51,8 @@ fn edit_data(session: &mut Session, params: &Value) -> CmdResult {
         "chartTitle": params.get("chartTitle"),
         "horizontalAxisTitle": params.get("horizontalAxisTitle"),
         "verticalAxisTitle": params.get("verticalAxisTitle"),
+        "horizontalAxis": params.get("horizontalAxis"),
+        "verticalAxis": params.get("verticalAxis"),
         "series": raw_changes
     });
     let changes: wordcraft_docx::ChartDataChanges =
