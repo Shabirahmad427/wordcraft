@@ -6,6 +6,7 @@ use wordcraft_engine::{
     Session,
     doc::{
         Document, Paragraph, PartKind, Path, Pos, StoryRef, Table,
+        math::{Math, parse_linear},
         para::{InlineObject, NoteKind},
         props::VAlign,
         section::{Columns, SectionProps, SectionStart},
@@ -40,6 +41,13 @@ fn academic_document() -> (Document, u32) {
     .unwrap();
     doc.insert_object(&Pos::body(0, 8), InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() }, &Default::default())
         .unwrap();
+    let math_nodes = parse_linear("E=mc^2");
+    doc.insert_object(
+        &Pos::body(1, "Results and measurements".len()),
+        InlineObject::Equation { linear: "E=mc^2".into(), display: true, math: Math { nodes: math_nodes, ..Default::default() } },
+        &Default::default(),
+    )
+    .unwrap();
     let mut table = Table::new(14, 2, doc.last_section.text_width());
     table.rows[0].props.header = true;
     for (row, cells) in table.rows.iter_mut().enumerate() {
@@ -89,6 +97,14 @@ fn assert_complete(doc: &Document, layout: &DocLayout) {
     }
 }
 
+fn has_test_equation(doc: &Document) -> bool {
+    doc.body
+        .iter()
+        .filter_map(|b| b.as_para())
+        .flat_map(|p| p.objects.iter())
+        .any(|o| matches!(o, InlineObject::Equation { linear, display: true, math, .. } if linear == "E=mc^2" && !math.unsupported))
+}
+
 #[test]
 fn academic_sections_roundtrip_undo_and_recovery_keep_pagination_and_pixels() {
     let directory = std::env::temp_dir().join(format!("wordcraft-section-{}", unique_id()));
@@ -113,6 +129,7 @@ fn academic_sections_roundtrip_undo_and_recovery_keep_pagination_and_pixels() {
     let id = store.save(&unique_id(), session.document_id(), &Snapshot::capture(&session)).unwrap();
     let mut restored = Session::new(Document::new());
     store.load(&id).unwrap().restore(&mut restored);
+    assert!(has_test_equation(&restored.doc), "recovery lost the numbered equation");
     let output = directory.join("academic.docx");
     restored.run("file.save", &json!({"path":output})).unwrap();
     let pdf = directory.join("academic.pdf");
@@ -120,6 +137,7 @@ fn academic_sections_roundtrip_undo_and_recovery_keep_pagination_and_pixels() {
     assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
     let mut reopened = Session::new(Document::new());
     reopened.run("file.open", &json!({"path":output})).unwrap();
+    assert!(has_test_equation(&reopened.doc), "DOCX reopening lost the numbered equation");
     let after = reopened.layout();
     assert_eq!(before.pages.len(), after.pages.len());
     assert_complete(&reopened.doc, &after);

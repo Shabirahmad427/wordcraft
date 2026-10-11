@@ -274,7 +274,7 @@ fn run_text(r: &El) -> String {
 }
 
 fn run(r: &El, unsupported: &mut bool) -> Option<MRun> {
-    check_run_children(r, unsupported, &["m:rPr", "m:t"]);
+    check_run_children(r, unsupported, &["m:rPr", "w:rPr", "m:t"]);
     let text = run_text(r);
     if text.is_empty() {
         return None;
