@@ -141,11 +141,16 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
         .filter(|e| matches!(e.name.as_str(), "c:barChart" | "c:lineChart" | "c:areaChart" | "c:pieChart" | "c:doughnutChart" | "c:scatterChart"))
         .collect();
     if kinds.len() != 1 || kinds[0].name != "c:barChart" {
-        return Err(unsupported("only a single bar/column chart is supported"));
+        return Err(unsupported("only a single bar or column chart is supported"));
     }
     let kind = kinds[0];
-    if kind.child("c:barDir").and_then(|e| e.attr("val")) != Some("col") || contains_local(kind, "extLst", 0) {
-        return Err(unsupported("only plain column charts without extensions are supported"));
+    let chart_kind = match kind.child("c:barDir").and_then(|e| e.attr("val")) {
+        Some("col") => "column",
+        Some("bar") => "bar",
+        _ => return Err(unsupported("bar chart direction is missing or unsupported")),
+    };
+    if contains_local(kind, "extLst", 0) {
+        return Err(unsupported("bar and column charts with extensions are unsupported"));
     }
     let series: Vec<_> = kind.children("c:ser").collect();
     if series.is_empty() || series.len() > MAX_SERIES {
@@ -260,7 +265,7 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
         verify_number_cache(ser.child("c:val"), &values)?;
         mapped.push(SeriesMapping { name, categories, values });
     }
-    Ok(ChartMapping { chart_kind: "column".into(), workbook_part: workbook_part.into(), series: mapped })
+    Ok(ChartMapping { chart_kind: chart_kind.into(), workbook_part: workbook_part.into(), series: mapped })
 }
 
 fn contains_local(root: &El, local: &str, depth: usize) -> bool {
@@ -911,7 +916,7 @@ fn update_chart_caches(chart: &[u8], changes: &ChartDataChanges) -> Result<Vec<u
     let root = nodes.first().ok_or_else(|| transaction_error("chart XML has no root"))?;
     let bar_charts = descendants(&nodes, 0, CHART_NS, "barChart");
     if bar_charts.len() != 1 {
-        return Err(transaction_error("chart no longer has one supported column-chart cache"));
+        return Err(transaction_error("chart no longer has one supported bar/column cache"));
     }
     let chart_series = child_indices(&nodes, *bar_charts.first().ok_or_else(|| transaction_error("chart plot area is missing"))?, CHART_NS, "ser");
     if chart_series.len() != changes.series.len() {
@@ -1266,12 +1271,17 @@ mod tests {
     }
 
     fn chart(series_two: bool) -> Vec<u8> {
+        chart_direction(series_two, "col")
+    }
+
+    fn chart_direction(series_two: bool, direction: &str) -> Vec<u8> {
         let second = if series_two {
             r#"<c:ser><c:tx><c:strRef><c:f>Data!D1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Series two</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>Data!B1:B3</c:f><c:strCache><c:ptCount val="3"/><c:pt idx="0"><c:v>Same</c:v></c:pt><c:pt idx="1"><c:v>Other</c:v></c:pt><c:pt idx="2"><c:v>Same</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Data!D2:D4</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>7</c:v></c:pt><c:pt idx="1"><c:v>9</c:v></c:pt><c:pt idx="2"><c:v>12</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"#
         } else {
             ""
         };
         format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:tx><c:strRef><c:f>Data!A1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Series one</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>Data!B1:B3</c:f><c:strCache><c:ptCount val="3"/><c:pt idx="0"><c:v>Same</c:v></c:pt><c:pt idx="1"><c:v>Other</c:v></c:pt><c:pt idx="2"><c:v>Same</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Data!C1:C3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>42</c:v></c:pt><c:pt idx="2"><c:v>84</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>{second}<c:axId val="1"/></c:barChart></c:plotArea></c:chart><c:externalData r:id="book"/></c:chartSpace>"#)
+            .replace("<c:barDir val=\"col\"/>", &format!("<c:barDir val=\"{direction}\"/>"))
             .replace("xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"", "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"").into_bytes()
     }
 
@@ -1333,6 +1343,43 @@ mod tests {
             assert_eq!(mapping.series[0].categories.iter().map(|c| c.value.as_str()).collect::<Vec<_>>(), ["Same", "Other", "Same"]);
             assert_eq!(mapping.series[0].values.iter().map(|v| v.value).collect::<Vec<_>>(), [10.0, 42.0, 84.0]);
         }
+    }
+
+    #[test]
+    fn maps_horizontal_bar_chart_and_keeps_column_orientation_during_transaction() {
+        let original_chart = chart_direction(false, "bar");
+        let mapping = mapped(map_chart(&original_chart, &rels(false), "word/embeddings/book.xlsx", &workbook(false, false, false)));
+        assert_eq!(mapping.chart_kind, "bar");
+        assert_eq!(mapping.series[0].categories.iter().map(|cell| cell.value.as_str()).collect::<Vec<_>>(), ["Same", "Other", "Same"]);
+
+        let package = docx_fixture(false, false, false, false);
+        let mut parts =
+            Package::open(&package).unwrap().entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        parts.insert("word/charts/chart1.xml".into(), original_chart);
+        let package = zip(&parts);
+        let plan = prepare_chart_edit(&package, "word/charts/chart1.xml").unwrap();
+        let updated = apply_chart_edit(
+            &package,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges {
+                    name: Some("Horizontal".into()),
+                    categories: Some(vec!["North".into(), "South".into(), "West".into()]),
+                    values: Some(vec![11.0, 22.0, 33.0]),
+                }],
+            },
+        )
+        .unwrap();
+        let snapshot = inspect_chart_data(&updated, "word/charts/chart1.xml").unwrap();
+        assert_eq!(snapshot.chart_kind, "bar");
+        assert_eq!(snapshot.series[0].categories, ["North", "South", "West"]);
+        assert_eq!(snapshot.series[0].values, [11.0, 22.0, 33.0]);
+        let output = Package::open(&updated).unwrap();
+        let chart = output.get("word/charts/chart1.xml").unwrap();
+        assert!(chart.windows(b"<c:barDir val=\"bar\"/>".len()).any(|window| window == b"<c:barDir val=\"bar\"/>"));
+        let workbook = Package::open(output.get("word/embeddings/book.xlsx").unwrap()).unwrap();
+        let sheet = workbook.get("xl/worksheets/sheet1.xml").unwrap();
+        assert!(sheet.windows(b">11</v>".len()).any(|window| window == b">11</v>"));
     }
 
     #[test]
