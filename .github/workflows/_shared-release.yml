@@ -484,7 +484,11 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build the Flatpak bundle
         run: |
-          tarball=$(ls dist/linux/*-linux-${{ matrix.arch }}.tar.gz 2>/dev/null | head -n 1)
+          tarball=$(find dist/linux -maxdepth 1 -type f -name '*-linux-${{ matrix.arch }}.tar.gz' -print -quit)
+          if [ -z "$tarball" ]; then
+            echo "::error::No Linux tarball found for ${{ matrix.arch }}"
+            exit 1
+          fi
           packaging/linux/flatpak-bundle.sh "$tarball"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
