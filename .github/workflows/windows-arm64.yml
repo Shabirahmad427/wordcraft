@@ -14,6 +14,7 @@ on:
       - "**/Cargo.toml"
       - "**/build.rs"
       - .github/workflows/windows-arm64.yml
+      - .github/workflows/_shared-windows-arm64.yml
       - packaging/windows/**
   schedule:
     - cron: "41 4 * * 1" # weekly, so drift in the runner images shows up
@@ -28,7 +29,7 @@ permissions:
 
 jobs:
   windows-arm64:
-    uses: storytold/craft-common-actions/.github/workflows/windows-arm64.yml@8f081ff5db115de44313c9db09415c359bf2ca01 # reviewed 2026-10-11
+    uses: ./.github/workflows/_shared-windows-arm64.yml # reviewed 2026-10-11
     with:
       app-name: wordcraft
       app-dir: WordCraft

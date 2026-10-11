@@ -1,0 +1,59 @@
+# Locally maintained snapshot of storytold/craft-common-actions@8f081ff5db115de44313c9db09415c359bf2ca01.
+# Nested actions are pinned to that same reviewed commit; update only after auditing the full chain.
+name: "FreeBSD"
+
+on:
+  workflow_call:
+    inputs:
+      craft-fonts-ref:
+        description: "The commit ref for storytold/craft-fonts (optional)"
+        type: string
+        required: false
+        default: ""
+      freebsd-release:
+        description: "FreeBSD OS release version to run in the VM"
+        type: string
+        required: false
+        default: "14.3"
+      cargo-test-extra-args:
+        description: "Extra arguments to append to cargo test (optional)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  freebsd:
+    name: FreeBSD 14 (build + test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out craft-fonts
+        if: inputs.craft-fonts-ref != ''
+        uses: storytold/craft-common-actions/actions/checkout-craft-fonts@8f081ff5db115de44313c9db09415c359bf2ca01
+        with:
+          ref: ${{ inputs.craft-fonts-ref }}
+      - name: Build and test in a FreeBSD VM
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        with:
+          release: ${{ inputs.freebsd-release }}
+          usesh: true
+          cpu: 4
+          mem: 12288
+          copyback: false
+          prepare: |
+            pkg install -y bash git curl pkgconf cmake python3 libxkbcommon wayland libX11 libXcursor libXrandr libXi libxcb mesa-libs vulkan-loader gtk3 fontconfig freetype2 alsa-lib
+            curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+          run: |
+            . "$HOME/.cargo/env"
+            git config --global --add safe.directory "*"
+            rustc --version
+            CARGO_PROFILE_DEV_DEBUG=0 cargo build --workspace --all-targets --locked
+            if [ -d "craft-fonts" ]; then
+              CRAFT_FONTS_DIR="$PWD/craft-fonts" CARGO_PROFILE_DEV_DEBUG=0 cargo test --workspace --locked ${{ inputs.cargo-test-extra-args }}
+            else
+              CARGO_PROFILE_DEV_DEBUG=0 cargo test --workspace --locked ${{ inputs.cargo-test-extra-args }}
+            fi

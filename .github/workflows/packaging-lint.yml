@@ -19,4 +19,4 @@ concurrency:
 
 jobs:
   lint:
-    uses: storytold/craft-common-actions/.github/workflows/packaging-lint.yml@8f081ff5db115de44313c9db09415c359bf2ca01 # reviewed 2026-10-11
+    uses: ./.github/workflows/_shared-packaging-lint.yml # reviewed 2026-10-11

@@ -12,6 +12,7 @@ on:
       - "**/Cargo.toml"
       - "crates/fonts/**"
       - .github/workflows/freebsd.yml
+      - .github/workflows/_shared-freebsd.yml
   workflow_dispatch:
 
 concurrency:
@@ -23,6 +24,6 @@ permissions:
 
 jobs:
   freebsd:
-    uses: storytold/craft-common-actions/.github/workflows/freebsd.yml@8f081ff5db115de44313c9db09415c359bf2ca01 # reviewed 2026-10-11
+    uses: ./.github/workflows/_shared-freebsd.yml # reviewed 2026-10-11
     with:
       craft-fonts-ref: 8dcdacd5153e64560d109541a47d806f26f048c0

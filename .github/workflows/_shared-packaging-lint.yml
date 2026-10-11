@@ -1,0 +1,25 @@
+# Locally maintained snapshot of storytold/craft-common-actions@8f081ff5db115de44313c9db09415c359bf2ca01.
+# Nested actions are pinned to that same reviewed commit; update only after auditing the full chain.
+name: "Packaging lint"
+
+on:
+  workflow_call:
+    inputs:
+      actionlint-version:
+        description: "Version of actionlint to install"
+        type: string
+        required: false
+        default: "1.7.12"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run packaging lint
+        uses: storytold/craft-common-actions/actions/packaging-lint@8f081ff5db115de44313c9db09415c359bf2ca01
+        with:
+          actionlint-version: ${{ inputs.actionlint-version }}

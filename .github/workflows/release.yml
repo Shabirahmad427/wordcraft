@@ -11,7 +11,7 @@ on:
         default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -19,7 +19,10 @@ concurrency:
 
 jobs:
   release:
-    uses: storytold/craft-common-actions/.github/workflows/release.yml@8f081ff5db115de44313c9db09415c359bf2ca01 # reviewed 2026-10-11
+    if: github.ref == 'refs/heads/release'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_shared-release.yml # reviewed 2026-10-11
     with:
       app-name: wordcraft
       app-title: WordCraft
