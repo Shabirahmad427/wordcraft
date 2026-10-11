@@ -1813,6 +1813,20 @@ mod tests {
         assert_eq!(labels, ["0%", "20%", "40%", "60%", "80%", "100%"]);
     }
 
+    #[test]
+    fn series_srgb_color_and_line_width_reach_the_chart_drawing_items() {
+        let series = ser(0, "Series", Some("C04050"), &["A", "B"], &["2", "8"]).replace(
+            "<c:spPr><a:solidFill><a:srgbClr val=\"C04050\"/></a:solidFill></c:spPr>",
+            "<c:spPr><a:ln w=\"47625\"><a:solidFill><a:srgbClr val=\"C04050\"/></a:solidFill></a:ln></c:spPr>",
+        );
+        let plot = format!("<c:lineChart>{series}</c:lineChart>");
+        let items = chart_items(&space(&plot), &theme(), 320.0, 220.0);
+        assert!(items.iter().any(|item| matches!(
+            item,
+            GraphicItem::Path { stroke: Some(Rgb(0xC0, 0x40, 0x50)), stroke_width, .. } if (*stroke_width - 3.75).abs() < 0.001
+        )));
+    }
+
     fn cartesian_with_axis_titles(kind: &str, position: &str, legend: Option<&str>) -> String {
         let chart = match kind {
             "bar" => r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>"#,

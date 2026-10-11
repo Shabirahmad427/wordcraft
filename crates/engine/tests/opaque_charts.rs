@@ -67,6 +67,22 @@ fn editable_line_chart_fixture() -> Vec<u8> {
     archive(&files)
 }
 
+fn editable_line_chart_fixture_with_stroke() -> Vec<u8> {
+    let mut files = unpack(&editable_line_chart_fixture());
+    let chart = String::from_utf8(files["word/charts/chart1.xml"].clone())
+        .unwrap()
+        .replace(
+            "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"",
+            "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"",
+        )
+        .replace(
+            "<c:ser><c:idx",
+            "<c:ser><c:spPr><a:ln w=\"28575\"><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill></a:ln></c:spPr><c:idx",
+        );
+    files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+    archive(&files)
+}
+
 fn editable_area_chart_fixture() -> Vec<u8> {
     let mut files = unpack(&editable_chart_fixture());
     let chart = String::from_utf8(files["word/charts/chart1.xml"].clone())
@@ -450,6 +466,74 @@ fn axis_scaling_and_number_format_command_is_undoable_recoverable_and_keeps_xlsx
     let pdf = directory.join("edited.pdf");
     reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
     assert!(std::fs::metadata(pdf).unwrap().len() > 100, "PDF export uses the reopened chart layout");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn chart_series_color_and_line_width_survive_undo_recovery_save_and_pdf() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-chart-series-format-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.docx");
+    let destination = directory.join("edited.docx");
+    std::fs::write(&source, editable_line_chart_fixture_with_stroke()).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source})).unwrap();
+    let document_id = session.document_id();
+    let before = wordcraft_docx::write(&session.doc).unwrap();
+    let before_parts = unpack(&before);
+    let before_snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(before_snapshot["series"][0]["color"], "336699");
+    assert_eq!(before_snapshot["series"][0]["lineWidth"], 2.25);
+    let before_layout = session.layout();
+    let before_render = wordcraft_render::render_page(&session.doc, &before_layout.pages[0], 1.0, &Default::default()).to_straight();
+
+    session
+        .run(
+            "chart.editData",
+            &json!({
+                "documentId": document_id,
+                "chartPart": "word/charts/chart1.xml",
+                "expected": before_snapshot,
+                "series": [{"color":"D04050", "lineWidth":3.75}]
+            }),
+        )
+        .unwrap();
+    let changed = wordcraft_docx::write(&session.doc).unwrap();
+    let changed_parts = unpack(&changed);
+    assert_eq!(changed_parts["word/embeddings/data.xlsx"], before_parts["word/embeddings/data.xlsx"]);
+    let changed_snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(changed_snapshot["series"][0]["color"], "D04050");
+    assert_eq!(changed_snapshot["series"][0]["lineWidth"], 3.75);
+    let changed_layout = session.layout();
+    let changed_render = wordcraft_render::render_page(&session.doc, &changed_layout.pages[0], 1.0, &Default::default()).to_straight();
+    assert_ne!(changed_render, before_render, "series formatting refreshes the preview");
+
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let recovery_id = store.save(&unique_id(), document_id, &Snapshot::capture(&session)).unwrap();
+    let mut recovered = Session::new(Document::new());
+    store.load(&recovery_id).unwrap().restore(&mut recovered);
+    let recovered_snapshot =
+        recovered.run("chart.inspectData", &json!({"documentId": recovered.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(recovered_snapshot["series"][0]["color"], "D04050");
+    assert_eq!(recovered_snapshot["series"][0]["lineWidth"], 3.75);
+
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), before);
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), changed);
+    session.run("file.save", &json!({"path": destination})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": destination})).unwrap();
+    let reopened_snapshot =
+        reopened.run("chart.inspectData", &json!({"documentId": reopened.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(reopened_snapshot["series"][0]["color"], "D04050");
+    assert_eq!(reopened_snapshot["series"][0]["lineWidth"], 3.75);
+    let reopened_layout = reopened.layout();
+    let reopened_render = wordcraft_render::render_page(&reopened.doc, &reopened_layout.pages[0], 1.0, &Default::default()).to_straight();
+    assert_eq!(changed_render, reopened_render);
+    let pdf = directory.join("edited.pdf");
+    reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
+    assert!(std::fs::metadata(pdf).unwrap().len() > 100);
     std::fs::remove_dir_all(directory).unwrap();
 }
 

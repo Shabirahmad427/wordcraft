@@ -300,6 +300,8 @@ pub struct ChartDataForm {
     original_horizontal_axis: Option<Value>,
     vertical_axis: Option<ChartAxisForm>,
     original_vertical_axis: Option<Value>,
+    #[serde(skip)]
+    original_snapshot: Option<Value>,
     series: Vec<ChartSeriesForm>,
     #[serde(skip)]
     original: Vec<ChartSeriesForm>,
@@ -331,6 +333,13 @@ struct ChartSeriesForm {
     categories: Vec<String>,
     x_values: Vec<String>,
     values: Vec<String>,
+    color: [u8; 3],
+    original_color: Option<[u8; 3]>,
+    color_editable: bool,
+    formatting_diagnostic: Option<String>,
+    line_width: Option<f64>,
+    original_line_width: Option<f64>,
+    line_width_editable: bool,
 }
 
 /// The Table Properties dialog's fields. Lengths are in the interface unit
@@ -956,6 +965,7 @@ impl Dialog {
         let mut form = ChartDataForm { document_id, chart_part: chart_part.to_string(), ..Default::default() };
         match result {
             Ok(snapshot) => {
+                form.original_snapshot = Some(snapshot.clone());
                 form.chart_kind = snapshot.get("chartKind").and_then(Value::as_str).unwrap_or_default().to_string();
                 form.original_legend_position = snapshot.get("legendPosition").and_then(Value::as_str).map(str::to_string);
                 form.legend_position = form.original_legend_position.clone().unwrap_or_default();
@@ -976,6 +986,13 @@ impl Dialog {
                     .flatten()
                     .map(|series| ChartSeriesForm {
                         name: series.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        color: series.get("color").and_then(Value::as_str).and_then(parse_rgb_hex).unwrap_or([80, 120, 180]),
+                        original_color: series.get("color").and_then(Value::as_str).and_then(parse_rgb_hex),
+                        color_editable: series.get("colorEditable").and_then(Value::as_bool).unwrap_or(false),
+                        formatting_diagnostic: series.get("formattingDiagnostic").and_then(Value::as_str).map(str::to_string),
+                        line_width: series.get("lineWidth").and_then(Value::as_f64),
+                        original_line_width: series.get("lineWidth").and_then(Value::as_f64),
+                        line_width_editable: series.get("lineWidthEditable").and_then(Value::as_bool).unwrap_or(false),
                         categories: series
                             .get("categories")
                             .and_then(Value::as_array)
@@ -1378,6 +1395,7 @@ fn citation_sources(app: &mut WordApp, ui: &mut Ui, form: &mut SourcesForm) -> b
 
 /// Spreadsheet-like data editor. It only stages text locally until Apply routes the complete
 /// validated request through the existing `chart.editData` engine command.
+#[cfg(test)]
 fn chart_series_values(chart_kind: &str, series: &[ChartSeriesForm]) -> Option<Vec<Value>> {
     series
         .iter()
@@ -1410,6 +1428,18 @@ fn chart_series_changes(chart_kind: &str, series: &[ChartSeriesForm], original: 
             if series.name != original.name {
                 changes.insert("name".into(), json!(series.name));
             }
+            if series.color != original.color {
+                if !series.color_editable || series.original_color.is_none() {
+                    return None;
+                }
+                changes.insert("color".into(), json!(rgb_hex(series.color)));
+            }
+            if series.line_width != original.line_width {
+                if !series.line_width_editable {
+                    return None;
+                }
+                changes.insert("lineWidth".into(), json!(series.line_width?));
+            }
             if chart_kind == "scatter" {
                 if series.x_values.len() != original.x_values.len() || series.values.len() != original.values.len() {
                     return None;
@@ -1429,6 +1459,21 @@ fn chart_series_changes(chart_kind: &str, series: &[ChartSeriesForm], original: 
             Some(Value::Object(changes))
         })
         .collect()
+}
+
+fn parse_rgb_hex(value: &str) -> Option<[u8; 3]> {
+    if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some([
+        u8::from_str_radix(value.get(0..2)?, 16).ok()?,
+        u8::from_str_radix(value.get(2..4)?, 16).ok()?,
+        u8::from_str_radix(value.get(4..6)?, 16).ok()?,
+    ])
+}
+
+fn rgb_hex([red, green, blue]: [u8; 3]) -> String {
+    format!("{red:02X}{green:02X}{blue:02X}")
 }
 
 fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool {
@@ -1499,6 +1544,22 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                 egui::ScrollArea::horizontal().id_salt("chart_data_horizontal").show(ui, |ui| {
                     for (series_index, series) in form.series.iter_mut().enumerate() {
                         ui.group(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(tl!(tl!("Series color")));
+                                ui.add_enabled_ui(series.color_editable, |ui| {
+                                    egui::color_picker::color_edit_button_srgb(ui, &mut series.color);
+                                });
+                                if !series.color_editable {
+                                    ui.label(series.formatting_diagnostic.as_deref().unwrap_or("This series color is read-only."));
+                                }
+                                if series.line_width_editable
+                                    && let Some(width) = series.line_width.as_mut()
+                                {
+                                    ui.add(egui::DragValue::new(width).range(0.0..=20.0).speed(0.1).suffix(" pt"));
+                                } else if matches!(form.chart_kind.as_str(), "line" | "scatter") {
+                                    ui.label(series.formatting_diagnostic.as_deref().unwrap_or("Line width is read-only for this series."));
+                                }
+                            });
                             ui.horizontal(|ui| {
                                 ui.label(format!("{} {}", tl!(tl!("Series")), series_index + 1));
                                 let label = ui.label(tl!(tl!("Series name")));
@@ -1629,8 +1690,8 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                 form.error = tl!(tl!("Enter a valid number")).to_string();
                 return false;
             };
-            let Some(expected_series) = chart_series_values(&form.chart_kind, &form.original) else {
-                form.error = "the original chart snapshot is invalid; reopen the chart editor".into();
+            let Some(expected_snapshot) = form.original_snapshot.as_ref() else {
+                form.error = "the original chart snapshot is missing; reopen the chart editor".into();
                 return false;
             };
             match app.run(
@@ -1638,16 +1699,7 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                 json!({
                     "documentId": form.document_id,
                     "chartPart": form.chart_part,
-                    "expected": {
-                        "chartKind": form.chart_kind,
-                        "legendPosition": form.original_legend_position,
-                        "chartTitle": form.original_chart_title,
-                        "horizontalAxisTitle": form.original_horizontal_axis_title,
-                        "verticalAxisTitle": form.original_vertical_axis_title,
-                        "horizontalAxis": form.original_horizontal_axis,
-                        "verticalAxis": form.original_vertical_axis,
-                        "series": expected_series
-                    },
+                    "expected": expected_snapshot,
                     "legendPosition": legend_changed.then_some(form.legend_position.as_str()),
                     "chartTitle": chart_title_change,
                     "horizontalAxisTitle": horizontal_axis_title_change,
@@ -3269,6 +3321,31 @@ mod tests {
     }
 
     #[test]
+    fn chart_series_format_draft_emits_only_supported_color_and_width_changes() {
+        let original = ChartSeriesForm {
+            color: [0x33, 0x66, 0x99],
+            original_color: Some([0x33, 0x66, 0x99]),
+            color_editable: true,
+            line_width: Some(2.25),
+            original_line_width: Some(2.25),
+            line_width_editable: true,
+            ..Default::default()
+        };
+        assert_eq!(chart_series_changes("line", std::slice::from_ref(&original), std::slice::from_ref(&original)), Some(vec![json!({})]));
+        let changed = ChartSeriesForm { color: [0, 0x80, 0xFF], line_width: Some(1.5), ..original.clone() };
+        assert_eq!(chart_series_changes("line", &[changed], &[original]), Some(vec![json!({"color":"0080FF", "lineWidth":1.5})]));
+    }
+
+    #[test]
+    fn unsupported_series_format_controls_cannot_emit_edits() {
+        let series = ChartSeriesForm { color: [1, 2, 3], original_color: None, color_editable: false, ..Default::default() };
+        let original = series.clone();
+        assert_eq!(chart_series_changes("column", std::slice::from_ref(&series), &[original]), Some(vec![json!({})]));
+        let edited = ChartSeriesForm { color: [4, 5, 6], ..series.clone() };
+        assert_eq!(chart_series_changes("column", &[edited], &[series]), None);
+    }
+
+    #[test]
     fn chart_axis_draft_serializes_only_supported_changed_values() {
         let original = json!({
             "role":"value",
@@ -3307,6 +3384,7 @@ mod tests {
             categories: vec!["ignored".into()],
             x_values: vec!["1.25".into(), "2".into()],
             values: vec!["4".into(), "8.5".into()],
+            ..Default::default()
         };
         assert_eq!(
             chart_series_values("scatter", std::slice::from_ref(&series)),

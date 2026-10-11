@@ -20,7 +20,7 @@ mod units;
 mod write;
 mod xml;
 
-/// Validated, atomic edits to the supported embedded column-chart subset.
+/// Validated, atomic edits to supported embedded chart data and formatting subsets.
 ///
 /// This API returns new package bytes and never mutates its input. Callers that integrate it into
 /// a document editor must treat those bytes as one document edit and retain them with Undo and

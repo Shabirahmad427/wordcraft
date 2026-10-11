@@ -72,6 +72,17 @@ pub struct AxisChanges {
 pub(crate) struct SeriesMapping {
     pub name: MappedCell<String>,
     pub data: SeriesDataMapping,
+    pub formatting: SeriesFormatSnapshot,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesFormatSnapshot {
+    pub color: Option<String>,
+    pub color_editable: bool,
+    pub line_width: Option<f64>,
+    pub line_width_editable: bool,
+    pub diagnostic: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -468,7 +479,7 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
             verify_number_cache(ser.child("c:val"), &values)?;
             SeriesDataMapping::CategoryValues { categories, values }
         };
-        mapped.push(SeriesMapping { name, data });
+        mapped.push(SeriesMapping { name, data, formatting: inspect_series_format(ser, chart_kind, kind) });
     }
     if chart_kind == "scatter" {
         let mut sources = BTreeSet::new();
@@ -511,6 +522,85 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
         vertical_axis,
         series: mapped,
     })
+}
+
+fn inspect_series_format(series: &El, chart_kind: &str, chart_type: &El) -> SeriesFormatSnapshot {
+    let pie_varies = matches!(chart_kind, "pie" | "doughnut")
+        && (chart_type.children("c:varyColors").count() != 1
+            || chart_type.child("c:varyColors").and_then(|node| node.attr("val")).is_none_or(|value| !matches!(value, "0" | "false")));
+    let properties_count = series.children("c:spPr").count();
+    let color_target = if pie_varies || properties_count > 1 { None } else { series_color_target(series, chart_kind) };
+    let color = color_target.and_then(simple_srgb_value);
+    let color_editable = color.is_some();
+    let line_count = series.child("c:spPr").map_or(0, |properties| properties.children("a:ln").count());
+    let line = (line_count == 1).then(|| series.child("c:spPr").and_then(|properties| properties.child("a:ln"))).flatten();
+    let line_width = line
+        .and_then(|line| line.attr("w"))
+        .and_then(|width| width.parse::<f64>().ok())
+        .map(|width| width / 12_700.0)
+        .filter(|width| width.is_finite() && (0.0..=20.0).contains(width));
+    let line_width_editable = properties_count == 1 && matches!(chart_kind, "line" | "scatter") && line.is_some() && line_width.is_some();
+    let diagnostic = if pie_varies {
+        Some("Pie and doughnut charts use per-slice colors; series color editing is read-only.".into())
+    } else if !color_editable {
+        Some("This series has a theme, gradient, mixed, or implicit color that cannot be changed safely.".into())
+    } else if matches!(chart_kind, "line" | "scatter") && !line_width_editable {
+        Some("Line width is read-only because there is no single explicit stroke width.".into())
+    } else {
+        None
+    };
+    SeriesFormatSnapshot { color, color_editable, line_width, line_width_editable, diagnostic }
+}
+
+fn series_color_target<'a>(series: &'a El, chart_kind: &str) -> Option<&'a El> {
+    let Some(properties) = series.child("c:spPr") else {
+        if chart_kind == "scatter" {
+            let markers: Vec<_> = series.children("c:marker").collect();
+            if markers.len() != 1 {
+                return None;
+            }
+            let marker_properties: Vec<_> = markers.first()?.children("c:spPr").collect();
+            return (marker_properties.len() == 1).then(|| marker_properties.first()?.child("a:solidFill")).flatten();
+        }
+        return None;
+    };
+    if matches!(chart_kind, "line" | "scatter") {
+        // These families draw their series color through a:ln. A competing fill can be
+        // meaningful OOXML of its own, so keep it read-only instead of guessing precedence.
+        if properties.els().any(|node| matches!(node.name.as_str(), "a:solidFill" | "a:gradFill" | "a:pattFill" | "a:blipFill")) {
+            return None;
+        }
+        if let Some(line) = properties.child("a:ln") {
+            if let Some(fill) = line.child("a:solidFill") {
+                return Some(fill);
+            }
+            if line.els().any(|node| matches!(node.name.as_str(), "a:gradFill" | "a:pattFill" | "a:noFill")) {
+                return None;
+            }
+        }
+        if chart_kind == "scatter" {
+            let markers: Vec<_> = series.children("c:marker").collect();
+            if markers.len() != 1 {
+                return None;
+            }
+            let properties: Vec<_> = markers.first()?.children("c:spPr").collect();
+            return (properties.len() == 1).then(|| properties.first()?.child("a:solidFill")).flatten();
+        }
+        return None;
+    }
+    properties.child("a:solidFill")
+}
+
+fn simple_srgb_value(fill: &El) -> Option<String> {
+    if fill.name != "a:solidFill" || fill.els().count() != 1 || fill.kids.len() != 1 {
+        return None;
+    }
+    let color = fill.child("a:srgbClr")?;
+    if color.els().next().is_some() || !color.kids.is_empty() {
+        return None;
+    }
+    let value = color.attr("val")?;
+    (value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit())).then(|| value.to_ascii_uppercase())
 }
 
 fn inspect_axis_settings(chart: &El, chart_kind: &str) -> (Option<ChartAxisSnapshot>, Option<ChartAxisSnapshot>) {
@@ -1012,6 +1102,8 @@ pub struct ChartDataChanges {
 pub struct SeriesChanges {
     pub name: Option<String>,
     pub categories: Option<Vec<String>>,
+    pub color: Option<String>,
+    pub line_width: Option<f64>,
     #[serde(default)]
     pub x_values: Option<Vec<f64>>,
     pub values: Option<Vec<f64>>,
@@ -1045,6 +1137,16 @@ pub struct ChartDataSnapshot {
 pub struct ChartSeriesSnapshot {
     pub name: String,
     pub categories: Vec<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub color_editable: bool,
+    #[serde(default)]
+    pub line_width: Option<f64>,
+    #[serde(default)]
+    pub line_width_editable: bool,
+    #[serde(default)]
+    pub formatting_diagnostic: Option<String>,
     #[serde(default)]
     pub x_values: Vec<f64>,
     pub values: Vec<f64>,
@@ -1136,7 +1238,17 @@ pub fn inspect_chart_data(docx: &[u8], chart_part: &str) -> Result<ChartDataSnap
                         (Vec::new(), x_values.into_iter().map(|cell| cell.value).collect(), y_values.into_iter().map(|cell| cell.value).collect())
                     }
                 };
-                ChartSeriesSnapshot { name: series.name.value, categories, x_values, values }
+                ChartSeriesSnapshot {
+                    name: series.name.value,
+                    categories,
+                    color: series.formatting.color,
+                    color_editable: series.formatting.color_editable,
+                    line_width: series.formatting.line_width,
+                    line_width_editable: series.formatting.line_width_editable,
+                    formatting_diagnostic: series.formatting.diagnostic,
+                    x_values,
+                    values,
+                }
             })
             .collect(),
     })
@@ -1176,8 +1288,19 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
 
     let mut expected = fresh.clone();
     let chart_bytes = update_chart_caches(chart, &fresh, changes)?;
+    let chart_bytes = apply_series_format_changes(&chart_bytes, &fresh, changes)?;
     let chart_bytes = apply_axis_changes(&chart_bytes, &fresh, changes)?;
     let cell_edits = build_cell_edits(&fresh, changes, &mut expected)?;
+    for (index, change) in changes.series.iter().enumerate() {
+        let expected_series =
+            expected.series.get_mut(index).ok_or_else(|| transaction_error("chart series mapping changed during formatting edit"))?;
+        if let Some(color) = &change.color {
+            expected_series.formatting.color = Some(color.to_ascii_uppercase());
+        }
+        if let Some(width) = change.line_width {
+            expected_series.formatting.line_width = Some((width * 12_700.0).round() / 12_700.0);
+        }
+    }
     if let Some(position) = &changes.legend_position {
         expected.legend_position = Some(position.clone());
     }
@@ -1285,6 +1408,18 @@ fn validate_changes(mapping: &ChartMapping, changes: &ChartDataChanges) -> Resul
     }
     for (source, change) in mapping.series.iter().zip(&changes.series) {
         let scatter = matches!(&source.data, SeriesDataMapping::Scatter { .. });
+        if let Some(color) = &change.color {
+            any = true;
+            if !source.formatting.color_editable || !valid_rgb_hex(color) {
+                return Err(transaction_error("series color is unsupported or is not an editable six-digit RGB value"));
+            }
+        }
+        if let Some(width) = change.line_width {
+            any = true;
+            if !source.formatting.line_width_editable || !width.is_finite() || !(0.0..=20.0).contains(&width) {
+                return Err(transaction_error("series line width is unsupported or outside the safe 0–20 pt range"));
+            }
+        }
         if let Some(name) = &change.name {
             any = true;
             validate_label(name)?;
@@ -1347,6 +1482,10 @@ fn validate_changes(mapping: &ChartMapping, changes: &ChartDataChanges) -> Resul
 
 fn axis_change_nonempty(change: &AxisChanges) -> bool {
     change.minimum.is_some() || change.maximum.is_some() || change.number_format.is_some()
+}
+
+fn valid_rgb_hex(color: &str) -> bool {
+    color.len() == 6 && color.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn validate_axis_change(current: Option<&ChartAxisSnapshot>, change: Option<&AxisChanges>, label: &str) -> Result<(), DocxError> {
@@ -1571,6 +1710,144 @@ fn update_chart_caches(chart: &[u8], mapping: &ChartMapping, changes: &ChartData
     apply_splices(chart, splices)
 }
 
+fn apply_series_format_changes(chart: &[u8], mapping: &ChartMapping, changes: &ChartDataChanges) -> Result<Vec<u8>, DocxError> {
+    let mut current = chart.to_vec();
+    for (series_index, change) in changes.series.iter().enumerate() {
+        if let Some(color) = &change.color {
+            let nodes = preserved_xml::inspect(&current)?;
+            let target = series_color_target_node(&nodes, &mapping.chart_kind, series_index)?
+                .ok_or_else(|| transaction_error("series color no longer has a safe explicit RGB target"))?;
+            current = set_xml_attribute(&current, &nodes, target, "val", &color.to_ascii_uppercase())?;
+        }
+        if let Some(width) = change.line_width {
+            let nodes = preserved_xml::inspect(&current)?;
+            let line = series_line_node(&nodes, &mapping.chart_kind, series_index)?
+                .ok_or_else(|| transaction_error("series line width no longer has a safe target"))?;
+            let emu_width = (width * 12_700.0).round();
+            if !emu_width.is_finite() || !(0.0..=254_000.0).contains(&emu_width) {
+                return Err(transaction_error("series line width cannot be represented safely"));
+            }
+            current = set_xml_attribute(&current, &nodes, line, "w", &format!("{emu_width:.0}"))?;
+        }
+    }
+    Ok(current)
+}
+
+fn chart_series_nodes(nodes: &[Element], chart_kind: &str) -> Result<Vec<usize>, DocxError> {
+    let local = match chart_kind {
+        "bar" | "column" => "barChart",
+        "line" => "lineChart",
+        "area" => "areaChart",
+        "pie" => "pieChart",
+        "doughnut" => "doughnutChart",
+        "scatter" => "scatterChart",
+        _ => return Err(transaction_error("chart family is unsupported for series formatting")),
+    };
+    let chart_types = descendants(nodes, 0, CHART_NS, local);
+    if chart_types.len() != 1 {
+        return Err(transaction_error("chart formatting target is ambiguous"));
+    }
+    let chart_type = *chart_types.first().ok_or_else(|| transaction_error("chart formatting target is missing"))?;
+    Ok(child_indices(nodes, chart_type, CHART_NS, "ser"))
+}
+
+fn simple_srgb_node(nodes: &[Element], fill: usize) -> Option<usize> {
+    if nodes.get(fill)?.children.len() != 1 {
+        return None;
+    }
+    let colors = child_indices(nodes, fill, DRAWING_NS, "srgbClr");
+    if colors.len() != 1 || !child_indices_any(nodes, fill, DRAWING_NS, &["schemeClr", "sysClr", "prstClr", "scrgbClr"]).is_empty() {
+        return None;
+    }
+    let color = *colors.first()?;
+    let node = nodes.get(color)?;
+    if !node.children.is_empty() || !node.attrs.contains_key(&qualified("", "val")) {
+        return None;
+    }
+    let value = node.attrs.get(&qualified("", "val"))?;
+    (valid_rgb_hex(value)
+        && child_indices_any(nodes, color, DRAWING_NS, &["tint", "shade", "lumMod", "lumOff", "alpha", "alphaMod", "alphaOff"]).is_empty())
+    .then_some(color)
+}
+
+fn fill_color_node(nodes: &[Element], parent: usize) -> Option<Option<usize>> {
+    let fills = child_indices_any(nodes, parent, DRAWING_NS, &["solidFill", "gradFill", "pattFill", "noFill", "blipFill"]);
+    if fills.is_empty() {
+        return Some(None);
+    }
+    if fills.len() != 1 {
+        return None;
+    }
+    let fill = *fills.first()?;
+    if !nodes.get(fill)?.is(DRAWING_NS, "solidFill") {
+        return None;
+    }
+    simple_srgb_node(nodes, fill).map(Some)
+}
+
+fn series_color_target_node(nodes: &[Element], chart_kind: &str, series_index: usize) -> Result<Option<usize>, DocxError> {
+    let series_nodes = chart_series_nodes(nodes, chart_kind)?;
+    let series = *series_nodes.get(series_index).ok_or_else(|| transaction_error("series index is out of range"))?;
+    if matches!(chart_kind, "pie" | "doughnut") {
+        let chart_local = if chart_kind == "pie" { "pieChart" } else { "doughnutChart" };
+        let chart_types = descendants(nodes, 0, CHART_NS, chart_local);
+        let varies = chart_types.first().and_then(|chart| child_index(nodes, *chart, CHART_NS, "varyColors")).is_none_or(|index| {
+            nodes.get(index).and_then(|node| node.attrs.get(&qualified("", "val"))).is_none_or(|value| !matches!(value.as_str(), "0" | "false"))
+        });
+        if varies {
+            return Ok(None);
+        }
+    }
+    let Some(properties) = child_index(nodes, series, CHART_NS, "spPr") else {
+        if chart_kind == "scatter"
+            && let Some(marker) = child_index(nodes, series, CHART_NS, "marker")
+            && let Some(marker_properties) = child_index(nodes, marker, CHART_NS, "spPr")
+        {
+            return Ok(fill_color_node(nodes, marker_properties).flatten());
+        }
+        return Ok(None);
+    };
+    if matches!(chart_kind, "line" | "scatter") {
+        let competing_fill = child_indices_any(nodes, properties, DRAWING_NS, &["solidFill", "gradFill", "pattFill", "blipFill"]);
+        if !competing_fill.is_empty() {
+            return Ok(None);
+        }
+        if let Some(line) = child_index(nodes, properties, DRAWING_NS, "ln") {
+            match fill_color_node(nodes, line) {
+                Some(Some(target)) => return Ok(Some(target)),
+                Some(None) => {}
+                None => return Ok(None),
+            }
+        }
+        if chart_kind == "scatter"
+            && let Some(marker) = child_index(nodes, series, CHART_NS, "marker")
+            && let Some(marker_properties) = child_index(nodes, marker, CHART_NS, "spPr")
+        {
+            return Ok(fill_color_node(nodes, marker_properties).flatten());
+        }
+        return Ok(None);
+    }
+    Ok(fill_color_node(nodes, properties).flatten())
+}
+
+fn series_line_node(nodes: &[Element], chart_kind: &str, series_index: usize) -> Result<Option<usize>, DocxError> {
+    if !matches!(chart_kind, "line" | "scatter") {
+        return Ok(None);
+    }
+    let series_nodes = chart_series_nodes(nodes, chart_kind)?;
+    let series = *series_nodes.get(series_index).ok_or_else(|| transaction_error("series index is out of range"))?;
+    let Some(properties) = child_index(nodes, series, CHART_NS, "spPr") else { return Ok(None) };
+    let lines = child_indices(nodes, properties, DRAWING_NS, "ln");
+    if lines.len() != 1 {
+        return Ok(None);
+    }
+    let line = *lines.first().ok_or_else(|| transaction_error("series line target is missing"))?;
+    if !nodes.get(line).is_some_and(|node| node.attrs.contains_key(&qualified("", "w"))) {
+        return Ok(None);
+    }
+    Ok(Some(line))
+}
+
 fn apply_axis_changes(chart: &[u8], mapping: &ChartMapping, changes: &ChartDataChanges) -> Result<Vec<u8>, DocxError> {
     let mut output = chart.to_vec();
     for (position, axis_change) in [("horizontal", changes.horizontal_axis.as_ref()), ("vertical", changes.vertical_axis.as_ref())] {
@@ -1666,7 +1943,7 @@ fn set_axis_bound(chart: &[u8], nodes: &[Element], axis: usize, name: &str, valu
     }
     match (property.first().copied(), value) {
         (Some(index), AxisBoundChange::Auto) => remove_element(chart, nodes, index),
-        (Some(index), AxisBoundChange::Manual { value }) if value.is_finite() => set_attribute(chart, nodes, index, "val", &value.to_string()),
+        (Some(index), AxisBoundChange::Manual { value }) if value.is_finite() => set_xml_attribute(chart, nodes, index, "val", &value.to_string()),
         (None, AxisBoundChange::Auto) => Ok(chart.to_vec()),
         (None, AxisBoundChange::Manual { value }) if value.is_finite() => {
             let scale_node = nodes.get(scale).ok_or_else(|| transaction_error("axis scaling is missing"))?;
@@ -1717,20 +1994,20 @@ fn set_axis_number_format(chart: &[u8], mapping: &ChartMapping, position: &str, 
         let parsed = preserved_xml::inspect(&output)?;
         let axis = axis_node_for_position(&parsed, &mapping.chart_kind, position)?;
         let format_node = child_index(&parsed, axis, CHART_NS, "numFmt").ok_or_else(|| transaction_error("number format insertion failed"))?;
-        return set_attribute(&output, &parsed, format_node, "formatCode", format);
+        return set_xml_attribute(&output, &parsed, format_node, "formatCode", format);
     };
     let code = nodes.get(format_node).and_then(|node| node.attrs.get(&qualified("", "formatCode")));
     if code.is_none() {
         return Err(transaction_error("axis number format has no explicit formatCode attribute"));
     }
-    let updated = set_attribute(chart, &nodes, format_node, "formatCode", format)?;
+    let updated = set_xml_attribute(chart, &nodes, format_node, "formatCode", format)?;
     let reparsed = preserved_xml::inspect(&updated)?;
     // sourceLinked=0 is required so Word uses the explicit formatCode.
     let axis = axis_node_for_position(&reparsed, &mapping.chart_kind, position)?;
     let formats = child_indices(&reparsed, axis, CHART_NS, "numFmt");
     let format_node = *formats.first().ok_or_else(|| transaction_error("axis number format disappeared during editing"))?;
     let source_linked = reparsed.get(format_node).and_then(|node| node.attrs.get(&qualified("", "sourceLinked"))).map(String::as_str);
-    if source_linked == Some("1") { set_attribute(&updated, &reparsed, format_node, "sourceLinked", "0") } else { Ok(updated) }
+    if source_linked == Some("1") { set_xml_attribute(&updated, &reparsed, format_node, "sourceLinked", "0") } else { Ok(updated) }
 }
 
 fn element_prefix(source: &[u8], node: &Element) -> Result<String, DocxError> {
@@ -1782,23 +2059,23 @@ fn remove_element(source: &[u8], nodes: &[Element], index: usize) -> Result<Vec<
     apply_splices(source, vec![Splice { range: node.span.clone(), replacement: Vec::new() }])
 }
 
-fn set_attribute(source: &[u8], nodes: &[Element], index: usize, attribute: &str, value: &str) -> Result<Vec<u8>, DocxError> {
-    let node = nodes.get(index).ok_or_else(|| transaction_error("axis XML attribute node is missing"))?;
+fn set_xml_attribute(source: &[u8], nodes: &[Element], index: usize, attribute: &str, value: &str) -> Result<Vec<u8>, DocxError> {
+    let node = nodes.get(index).ok_or_else(|| transaction_error("XML attribute node is missing"))?;
     if !node.attrs.contains_key(&qualified("", attribute)) {
-        return Err(transaction_error(format!("axis attribute {attribute} is not explicitly present")));
+        return Err(transaction_error(format!("XML attribute {attribute} is not explicitly present")));
     }
-    let raw = source.get(node.span.clone()).ok_or_else(|| transaction_error("axis XML attribute range is invalid"))?;
+    let raw = source.get(node.span.clone()).ok_or_else(|| transaction_error("XML attribute range is invalid"))?;
     let needle = format!("{attribute}=\"");
     let start = raw
         .windows(needle.len())
         .position(|window| window == needle.as_bytes())
         .map(|offset| offset + needle.len())
-        .ok_or_else(|| transaction_error(format!("axis attribute {attribute} is not explicitly present")))?;
+        .ok_or_else(|| transaction_error(format!("XML attribute {attribute} is not explicitly present")))?;
     let end = raw
         .get(start..)
         .and_then(|tail| tail.iter().position(|byte| *byte == b'\"'))
         .map(|offset| start + offset)
-        .ok_or_else(|| transaction_error("axis attribute value is unterminated"))?;
+        .ok_or_else(|| transaction_error("XML attribute value is unterminated"))?;
     let mut escaped = String::new();
     for ch in value.chars() {
         match ch {
@@ -1806,11 +2083,11 @@ fn set_attribute(source: &[u8], nodes: &[Element], index: usize, attribute: &str
             '<' => escaped.push_str("&lt;"),
             '"' => escaped.push_str("&quot;"),
             c if c >= '\u{20}' => escaped.push(c),
-            _ => return Err(transaction_error("axis attribute contains an invalid XML character")),
+            _ => return Err(transaction_error("XML attribute contains an invalid character")),
         }
     }
-    let absolute_start = node.span.start.checked_add(start).ok_or_else(|| transaction_error("axis attribute offset overflow"))?;
-    let absolute_end = node.span.start.checked_add(end).ok_or_else(|| transaction_error("axis attribute offset overflow"))?;
+    let absolute_start = node.span.start.checked_add(start).ok_or_else(|| transaction_error("XML attribute offset overflow"))?;
+    let absolute_end = node.span.start.checked_add(end).ok_or_else(|| transaction_error("XML attribute offset overflow"))?;
     apply_splices(source, vec![Splice { range: absolute_start..absolute_end, replacement: escaped.into_bytes() }])
 }
 
@@ -2307,6 +2584,47 @@ mod tests {
         zip(&files)
     }
 
+    fn series_format_fixture(kind: &str, marker_only_scatter: bool, vary_pie_colors: bool) -> Vec<u8> {
+        let base = if kind == "scatter" { scatter_docx_fixture(false) } else { axis_docx_fixture() };
+        let package = Package::open(&base).unwrap();
+        let mut files = package.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let mut chart = String::from_utf8(files.get("word/charts/chart1.xml").unwrap().clone()).unwrap();
+        if !chart.contains("xmlns:a=") {
+            chart = chart.replace(
+                "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"",
+                "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"",
+            );
+        }
+        if kind != "column" && kind != "bar" && kind != "scatter" {
+            let local = match kind {
+                "line" => "lineChart",
+                "area" => "areaChart",
+                "pie" => "pieChart",
+                "doughnut" => "doughnutChart",
+                _ => panic!("unknown test chart family"),
+            };
+            chart = chart.replace("<c:barChart>", &format!("<c:{local}>"));
+            chart = chart.replace("</c:barChart>", &format!("</c:{local}>"));
+            chart = chart.replace("<c:barDir val=\"col\"/>", "");
+            if matches!(kind, "pie" | "doughnut") {
+                chart =
+                    chart.replace(&format!("<c:{local}>"), &format!("<c:{local}><c:varyColors val=\"{}\"/>", if vary_pie_colors { 1 } else { 0 }));
+            }
+        } else if kind == "bar" {
+            chart = chart.replace("<c:barDir val=\"col\"/>", "<c:barDir val=\"bar\"/>");
+        }
+        let format = if marker_only_scatter {
+            "<c:marker><c:spPr><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill></c:spPr></c:marker>"
+        } else if matches!(kind, "line" | "scatter") {
+            "<c:spPr><a:ln w=\"28575\"><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill></a:ln></c:spPr>"
+        } else {
+            "<c:spPr><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill></c:spPr>"
+        };
+        chart = chart.replacen("<c:tx>", &format!("{format}<c:tx>"), 1);
+        files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+        zip(&files)
+    }
+
     fn mapped(result: Classification) -> ChartMapping {
         match result {
             Classification::Mappable(v) => *v,
@@ -2369,6 +2687,144 @@ mod tests {
         assert_eq!(automatic_snapshot.vertical_axis.as_ref().unwrap().minimum, None);
         assert_eq!(automatic_snapshot.vertical_axis.as_ref().unwrap().maximum, None);
         assert_eq!(Package::open(&automatic).unwrap().get("word/embeddings/book.xlsx"), original.get("word/embeddings/book.xlsx"));
+    }
+
+    #[test]
+    fn series_colors_and_line_widths_are_transactional_without_workbook_changes() {
+        let source = axis_docx_fixture();
+        let package = Package::open(&source).unwrap();
+        let mut files = package.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let original_chart = String::from_utf8(files.get("word/charts/chart1.xml").unwrap().clone()).unwrap();
+        let chart = original_chart
+            .replace(
+                "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"",
+                "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"",
+            )
+            .replace(
+                "<c:ser><c:tx>",
+                "<c:ser><c:spPr><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill></c:spPr><c:tx>",
+            );
+        files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+        let source = zip(&files);
+        let before = Package::open(&source).unwrap();
+        let snapshot = inspect_chart_data(&source, "word/charts/chart1.xml").unwrap();
+        assert_eq!(snapshot.series[0].color.as_deref(), Some("336699"));
+        assert!(snapshot.series[0].color_editable);
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let output = apply_chart_edit(
+            &source,
+            &plan,
+            &ChartDataChanges { series: vec![SeriesChanges { color: Some("C04050".into()), ..Default::default() }], ..Default::default() },
+        )
+        .unwrap();
+        let after = Package::open(&output).unwrap();
+        assert_eq!(inspect_chart_data(&output, "word/charts/chart1.xml").unwrap().series[0].color.as_deref(), Some("C04050"));
+        assert_eq!(before.get("word/embeddings/book.xlsx"), after.get("word/embeddings/book.xlsx"));
+        for (path, bytes) in before.entries().filter(|(path, _)| *path != "word/charts/chart1.xml") {
+            assert_eq!(Some(bytes), after.get(path), "unrelated package part changed: {path}");
+        }
+
+        let source = String::from_utf8(before.get("word/charts/chart1.xml").unwrap().to_vec())
+            .unwrap()
+            .replace("<c:barChart>", "<c:lineChart>")
+            .replace("</c:barChart>", "</c:lineChart>")
+            .replace("<c:barDir val=\"col\"/>", "")
+            .replace(
+                "<c:ser><c:spPr><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill></c:spPr>",
+                "<c:ser><c:spPr><a:ln w=\"28575\"><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill></a:ln></c:spPr>",
+            )
+            .replace("</a:solidFill></a:ln>", "</a:solidFill><a:prstDash val=\"dash\"/></a:ln>")
+            .replace("<c:cat>", "<c:errBars><c:errDir val=\"y\"/><c:errBarType val=\"both\"/><c:errValType val=\"fixedVal\"/></c:errBars><c:cat>");
+        let mut files = before.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        files.insert("word/charts/chart1.xml".into(), source.into_bytes());
+        let source = zip(&files);
+        let snapshot = inspect_chart_data(&source, "word/charts/chart1.xml").unwrap();
+        assert!(snapshot.series[0].color_editable);
+        assert!(snapshot.series[0].line_width_editable);
+        assert_eq!(snapshot.series[0].line_width, Some(2.25));
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let output = apply_chart_edit(
+            &source,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges { color: Some("0080FF".into()), line_width: Some(1.5), ..Default::default() }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let updated = inspect_chart_data(&output, "word/charts/chart1.xml").unwrap();
+        assert_eq!(updated.series[0].color.as_deref(), Some("0080FF"));
+        assert_eq!(updated.series[0].line_width, Some(1.5));
+        let after = Package::open(&output).unwrap();
+        assert_eq!(before.get("word/embeddings/book.xlsx"), after.get("word/embeddings/book.xlsx"));
+        let changed_chart = std::str::from_utf8(after.get("word/charts/chart1.xml").unwrap()).unwrap();
+        assert!(changed_chart.contains("<a:prstDash val=\"dash\"/>") && changed_chart.contains("<c:errBars>"));
+    }
+
+    #[test]
+    fn safe_series_color_edits_cover_chart_families_and_scatter_markers() {
+        for (kind, marker_only) in [
+            ("column", false),
+            ("bar", false),
+            ("line", false),
+            ("area", false),
+            ("scatter", false),
+            ("scatter", true),
+            ("pie", false),
+            ("doughnut", false),
+        ] {
+            let source = series_format_fixture(kind, marker_only, false);
+            let before = Package::open(&source).unwrap();
+            let snapshot = inspect_chart_data(&source, "word/charts/chart1.xml").unwrap();
+            assert!(snapshot.series[0].color_editable, "{kind} marker_only={marker_only}: {:?}", snapshot.series[0].formatting_diagnostic);
+            assert_eq!(snapshot.series[0].color.as_deref(), Some("336699"));
+            let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+            let output = apply_chart_edit(
+                &source,
+                &plan,
+                &ChartDataChanges { series: vec![SeriesChanges { color: Some("A0B1C2".into()), ..Default::default() }], ..Default::default() },
+            )
+            .unwrap();
+            let after = Package::open(&output).unwrap();
+            assert_eq!(inspect_chart_data(&output, "word/charts/chart1.xml").unwrap().series[0].color.as_deref(), Some("A0B1C2"));
+            assert_eq!(before.get("word/embeddings/book.xlsx"), after.get("word/embeddings/book.xlsx"));
+        }
+
+        for kind in ["pie", "doughnut"] {
+            let source = series_format_fixture(kind, false, true);
+            let snapshot = inspect_chart_data(&source, "word/charts/chart1.xml").unwrap();
+            assert!(!snapshot.series[0].color_editable, "vary-colors {kind} charts need slice-level editing");
+        }
+    }
+
+    #[test]
+    fn unsupported_series_colors_and_invalid_widths_are_read_only() {
+        let source = axis_docx_fixture();
+        let package = Package::open(&source).unwrap();
+        let mut files = package.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let chart = String::from_utf8(files.get("word/charts/chart1.xml").unwrap().clone())
+            .unwrap()
+            .replace(
+                "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"",
+                "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"",
+            )
+            .replace(
+                "<c:ser><c:tx>",
+                "<c:ser><c:spPr><a:gradFill><a:gsLst><a:gs pos=\"0\"><a:srgbClr val=\"336699\"/></a:gs></a:gsLst></a:gradFill></c:spPr><c:tx>",
+            );
+        files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+        let source = zip(&files);
+        let snapshot = inspect_chart_data(&source, "word/charts/chart1.xml").unwrap();
+        assert!(!snapshot.series[0].color_editable);
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        for change in [
+            SeriesChanges { color: Some("12345Z".into()), ..Default::default() },
+            SeriesChanges { color: Some("FFFFFF".into()), ..Default::default() },
+            SeriesChanges { line_width: Some(f64::NAN), ..Default::default() },
+        ] {
+            let result = apply_chart_edit(&source, &plan, &ChartDataChanges { series: vec![change], ..Default::default() });
+            assert!(result.is_err());
+        }
     }
 
     #[test]

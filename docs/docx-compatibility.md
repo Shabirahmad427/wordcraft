@@ -80,7 +80,29 @@ The transaction is integrated into the engine without a graphical editor. A succ
 
 #### Safe chart legend formatting
 
-The existing chart-data dialog can change an explicitly stored legend position among left, right, top and bottom for the same seven validated chart families: horizontal/vertical bar, line, area, single-series pie/doughnut and scatter. The position change uses `chart.editData` and is combined with series edits as one Undo operation. Formatting-only changes splice the existing `c:legendPos/@val` attribute and leave the embedded XLSX bytes untouched. Charts with a missing, duplicate or unsupported legend position remain read-only for this property; adding/removing a legend or editing other legend formatting, number formats, data labels, colors or line styles is unsupported. Existing chart/axis title text is editable only for safe existing single-run titles; see the title-rendering limitations above. Synthetic package, dialog and engine regressions cover these features; independent Microsoft Word/Excel rendering comparison has not been performed.
+The existing chart-data dialog can change an explicitly stored legend position among left, right, top and bottom for the same seven validated chart families: horizontal/vertical bar, line, area, single-series pie/doughnut and scatter. The position change uses `chart.editData` and is combined with series edits as one Undo operation. Formatting-only changes splice the existing `c:legendPos/@val` attribute and leave the embedded XLSX bytes untouched. Charts with a missing, duplicate or unsupported legend position remain read-only for this property; adding/removing a legend or editing other legend formatting is unsupported. Existing chart/axis title text is editable only for safe existing single-run titles; see the title-rendering limitations above. Synthetic package, dialog and engine regressions cover these features; independent Microsoft Word/Excel rendering comparison has not been performed.
+
+### Series colors and line widths
+
+Chart Design exposes an RGB color picker for a series only when the visible series color maps to
+one unambiguous, existing six-digit `a:srgbClr` inside a simple `a:solidFill`. It supports the
+validated bar/column, line, area, scatter, pie and doughnut chart families. For scatter markers,
+an explicit marker fill can be edited when it is the renderer's visible color. Pie/doughnut series
+colors are editable only when `c:varyColors` is explicitly false; varied slice colors require
+per-point controls and stay read-only. Theme colors, color transforms, gradients, implicit palette
+colors, competing fills and ambiguous properties are preserved and read-only. The UI does not
+invent missing formatting nodes.
+
+For line and scatter charts, line width is editable only when exactly one existing `c:spPr/a:ln`
+has an explicit `@w` value representable from 0 to 20 points. It updates only that width attribute;
+other line attributes remain intact. Dash patterns and marker type/size are not yet editable or
+rendered with full OOXML semantics. Data-label visibility/placement and error bars are not modeled
+by the chart renderer, so they remain untouched in the preserved chart package and cannot be
+edited. These formatting changes go through the same `chart.editData` atomic command and Undo unit,
+refresh the shared chart preview/PDF path, and do not alter chart caches or embedded XLSX parts.
+Synthetic tests cover all seven chart families, scatter marker color, read-only fills, color/width
+validation, package preservation, Undo/redo, recovery, DOCX reopen and PDF export. No independent
+Word or Excel application comparison is available.
 
 Undo and recovery retain the opaque object and graph bytes. Recovery holds the current edited package parts in the model and retains the exact initially opened package independently. Removing a chart can leave preserved orphan parts in that save; preservation does not synchronize embedded workbook data with edits to nearby tables. Graphs shared with regenerated document parts, or colliding with custom XML graph output, can be rejected rather than rewritten unsafely.
 
