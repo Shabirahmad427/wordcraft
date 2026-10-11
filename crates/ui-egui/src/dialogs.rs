@@ -288,6 +288,8 @@ pub struct ChartDataForm {
     document_id: u64,
     chart_part: String,
     chart_kind: String,
+    legend_position: String,
+    original_legend_position: Option<String>,
     series: Vec<ChartSeriesForm>,
     #[serde(skip)]
     original: Vec<ChartSeriesForm>,
@@ -929,6 +931,8 @@ impl Dialog {
         match result {
             Ok(snapshot) => {
                 form.chart_kind = snapshot.get("chartKind").and_then(Value::as_str).unwrap_or_default().to_string();
+                form.original_legend_position = snapshot.get("legendPosition").and_then(Value::as_str).map(str::to_string);
+                form.legend_position = form.original_legend_position.clone().unwrap_or_default();
                 form.series = snapshot
                     .get("series")
                     .and_then(Value::as_array)
@@ -1358,6 +1362,39 @@ fn chart_series_values(chart_kind: &str, series: &[ChartSeriesForm]) -> Option<V
         .collect()
 }
 
+fn chart_series_changes(chart_kind: &str, series: &[ChartSeriesForm], original: &[ChartSeriesForm]) -> Option<Vec<Value>> {
+    if series.len() != original.len() {
+        return None;
+    }
+    series
+        .iter()
+        .zip(original)
+        .map(|(series, original)| {
+            let mut changes = serde_json::Map::new();
+            if series.name != original.name {
+                changes.insert("name".into(), json!(series.name));
+            }
+            if chart_kind == "scatter" {
+                if series.x_values.len() != original.x_values.len() || series.values.len() != original.values.len() {
+                    return None;
+                }
+                if series.x_values != original.x_values {
+                    let values: Option<Vec<f64>> =
+                        series.x_values.iter().map(|value| value.trim().parse::<f64>().ok().filter(|v| v.is_finite())).collect();
+                    changes.insert("xValues".into(), json!(values?));
+                }
+            } else if series.categories != original.categories {
+                changes.insert("categories".into(), json!(series.categories));
+            }
+            if series.values != original.values {
+                let values: Option<Vec<f64>> = series.values.iter().map(|value| value.trim().parse::<f64>().ok().filter(|v| v.is_finite())).collect();
+                changes.insert("values".into(), json!(values?));
+            }
+            Some(Value::Object(changes))
+        })
+        .collect()
+}
+
 fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool {
     ui.label(egui::RichText::new(&form.chart_part).small().weak());
     if !form.read_only_reason.is_empty() {
@@ -1365,6 +1402,22 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
         ui.label(&form.read_only_reason);
     } else {
         ui.label(format!("{} · {} {}", form.chart_kind, form.series.len(), tl!(tl!("Series"))));
+        ui.horizontal(|ui| {
+            let legend_enabled = form.original_legend_position.is_some();
+            ui.add_enabled_ui(legend_enabled, |ui| {
+                egui::ComboBox::from_label(tl!(tl!("Legend position"))).selected_text(legend_position_label(&form.legend_position)).show_ui(
+                    ui,
+                    |ui| {
+                        for (value, label) in [("l", tl!(tl!("Left"))), ("r", tl!(tl!("Right"))), ("t", tl!(tl!("Top"))), ("b", tl!(tl!("Bottom")))] {
+                            ui.selectable_value(&mut form.legend_position, value.to_string(), label);
+                        }
+                    },
+                );
+            });
+            if !legend_enabled {
+                ui.label(tl!(tl!("No explicitly supported legend position is available for this chart.")));
+            }
+        });
         let mut focus_ids = Vec::new();
         let tab_from = ui
             .input(|input| input.key_pressed(egui::Key::Tab))
@@ -1443,7 +1496,8 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                 })
             })
         });
-        let changed = form.series != form.original;
+        let legend_changed = form.original_legend_position.as_deref().is_some_and(|original| form.legend_position != original);
+        let changed = form.series != form.original || legend_changed;
         let can_apply = changed && invalid_value.is_none();
         if let Some(message) = invalid_value {
             ui.colored_label(Tokens::get(ui.ctx()).red, message);
@@ -1459,7 +1513,7 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
             return true;
         }
         if apply {
-            let Some(series) = chart_series_values(&form.chart_kind, &form.series) else {
+            let Some(series) = chart_series_changes(&form.chart_kind, &form.series, &form.original) else {
                 form.error = tl!(tl!("Enter a valid number")).to_string();
                 return false;
             };
@@ -1472,7 +1526,12 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                 json!({
                     "documentId": form.document_id,
                     "chartPart": form.chart_part,
-                    "expected": {"chartKind": form.chart_kind, "series": expected_series},
+                    "expected": {
+                        "chartKind": form.chart_kind,
+                        "legendPosition": form.original_legend_position,
+                        "series": expected_series
+                    },
+                    "legendPosition": legend_changed.then_some(form.legend_position.as_str()),
                     "series": series
                 }),
             ) {
@@ -1485,6 +1544,15 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
         return true;
     }
     false
+}
+
+fn legend_position_label(position: &str) -> String {
+    match position {
+        "l" => tl!(tl!("Left")).to_string(),
+        "t" => tl!(tl!("Top")).to_string(),
+        "b" => tl!(tl!("Bottom")).to_string(),
+        _ => tl!(tl!("Right")).to_string(),
+    }
 }
 
 fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -2958,6 +3026,25 @@ mod tests {
         assert!(harness.state().dialog.is_none());
         assert_eq!(serde_json::to_value(&harness.state().session.doc).unwrap(), document);
         assert_eq!(harness.state().session.dirty, dirty);
+    }
+
+    #[test]
+    fn chart_data_formatter_draft_sends_only_changed_chart_properties() {
+        let original = ChartSeriesForm {
+            name: "Measurement".into(),
+            categories: vec!["A".into(), "B".into()],
+            values: vec!["1".into(), "2".into()],
+            ..Default::default()
+        };
+        let unchanged = chart_series_changes("column", std::slice::from_ref(&original), std::slice::from_ref(&original)).unwrap();
+        assert_eq!(unchanged, [json!({})]);
+        let renamed = ChartSeriesForm { name: "Updated measurement".into(), ..original.clone() };
+        let changes = chart_series_changes("column", &[renamed], std::slice::from_ref(&original)).unwrap();
+        assert_eq!(changes, [json!({"name": "Updated measurement"})]);
+        assert_eq!(legend_position_label("l"), "Left");
+        assert_eq!(legend_position_label("t"), "Top");
+        assert_eq!(legend_position_label("b"), "Bottom");
+        assert_eq!(legend_position_label("r"), "Right");
     }
 
     #[test]

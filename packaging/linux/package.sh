@@ -146,4 +146,4 @@ elif [ -n "${EMULATOR:-}" ]; then
   "$EMULATOR" "$STAGE/usr/bin/wordcraft-cli" --version
 fi
 echo "==> done"
-ls -lh "$DIST"
+find "$DIST" -maxdepth 1 -type f -print

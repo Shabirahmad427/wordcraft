@@ -66,7 +66,7 @@ if [ "$TEST" = 1 ]; then
   flatpak install --user -y --noninteractive --reinstall "$OUT"
   flatpak info --user "$APP_ID"
   flatpak run --command=wordcraft-cli "$APP_ID" --version
-  flatpak run --command=sh "$APP_ID" -c 'ls /app/share/applications /app/share/metainfo /app/share/mime/packages /app/share/icons/hicolor/scalable/apps'
+  flatpak run --command=sh "$APP_ID" -c 'find /app/share/applications /app/share/metainfo /app/share/mime/packages /app/share/icons/hicolor/scalable/apps -maxdepth 1 -type f -print'
 fi
 echo "==> done"
-ls -lh "$OUT"
+find "$OUT" -maxdepth 0 -type f -print

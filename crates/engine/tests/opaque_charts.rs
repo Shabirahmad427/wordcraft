@@ -17,7 +17,7 @@ fn editable_chart_fixture() -> Vec<u8> {
 fn editable_chart_fixture_with_direction(direction: &str) -> Vec<u8> {
     let mut files = fixture("scientific");
     let chart = format!(
-        r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart><c:plotArea><c:barChart><c:barDir val="{direction}"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>'Scientific data'!$A$1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Measurements</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>'Scientific data'!$A$2:$A$3</c:f><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>'Scientific data'!$B$2:$B$3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>42</c:v></c:pt><c:pt idx="1"><c:v>84</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser></c:barChart></c:plotArea></c:chart><c:externalData r:id="book"/></c:chartSpace>"#
+        r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart><c:plotArea><c:barChart><c:barDir val="{direction}"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>'Scientific data'!$A$1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Measurements</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>'Scientific data'!$A$2:$A$3</c:f><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>'Scientific data'!$B$2:$B$3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>42</c:v></c:pt><c:pt idx="1"><c:v>84</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser></c:barChart></c:plotArea><c:legend><c:legendPos val="r"/></c:legend></c:chart><c:externalData r:id="book"/></c:chartSpace>"#
     );
     files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
     files.insert(
@@ -262,6 +262,44 @@ fn engine_chart_edit_is_undoable_recoverable_rendered_and_saved_as_one_package_c
     let reopen_raster = wordcraft_render::render_page(&reopened.doc, &reopen_layout.pages[0], 1.0, &Default::default()).to_straight();
     assert_eq!(after_raster, reopen_raster);
     assert_eq!(std::fs::read(source_path).unwrap(), original, "the original DOCX is never overwritten");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn chart_legend_position_command_is_undoable_and_preserves_workbook_bytes() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-chart-legend-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.docx");
+    let original = editable_chart_fixture();
+    std::fs::write(&source, &original).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source})).unwrap();
+    let document_id = session.document_id();
+    let before = wordcraft_docx::write(&session.doc).unwrap();
+    let source_parts = unpack(&before);
+    let snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(snapshot["legendPosition"], "r");
+
+    session
+        .run(
+            "chart.editData",
+            &json!({
+                "documentId": document_id,
+                "chartPart": "word/charts/chart1.xml",
+                "expected": snapshot,
+                "legendPosition": "t",
+                "series": [{}]
+            }),
+        )
+        .unwrap();
+    let changed = unpack(&wordcraft_docx::write(&session.doc).unwrap());
+    assert!(String::from_utf8(changed["word/charts/chart1.xml"].clone()).unwrap().contains("<c:legendPos val=\"t\"/>"));
+    assert_eq!(changed["word/embeddings/data.xlsx"], source_parts["word/embeddings/data.xlsx"]);
+
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), before);
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(unpack(&wordcraft_docx::write(&session.doc).unwrap()), changed);
     std::fs::remove_dir_all(directory).unwrap();
 }
 

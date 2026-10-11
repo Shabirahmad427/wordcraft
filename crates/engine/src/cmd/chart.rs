@@ -10,7 +10,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .pure()
             .params(r#"{"documentId": integer, "chartPart": string}"#),
         CommandSpec::new("chart.editData", "Edit Chart Data", "Agents", edit_data)
-            .params(r#"{"documentId": integer, "chartPart": string, "series": [{"name"?: string, "categories"?: [string], "xValues"?: [number], "values"?: [number]}], "expected"?: validated chart snapshot}"#),
+            .params(r#"{"documentId": integer, "chartPart": string, "legendPosition"?: "l"|"r"|"t"|"b", "series": [{"name"?: string, "categories"?: [string], "xValues"?: [number], "values"?: [number]}], "expected"?: validated chart snapshot}"#),
     ]
 }
 
@@ -46,8 +46,9 @@ fn edit_data(session: &mut Session, params: &Value) -> CmdResult {
         return Err(CmdError::Failed(format!("chart `{chart_part}` is not part of the current document")));
     }
     let raw_changes = params.get("series").cloned().ok_or_else(|| CmdError::Params("`series` (array) is required".into()))?;
+    let raw_changes = json!({"legendPosition": params.get("legendPosition"), "series": raw_changes});
     let changes: wordcraft_docx::ChartDataChanges =
-        serde_json::from_value(json!({"series": raw_changes})).map_err(|error| CmdError::Params(format!("invalid chart changes: {error}")))?;
+        serde_json::from_value(raw_changes).map_err(|error| CmdError::Params(format!("invalid chart changes: {error}")))?;
 
     // Serialize the current guarded editor projection first, so any supported edits already in
     // the session are included in the transaction's exact package digest and preserved baseline.

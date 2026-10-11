@@ -30,6 +30,7 @@ pub(crate) enum Classification {
 pub(crate) struct ChartMapping {
     pub chart_kind: String,
     pub workbook_part: String,
+    pub legend_position: Option<String>,
     pub series: Vec<SeriesMapping>,
 }
 
@@ -356,7 +357,16 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
             }
         }
     }
-    Ok(ChartMapping { chart_kind: chart_kind.into(), workbook_part: workbook_part.into(), series: mapped })
+    let legend_position = chart
+        .child("c:chart")
+        .filter(|chart| chart.children("c:legend").count() == 1)
+        .and_then(|chart| chart.child("c:legend"))
+        .filter(|legend| legend.children("c:legendPos").count() == 1)
+        .and_then(|legend| legend.child("c:legendPos"))
+        .and_then(|position| position.attr("val"))
+        .filter(|position| matches!(*position, "l" | "r" | "t" | "b"))
+        .map(str::to_string);
+    Ok(ChartMapping { chart_kind: chart_kind.into(), workbook_part: workbook_part.into(), legend_position, series: mapped })
 }
 
 fn contains_local(root: &El, local: &str, depth: usize) -> bool {
@@ -699,6 +709,8 @@ pub struct ChartEditPlan {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ChartDataChanges {
     pub series: Vec<SeriesChanges>,
+    #[serde(default)]
+    pub legend_position: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
@@ -718,6 +730,8 @@ pub struct SeriesChanges {
 #[serde(rename_all = "camelCase")]
 pub struct ChartDataSnapshot {
     pub chart_kind: String,
+    #[serde(default)]
+    pub legend_position: Option<String>,
     pub series: Vec<ChartSeriesSnapshot>,
 }
 
@@ -799,6 +813,7 @@ pub fn inspect_chart_data(docx: &[u8], chart_part: &str) -> Result<ChartDataSnap
     let plan = prepare_chart_edit(docx, chart_part)?;
     Ok(ChartDataSnapshot {
         chart_kind: plan.mapping.chart_kind,
+        legend_position: plan.mapping.legend_position,
         series: plan
             .mapping
             .series
@@ -853,7 +868,10 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
     let mut expected = fresh.clone();
     let chart_bytes = update_chart_caches(chart, &fresh, changes)?;
     let cell_edits = build_cell_edits(&fresh, changes, &mut expected)?;
-    let workbook_bytes = apply_workbook_edits(workbook, &cell_edits)?;
+    if let Some(position) = &changes.legend_position {
+        expected.legend_position = Some(position.clone());
+    }
+    let workbook_bytes = if cell_edits.is_empty() { workbook.to_vec() } else { apply_workbook_edits(workbook, &cell_edits)? };
     let mut replacements = BTreeMap::from([(plan.chart_part.clone(), chart_bytes), (plan.workbook_part.clone(), workbook_bytes)]);
 
     let entries: Vec<(String, Vec<u8>)> =
@@ -911,6 +929,15 @@ fn validate_changes(mapping: &ChartMapping, changes: &ChartDataChanges) -> Resul
         return Err(transaction_error("change set must contain exactly one entry per chart series"));
     }
     let mut any = false;
+    if let Some(position) = &changes.legend_position {
+        any = true;
+        if !matches!(position.as_str(), "l" | "r" | "t" | "b") {
+            return Err(transaction_error("legend position must be left, right, top, or bottom"));
+        }
+        if mapping.legend_position.is_none() {
+            return Err(transaction_error("this chart has no explicitly supported legend position to edit"));
+        }
+    }
     for (source, change) in mapping.series.iter().zip(&changes.series) {
         let scatter = matches!(&source.data, SeriesDataMapping::Scatter { .. });
         if let Some(name) = &change.name {
@@ -1068,6 +1095,19 @@ fn update_chart_caches(chart: &[u8], mapping: &ChartMapping, changes: &ChartData
         return Err(transaction_error("chart series changed after mapping"));
     }
     let mut splices = Vec::new();
+    if let Some(position) = &changes.legend_position {
+        let legends = descendants(&nodes, 0, CHART_NS, "legend");
+        if legends.len() != 1 {
+            return Err(transaction_error("chart does not contain exactly one editable legend"));
+        }
+        let legend = *legends.first().ok_or_else(|| transaction_error("chart legend is missing"))?;
+        let positions = child_indices(&nodes, legend, CHART_NS, "legendPos");
+        if positions.len() != 1 {
+            return Err(transaction_error("legend position must already be explicitly present"));
+        }
+        let position_node = *positions.first().ok_or_else(|| transaction_error("legend position is missing"))?;
+        add_attribute_value_splice(chart, &nodes, position_node, "val", position, &mut splices)?;
+    }
     for (series_index, (series_node, change)) in chart_series.iter().zip(&changes.series).enumerate() {
         let mut cache_edits = vec![("tx", "strCache", change.name.as_ref().map(|value| vec![value.clone()]))];
         match mapping.series.get(series_index).map(|series| &series.data) {
@@ -1182,6 +1222,93 @@ fn add_text_node_splice(source: &[u8], nodes: &[Element], index: usize, value: &
         return Err(transaction_error("XML text span is invalid"));
     }
     splices.push(Splice { range: node.content.clone(), replacement: encoded.into_bytes() });
+    Ok(())
+}
+
+fn add_attribute_value_splice(
+    source: &[u8],
+    nodes: &[Element],
+    index: usize,
+    attribute: &str,
+    value: &str,
+    splices: &mut Vec<Splice>,
+) -> Result<(), DocxError> {
+    let source = match preserved_xml::utf8(source)? {
+        std::borrow::Cow::Borrowed(bytes) => bytes,
+        std::borrow::Cow::Owned(_) => return Err(transaction_error("editing UTF-16 chart XML is not supported")),
+    };
+    let node = nodes.get(index).ok_or_else(|| transaction_error("XML attribute node is unavailable"))?;
+    let raw = source.get(node.span.clone()).ok_or_else(|| transaction_error("XML attribute element span is invalid"))?;
+    let mut tag_end = None;
+    let mut quote = None;
+    for (offset, byte) in raw.iter().enumerate() {
+        match (*byte, quote) {
+            (b'\'' | b'"', None) => quote = Some(*byte),
+            (b'\'' | b'"', Some(current)) if *byte == current => quote = None,
+            (b'>', None) => {
+                tag_end = Some(offset);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let tag_end = tag_end.ok_or_else(|| transaction_error("XML attribute start tag is malformed"))?;
+    let start = raw.get(..tag_end).ok_or_else(|| transaction_error("XML attribute start tag range is invalid"))?;
+    let mut cursor = 1usize;
+    while start.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+        cursor += 1;
+    }
+    while start.get(cursor).is_some_and(|byte| !byte.is_ascii_whitespace() && !matches!(*byte, b'/' | b'>')) {
+        cursor += 1;
+    }
+    let mut value_range = None;
+    while cursor < start.len() {
+        while start.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+            cursor += 1;
+        }
+        if start.get(cursor).is_none_or(|byte| matches!(*byte, b'/' | b'>')) {
+            break;
+        }
+        let name_start = cursor;
+        while start.get(cursor).is_some_and(|byte| !byte.is_ascii_whitespace() && !matches!(*byte, b'=' | b'/' | b'>')) {
+            cursor += 1;
+        }
+        let name = std::str::from_utf8(start.get(name_start..cursor).ok_or_else(|| transaction_error("XML attribute name range is invalid"))?)
+            .map_err(|_| transaction_error("XML attribute name is not UTF-8"))?;
+        while start.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+            cursor += 1;
+        }
+        if start.get(cursor) != Some(&b'=') {
+            return Err(transaction_error("XML attribute assignment is malformed"));
+        }
+        cursor += 1;
+        while start.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+            cursor += 1;
+        }
+        let delimiter = *start.get(cursor).ok_or_else(|| transaction_error("XML attribute value is missing"))?;
+        if !matches!(delimiter, b'\'' | b'"') {
+            return Err(transaction_error("XML attribute value is unquoted"));
+        }
+        cursor += 1;
+        let value_start = cursor;
+        while start.get(cursor).is_some_and(|byte| *byte != delimiter) {
+            cursor += 1;
+        }
+        if start.get(cursor) != Some(&delimiter) {
+            return Err(transaction_error("XML attribute value is unterminated"));
+        }
+        if name == attribute && value_range.replace(value_start..cursor).is_some() {
+            return Err(transaction_error("XML attribute is duplicated"));
+        }
+        cursor += 1;
+    }
+    let range = value_range.ok_or_else(|| transaction_error(format!("XML attribute {attribute} is missing")))?;
+    if !value.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Err(transaction_error("XML attribute replacement contains unsupported characters"));
+    }
+    let absolute_start = node.span.start.checked_add(range.start).ok_or_else(|| transaction_error("XML attribute offset overflow"))?;
+    let absolute_end = node.span.start.checked_add(range.end).ok_or_else(|| transaction_error("XML attribute offset overflow"))?;
+    splices.push(Splice { range: absolute_start..absolute_end, replacement: value.as_bytes().to_vec() });
     Ok(())
 }
 
@@ -1432,7 +1559,7 @@ mod tests {
         } else {
             ""
         };
-        format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:tx><c:strRef><c:f>Data!A1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Series one</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>Data!B1:B3</c:f><c:strCache><c:ptCount val="3"/><c:pt idx="0"><c:v>Same</c:v></c:pt><c:pt idx="1"><c:v>Other</c:v></c:pt><c:pt idx="2"><c:v>Same</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Data!C1:C3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>42</c:v></c:pt><c:pt idx="2"><c:v>84</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>{second}<c:axId val="1"/></c:barChart></c:plotArea></c:chart><c:externalData r:id="book"/></c:chartSpace>"#)
+        format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:tx><c:strRef><c:f>Data!A1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Series one</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>Data!B1:B3</c:f><c:strCache><c:ptCount val="3"/><c:pt idx="0"><c:v>Same</c:v></c:pt><c:pt idx="1"><c:v>Other</c:v></c:pt><c:pt idx="2"><c:v>Same</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Data!C1:C3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>42</c:v></c:pt><c:pt idx="2"><c:v>84</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>{second}<c:axId val="1"/></c:barChart></c:plotArea><c:legend><c:legendPos val="r"/></c:legend></c:chart><c:externalData r:id="book"/></c:chartSpace>"#)
             .replace("<c:barDir val=\"col\"/>", &format!("<c:barDir val=\"{direction}\"/>"))
             .replace("xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"", "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"").into_bytes()
     }
@@ -1443,7 +1570,7 @@ mod tests {
         } else {
             ""
         };
-        format!(r#"<c:chartSpace xmlns:c="{CHART_NS}" xmlns:r="{DOC_REL_NS}"><c:chart><c:plotArea><c:scatterChart><c:scatterStyle val="marker"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>Data!A1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Series one</c:v></c:pt></c:strCache></c:strRef></c:tx><c:xVal><c:numRef><c:f>Data!C1:C3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>42</c:v></c:pt><c:pt idx="2"><c:v>84</c:v></c:pt></c:numCache></c:numRef></c:xVal><c:yVal><c:numRef><c:f>Data!D2:D4</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>7</c:v></c:pt><c:pt idx="1"><c:v>9</c:v></c:pt><c:pt idx="2"><c:v>12</c:v></c:pt></c:numCache></c:numRef></c:yVal></c:ser>{second}<c:axId val="1"/><c:axId val="2"/></c:scatterChart><c:valAx><c:axId val="1"/><c:axPos val="b"/></c:valAx><c:valAx><c:axId val="2"/><c:axPos val="l"/></c:valAx></c:plotArea></c:chart><c:externalData r:id="book"/></c:chartSpace>"#)
+        format!(r#"<c:chartSpace xmlns:c="{CHART_NS}" xmlns:r="{DOC_REL_NS}"><c:chart><c:plotArea><c:scatterChart><c:scatterStyle val="marker"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>Data!A1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Series one</c:v></c:pt></c:strCache></c:strRef></c:tx><c:xVal><c:numRef><c:f>Data!C1:C3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>42</c:v></c:pt><c:pt idx="2"><c:v>84</c:v></c:pt></c:numCache></c:numRef></c:xVal><c:yVal><c:numRef><c:f>Data!D2:D4</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>7</c:v></c:pt><c:pt idx="1"><c:v>9</c:v></c:pt><c:pt idx="2"><c:v>12</c:v></c:pt></c:numCache></c:numRef></c:yVal></c:ser>{second}<c:axId val="1"/><c:axId val="2"/></c:scatterChart><c:valAx><c:axId val="1"/><c:axPos val="b"/></c:valAx><c:valAx><c:axId val="2"/><c:axPos val="l"/></c:valAx></c:plotArea><c:legend><c:legendPos val="r"/></c:legend></c:chart><c:externalData r:id="book"/></c:chartSpace>"#)
             .into_bytes()
     }
 
@@ -1597,6 +1724,7 @@ mod tests {
         let original_parts = Package::open(&source).unwrap();
         let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
         let changes = ChartDataChanges {
+            legend_position: None,
             series: vec![
                 SeriesChanges { x_values: Some(vec![11.0, 22.0, 33.0]), values: Some(vec![110.0, 220.0, 330.0]), ..Default::default() },
                 SeriesChanges { x_values: Some(vec![4.0, 5.0, 6.0]), values: Some(vec![44.0, 55.0, 66.0]), ..Default::default() },
@@ -1630,9 +1758,18 @@ mod tests {
         let source = scatter_docx_fixture(false);
         let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
         for change in [
-            ChartDataChanges { series: vec![SeriesChanges { x_values: Some(vec![1.0]), values: Some(vec![1.0, 2.0, 3.0]), ..Default::default() }] },
-            ChartDataChanges { series: vec![SeriesChanges { x_values: Some(vec![1.0, f64::INFINITY, 3.0]), ..Default::default() }] },
-            ChartDataChanges { series: vec![SeriesChanges { categories: Some(vec!["a".into(), "b".into(), "c".into()]), ..Default::default() }] },
+            ChartDataChanges {
+                legend_position: None,
+                series: vec![SeriesChanges { x_values: Some(vec![1.0]), values: Some(vec![1.0, 2.0, 3.0]), ..Default::default() }],
+            },
+            ChartDataChanges {
+                legend_position: None,
+                series: vec![SeriesChanges { x_values: Some(vec![1.0, f64::INFINITY, 3.0]), ..Default::default() }],
+            },
+            ChartDataChanges {
+                legend_position: None,
+                series: vec![SeriesChanges { categories: Some(vec!["a".into(), "b".into(), "c".into()]), ..Default::default() }],
+            },
         ] {
             assert!(apply_chart_edit(&source, &plan, &change).is_err());
             assert!(prepare_chart_edit(&source, "word/charts/chart1.xml").is_ok());
@@ -1644,7 +1781,7 @@ mod tests {
             apply_chart_edit(
                 &stale_source,
                 &stale_plan,
-                &ChartDataChanges { series: vec![SeriesChanges { values: Some(vec![1.0, 2.0, 3.0]), ..Default::default() }] }
+                &ChartDataChanges { legend_position: None, series: vec![SeriesChanges { values: Some(vec![1.0, 2.0, 3.0]), ..Default::default() }] }
             )
             .is_err()
         );
@@ -1668,6 +1805,7 @@ mod tests {
             &package,
             &plan,
             &ChartDataChanges {
+                legend_position: None,
                 series: vec![SeriesChanges {
                     name: Some("Horizontal".into()),
                     categories: Some(vec!["North".into(), "South".into(), "West".into()]),
@@ -1709,6 +1847,7 @@ mod tests {
             &package,
             &plan,
             &ChartDataChanges {
+                legend_position: None,
                 series: vec![SeriesChanges {
                     name: Some("Line measurements".into()),
                     categories: Some(vec!["First".into(), "Second".into(), "Third".into()]),
@@ -1750,6 +1889,7 @@ mod tests {
             &package,
             &plan,
             &ChartDataChanges {
+                legend_position: None,
                 series: vec![SeriesChanges {
                     name: Some("Area measurements".into()),
                     categories: Some(vec!["First".into(), "Second".into(), "Third".into()]),
@@ -1792,6 +1932,7 @@ mod tests {
                 &package,
                 &plan,
                 &ChartDataChanges {
+                    legend_position: None,
                     series: vec![SeriesChanges {
                         name: Some("Revised series".into()),
                         categories: Some(vec!["Cyan".into(), "Magenta".into(), "Yellow".into()]),
@@ -1816,6 +1957,65 @@ mod tests {
             map_chart(multiple_series.as_bytes(), &rels(false), "word/embeddings/book.xlsx", &workbook(false, false, false)),
             Classification::Unsupported(reason) if reason.contains("exactly one series")
         ));
+    }
+
+    #[test]
+    fn legend_position_transaction_updates_all_supported_chart_families_without_touching_xlsx() {
+        let column = String::from_utf8(chart(false)).unwrap();
+        let horizontal = column.replace("<c:barDir val=\"col\"/>", "<c:barDir val=\"bar\"/>");
+        let line = column.replace("<c:barChart>", "<c:lineChart>").replace("</c:barChart>", "</c:lineChart>").replace("<c:barDir val=\"col\"/>", "");
+        let area = column.replace("<c:barChart>", "<c:areaChart>").replace("</c:barChart>", "</c:areaChart>").replace("<c:barDir val=\"col\"/>", "");
+        let pie = column.replace("<c:barChart>", "<c:pieChart>").replace("</c:barChart>", "</c:pieChart>").replace("<c:barDir val=\"col\"/>", "");
+        let doughnut =
+            column.replace("<c:barChart>", "<c:doughnutChart>").replace("</c:barChart>", "</c:doughnutChart>").replace("<c:barDir val=\"col\"/>", "");
+        let variants = [
+            ("column", column.into_bytes()),
+            ("bar", horizontal.into_bytes()),
+            ("line", line.into_bytes()),
+            ("area", area.into_bytes()),
+            ("pie", pie.into_bytes()),
+            ("doughnut", doughnut.into_bytes()),
+            ("scatter", scatter_chart(false)),
+        ];
+        for (kind, chart_xml) in variants {
+            let base = if kind == "scatter" { scatter_docx_fixture(false) } else { docx_fixture(false, false, false, false) };
+            let mut parts =
+                Package::open(&base).unwrap().entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+            parts.insert("word/charts/chart1.xml".into(), chart_xml);
+            let package = zip(&parts);
+            let before = Package::open(&package).unwrap();
+            let workbook_before = before.get("word/embeddings/book.xlsx").unwrap().to_vec();
+            let plan = prepare_chart_edit(&package, "word/charts/chart1.xml").unwrap();
+            assert_eq!(plan.mapping.chart_kind, kind);
+            let output =
+                apply_chart_edit(&package, &plan, &ChartDataChanges { legend_position: Some("t".into()), series: vec![SeriesChanges::default()] })
+                    .unwrap();
+            let after = Package::open(&output).unwrap();
+            assert_eq!(after.get("word/embeddings/book.xlsx"), Some(workbook_before.as_slice()), "format-only edit modified {kind} workbook bytes");
+            let snapshot = inspect_chart_data(&output, "word/charts/chart1.xml").unwrap();
+            assert_eq!(snapshot.legend_position.as_deref(), Some("t"), "legend was not updated for {kind}");
+        }
+    }
+
+    #[test]
+    fn legend_position_edit_rejects_missing_unknown_and_invalid_positions() {
+        let source = docx_fixture(false, false, false, false);
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        for position in ["tr", "invalid"] {
+            let changes = ChartDataChanges { legend_position: Some(position.into()), series: vec![SeriesChanges::default()] };
+            assert!(apply_chart_edit(&source, &plan, &changes).is_err());
+        }
+        let without_legend = source.to_vec();
+        let package = Package::open(&without_legend).unwrap();
+        let mut parts = package.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let chart = String::from_utf8(parts["word/charts/chart1.xml"].clone()).unwrap().replace("<c:legend><c:legendPos val=\"r\"/></c:legend>", "");
+        parts.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+        let without_legend = zip(&parts);
+        let plan = prepare_chart_edit(&without_legend, "word/charts/chart1.xml").unwrap();
+        assert!(
+            apply_chart_edit(&without_legend, &plan, &ChartDataChanges { legend_position: Some("l".into()), series: vec![SeriesChanges::default()] })
+                .is_err()
+        );
     }
 
     #[test]
@@ -1895,6 +2095,7 @@ mod tests {
         let original = Package::open(&source).unwrap();
         let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
         let changes = ChartDataChanges {
+            legend_position: None,
             series: vec![SeriesChanges {
                 name: Some("Updated series".into()),
                 categories: Some(vec!["Alpha".into(), "Beta & gamma".into(), "Gamma".into()]),
@@ -1933,6 +2134,7 @@ mod tests {
             &source,
             &plan,
             &ChartDataChanges {
+                legend_position: None,
                 series: vec![
                     SeriesChanges {
                         name: Some("Primary".into()),
@@ -1972,6 +2174,7 @@ mod tests {
         let source = docx_fixture(false, true, false, false);
         let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
         let conflicting = ChartDataChanges {
+            legend_position: None,
             series: vec![
                 SeriesChanges { categories: Some(vec!["First".into(), "Second".into(), "Third".into()]), ..Default::default() },
                 SeriesChanges { categories: Some(vec!["Conflict".into(), "Second".into(), "Third".into()]), ..Default::default() },
@@ -1979,6 +2182,7 @@ mod tests {
         };
         assert!(apply_chart_edit(&source, &plan, &conflicting).is_err());
         let invalid_number = ChartDataChanges {
+            legend_position: None,
             series: vec![SeriesChanges { values: Some(vec![f64::NAN, 1.0, 2.0]), ..Default::default() }, SeriesChanges::default()],
         };
         assert!(apply_chart_edit(&source, &plan, &invalid_number).is_err());
@@ -1992,6 +2196,7 @@ mod tests {
                 &stale,
                 &plan,
                 &ChartDataChanges {
+                    legend_position: None,
                     series: vec![SeriesChanges { values: Some(vec![1.0, 2.0, 3.0]), ..Default::default() }, SeriesChanges::default()]
                 }
             )
@@ -2024,6 +2229,7 @@ mod tests {
         let source = docx_fixture(true, false, false, false);
         let source_before = source.clone();
         let rich_changes = ChartDataChanges {
+            legend_position: None,
             series: vec![SeriesChanges { categories: Some(vec!["Changed".into(), "Other".into(), "Changed".into()]), ..Default::default() }],
         };
         let mut rich_files = Package::open(&source).unwrap().entries().map(|(n, b)| (n.to_string(), b.to_vec())).collect::<BTreeMap<_, _>>();
@@ -2056,7 +2262,8 @@ mod tests {
         alias_files.insert("word/embeddings/book.xlsx".into(), zip(&xlsx));
         let alias_source = zip(&alias_files);
         let alias_plan = prepare_chart_edit(&alias_source, "word/charts/chart1.xml").unwrap();
-        let label_edit = ChartDataChanges { series: vec![SeriesChanges { name: Some("Renamed".into()), ..Default::default() }] };
+        let label_edit =
+            ChartDataChanges { legend_position: None, series: vec![SeriesChanges { name: Some("Renamed".into()), ..Default::default() }] };
         assert!(apply_chart_edit(&alias_source, &alias_plan, &label_edit).is_err());
         assert_eq!(source, source_before);
     }
