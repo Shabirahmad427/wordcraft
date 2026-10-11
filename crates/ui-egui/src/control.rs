@@ -244,7 +244,7 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>) -> Value {
     let _ = (&png, path);
     #[cfg(not(target_arch = "wasm32"))]
     {
-        if let Err(e) = std::fs::write(path, &png) {
+        if let Err(e) = wordcraft_engine::io::atomic_write(std::path::Path::new(path), &png) {
             return json!({"ok": false, "error": format!("{path}: {e}")});
         }
     }

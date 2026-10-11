@@ -19,5 +19,4 @@ concurrency:
 
 jobs:
   lint:
-    # Intentionally tracked at @main (not SHA-pinned) so org-wide CI improvements, security fixes, and build optimizations propagate without PR churn across all craftapp repos.
-    uses: storytold/craft-common-actions/.github/workflows/packaging-lint.yml@main
+    uses: storytold/craft-common-actions/.github/workflows/packaging-lint.yml@8f081ff5db115de44313c9db09415c359bf2ca01 # reviewed 2026-10-11

@@ -2,6 +2,9 @@
 
 use wordcraft_doc::Document;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod safe_save;
+
 /// Formats WordCraft opens.
 pub const OPEN_EXTS: &[&str] = &[
     "docx",
@@ -275,11 +278,21 @@ pub fn save_path(path: &std::path::Path, doc: &Document) -> Result<(), String> {
 /// [`save_path`], encrypted with `password` as [`save_bytes_with`] does.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn save_path_with(path: &std::path::Path, doc: &Document, password: Option<&str>) -> Result<(), String> {
-    let bytes = save_bytes_with(&path.to_string_lossy(), doc, password)?;
-    // Write atomically: temp file next to the target, then rename.
-    let tmp = path.with_extension(format!("{}.tmp", ext_of(&path.to_string_lossy())));
-    std::fs::write(&tmp, &bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+    let name = path.to_string_lossy();
+    let bytes = save_bytes_with(&name, doc, password)?;
+    if is_word_package(&ext_of(&name)) {
+        // Parse the exact staged bytes before touching the destination. This catches malformed
+        // package output while leaving the current document untouched on validation failure.
+        open_bytes_with(&name, &bytes, password).map_err(|error| format!("{}: generated package failed validation: {error}", path.display()))?;
+    }
+    atomic_write(path, &bytes).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Replace a native file only after its complete contents have been written to an exclusively
+/// created sibling and synchronized. This is shared by document and image exports.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    safe_save::write(path, bytes)
 }
 
 #[cfg(target_arch = "wasm32")]

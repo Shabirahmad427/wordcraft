@@ -115,8 +115,10 @@ fn save_prefs(app: &WordApp) {
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        if let Ok(bytes) = serde_json::to_vec_pretty(&app.prefs()) {
-            let _ = std::fs::write(&p, bytes);
+        if let Ok(bytes) = serde_json::to_vec_pretty(&app.prefs())
+            && let Err(error) = wordcraft_engine::io::atomic_write(&p, &bytes)
+        {
+            log::warn!("could not save WordCraft preferences to {}: {error}", p.display());
         }
     }
 }
