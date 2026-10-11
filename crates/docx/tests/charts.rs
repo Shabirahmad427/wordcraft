@@ -48,6 +48,30 @@ fn scientific_thesis_and_tracked_report_charts_survive_three_generations() {
         }
     }
 }
+
+#[test]
+fn rendered_chart_is_disclosed_as_read_only_with_embedded_data_unchanged() {
+    let source = archive(&fixture("scientific"));
+    let document = wordcraft_docx::read(&source).unwrap();
+    let chart = document
+        .body
+        .iter()
+        .filter_map(|block| block.as_para())
+        .flat_map(|para| &para.objects)
+        .find_map(|object| match object {
+            InlineObject::Graphic { graphic, .. } if graphic.kind == wordcraft_doc::graphic::GraphicKind::Chart => Some(graphic),
+            _ => None,
+        })
+        .expect("chart object");
+    assert!(!chart.items.is_empty(), "the supported cached-data chart is rendered");
+    assert!(wordcraft_docx::compatibility_warnings(&document).iter().any(|warning| warning.contains("chart data is read-only")));
+
+    let saved = unpack(&wordcraft_docx::write(&document).unwrap());
+    let original = unpack(&source);
+    for part in ["word/charts/chart1.xml", "word/embeddings/data.xlsx"] {
+        assert_eq!(saved.get(part), original.get(part), "read-only chart data changed in {part}");
+    }
+}
 #[test]
 fn story_local_ids_are_rebound_for_body_and_header() {
     let mut files = fixture("scientific");

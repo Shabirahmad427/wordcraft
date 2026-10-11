@@ -1,4 +1,4 @@
-//! Preserve chart drawing references and their OPC dependency graphs without rendering them.
+//! Preserve unsupported chart drawing references and their OPC dependency graphs.
 use crate::{
     DocxError, custom_xml,
     package::{Package, Rels},
@@ -7,7 +7,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, sync::Arc};
-use wordcraft_doc::{Document, InlineObject};
+use wordcraft_doc::{Block, Document, InlineObject};
 const KEY: &str = "wordcraft:opaqueCharts.v1";
 pub(crate) const FORMAT: &str = "docx-chart";
 const MAX_MANIFEST: usize = 128 * 1024;
@@ -255,11 +255,40 @@ impl Preservation {
 
 /// Explicitly disclose preservation-only charts to desktop and automation callers.
 pub(crate) fn warnings(doc: &Document) -> Vec<String> {
+    let mut warnings = Vec::new();
     if doc.passthrough.contains_key(KEY) {
-        vec!["Charts are preserved in DOCX/DOTX/DOCM/DOTM, but WordCraft shows placeholders and cannot render, print or edit them. Other export formats may lose chart data.".into()]
-    } else {
-        Vec::new()
+        warnings.push("Some nonstandard chart drawings are preserved but shown as placeholders; WordCraft cannot render or edit those charts. Other export formats may lose chart data.".into());
     }
+    if has_rendered_chart(doc) {
+        warnings.push("Charts can be displayed from their cached data, but chart data is read-only. Editing values in the document does not synchronize chart caches or embedded Excel workbooks; DOCX saves preserve the original chart data.".into());
+    }
+    warnings
+}
+
+fn has_rendered_chart(doc: &Document) -> bool {
+    let mut blocks: Vec<&Block> = doc.body.iter().map(Arc::as_ref).collect();
+    for part in doc.parts.values() {
+        blocks.extend(part.blocks.iter().map(Arc::as_ref));
+    }
+    while let Some(block) = blocks.pop() {
+        match block {
+            Block::Para(para) => {
+                if para.objects.iter().any(
+                    |object| matches!(object, InlineObject::Graphic { graphic, .. } if graphic.kind == wordcraft_doc::graphic::GraphicKind::Chart),
+                ) {
+                    return true;
+                }
+            }
+            Block::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        blocks.extend(cell.blocks.iter().map(Arc::as_ref));
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]
