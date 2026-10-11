@@ -140,12 +140,13 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
         .els()
         .filter(|e| matches!(e.name.as_str(), "c:barChart" | "c:lineChart" | "c:areaChart" | "c:pieChart" | "c:doughnutChart" | "c:scatterChart"))
         .collect();
-    if kinds.len() != 1 || !matches!(kinds[0].name.as_str(), "c:barChart" | "c:lineChart") {
-        return Err(unsupported("only a single bar, column, or line chart is supported"));
+    if kinds.len() != 1 || !matches!(kinds[0].name.as_str(), "c:barChart" | "c:lineChart" | "c:areaChart") {
+        return Err(unsupported("only a single bar, column, line, or area chart is supported"));
     }
     let kind = kinds[0];
     let chart_kind = match kind.name.as_str() {
         "c:lineChart" => "line",
+        "c:areaChart" => "area",
         "c:barChart" => match kind.child("c:barDir").and_then(|e| e.attr("val")) {
             Some("col") => "column",
             Some("bar") => "bar",
@@ -154,7 +155,7 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
         _ => return Err(unsupported("chart family is unsupported")),
     };
     if contains_local(kind, "extLst", 0) {
-        return Err(unsupported("bar, column, and line charts with extensions are unsupported"));
+        return Err(unsupported("bar, column, line, and area charts with extensions are unsupported"));
     }
     let series: Vec<_> = kind.children("c:ser").collect();
     if series.is_empty() || series.len() > MAX_SERIES {
@@ -920,9 +921,9 @@ fn update_chart_caches(chart: &[u8], changes: &ChartDataChanges) -> Result<Vec<u
     if nodes.is_empty() {
         return Err(transaction_error("chart XML has no root"));
     }
-    let chart_kinds: Vec<_> = ["barChart", "lineChart"].into_iter().flat_map(|name| descendants(&nodes, 0, CHART_NS, name)).collect();
+    let chart_kinds: Vec<_> = ["barChart", "lineChart", "areaChart"].into_iter().flat_map(|name| descendants(&nodes, 0, CHART_NS, name)).collect();
     if chart_kinds.len() != 1 {
-        return Err(transaction_error("chart no longer has one supported bar/column/line cache"));
+        return Err(transaction_error("chart no longer has one supported bar/column/line/area cache"));
     }
     let chart_series = child_indices(&nodes, *chart_kinds.first().ok_or_else(|| transaction_error("chart plot area is missing"))?, CHART_NS, "ser");
     if chart_series.len() != changes.series.len() {
@@ -1426,6 +1427,45 @@ mod tests {
         let workbook = Package::open(output.get("word/embeddings/book.xlsx").unwrap()).unwrap();
         let sheet = workbook.get("xl/worksheets/sheet1.xml").unwrap();
         assert!(sheet.windows(b">15</v>".len()).any(|window| window == b">15</v>"));
+    }
+
+    #[test]
+    fn maps_and_updates_simple_area_chart_caches_and_workbook_cells() {
+        let area_chart = String::from_utf8(chart(false))
+            .unwrap()
+            .replace("<c:barChart>", "<c:areaChart>")
+            .replace("</c:barChart>", "</c:areaChart>")
+            .replace("<c:barDir val=\"col\"/>", "");
+        let mapping = mapped(map_chart(area_chart.as_bytes(), &rels(false), "word/embeddings/book.xlsx", &workbook(false, false, false)));
+        assert_eq!(mapping.chart_kind, "area");
+
+        let base = docx_fixture(false, false, false, false);
+        let mut parts = Package::open(&base).unwrap().entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        parts.insert("word/charts/chart1.xml".into(), area_chart.into_bytes());
+        let package = zip(&parts);
+        let plan = prepare_chart_edit(&package, "word/charts/chart1.xml").unwrap();
+        let updated = apply_chart_edit(
+            &package,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges {
+                    name: Some("Area measurements".into()),
+                    categories: Some(vec!["First".into(), "Second".into(), "Third".into()]),
+                    values: Some(vec![16.0, 26.0, 36.0]),
+                }],
+            },
+        )
+        .unwrap();
+        let snapshot = inspect_chart_data(&updated, "word/charts/chart1.xml").unwrap();
+        assert_eq!(snapshot.chart_kind, "area");
+        assert_eq!(snapshot.series[0].name, "Area measurements");
+        assert_eq!(snapshot.series[0].categories, ["First", "Second", "Third"]);
+        assert_eq!(snapshot.series[0].values, [16.0, 26.0, 36.0]);
+        let output = Package::open(&updated).unwrap();
+        assert!(output.get("word/charts/chart1.xml").unwrap().windows(b"<c:areaChart>".len()).any(|window| window == b"<c:areaChart>"));
+        let workbook = Package::open(output.get("word/embeddings/book.xlsx").unwrap()).unwrap();
+        let sheet = workbook.get("xl/worksheets/sheet1.xml").unwrap();
+        assert!(sheet.windows(b">16</v>".len()).any(|window| window == b">16</v>"));
     }
 
     #[test]
