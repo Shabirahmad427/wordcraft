@@ -75,9 +75,9 @@ The pixel comparison is WordCraft before/after restoration and round-tripping, n
 
 ## Upstream integration through `dba6e66`
 
-The fork now includes upstream `main` through `dba6e66d53733c2c0fd28355249d24eb3698187e`, 25 commits after shared base `e4b7d155f15a7784197ba34eeea0b54490d70eb2`. New upstream work includes `.doc` import fidelity, equation and field fixes, more citation styles, command/keyboard/ribbon customization, mail-merge rules, and shape contour/wrap-side and grouping improvements. The DOCX preservation guard and chart/XLSX transaction code remain fork-owned; upstream's open chart-editing PR was not merged. Horizontal/vertical bar, line, area and single-series pie/doughnut editing continues to use the validated fork mapper and transaction; scatter remains read-only.
+The fork includes upstream `main` through `dba6e66d53733c2c0fd28355249d24eb3698187e`, 25 commits after shared base `e4b7d155f15a7784197ba34eeea0b54490d70eb2`, merged in `f01498726e1a2421f72a8a21ebff646573f74d42`. New upstream work includes `.doc` import fidelity, equation and field fixes, more citation styles, command/keyboard/ribbon customization, mail-merge rules, and shape contour/wrap-side and grouping improvements. The DOCX preservation guard and chart/XLSX transaction code remain fork-owned; upstream's open chart-editing PR was not merged. Horizontal/vertical bar, line, area and single-series pie/doughnut editing continues to use the validated fork mapper and transaction; scatter remains read-only.
 
-The source tree remains version 0.5.0 and GitHub lists v0.5.0 as the latest published release; this `main` update is additional source work after that release, not a new release. The merge test suite is synthetic and internal; it is not independent Word/Excel compatibility verification. See `ROADMAP.md` for verification results and the open-PR audit.
+The source tree remains version 0.5.0 and GitHub lists v0.5.0 as the latest published release; this `main` update is additional source work after that release, not a new release. The merge test suite is synthetic and internal; it is not independent Word/Excel compatibility verification. See [ROADMAP.md](../ROADMAP.md) and the [upstream audit](upstream-audit-2026-10-11.md) for verification results and remaining risks.
 
 ## Package-wide safety audit from 6807535
 
