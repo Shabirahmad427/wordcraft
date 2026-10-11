@@ -25,7 +25,10 @@ mod xml;
 /// This API returns new package bytes and never mutates its input. Callers that integrate it into
 /// a document editor must treat those bytes as one document edit and retain them with Undo and
 /// recovery state.
-pub use chart_mapping::{ChartDataChanges, ChartEditPlan, SeriesChanges, apply_chart_edit, document_has_chart, prepare_chart_edit};
+pub use chart_mapping::{
+    ChartDataChanges, ChartDataSnapshot, ChartEditPlan, ChartSeriesSnapshot, SeriesChanges, apply_chart_edit, document_has_chart, inspect_chart_data,
+    prepare_chart_edit,
+};
 
 pub use crypt::{DEFAULT_SPIN_COUNT, MAX_PASSWORD_CHARS, check_password, decrypt, encrypt, encrypt_with_spin_count, is_encrypted};
 pub use read::read;

@@ -28,6 +28,9 @@ pub enum Dialog {
     Sources {
         form: Box<SourcesForm>,
     },
+    ChartData {
+        form: Box<ChartDataForm>,
+    },
     Recipients {
         csv: String,
         error: String,
@@ -262,6 +265,27 @@ pub enum Dialog {
     TrackOptions {
         form: Box<crate::dialogs_lists::TrackForm>,
     },
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ChartDataForm {
+    document_id: u64,
+    chart_part: String,
+    chart_kind: String,
+    series: Vec<ChartSeriesForm>,
+    #[serde(skip)]
+    original: Vec<ChartSeriesForm>,
+    #[serde(skip)]
+    read_only_reason: String,
+    #[serde(skip)]
+    error: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+struct ChartSeriesForm {
+    name: String,
+    categories: Vec<String>,
+    values: Vec<String>,
 }
 
 /// The Table Properties dialog's fields. Lengths are in the interface unit
@@ -648,6 +672,7 @@ impl Dialog {
             Dialog::Recovery { .. } => "recovery",
             Dialog::Mendeley { .. } => "mendeley",
             Dialog::Sources { .. } => "sources",
+            Dialog::ChartData { .. } => "chartData",
             Dialog::Recipients { .. } => "recipients",
             Dialog::Font { .. } => "font",
             Dialog::Paragraph { .. } => "paragraph",
@@ -719,6 +744,7 @@ impl Dialog {
             }
             "mendeley" => Dialog::Mendeley { ris: String::new(), query: String::new(), error: String::new() },
             "sources" => Dialog::Sources { form: Box::new(SourcesForm { format: "bibtex".into(), ..Default::default() }) },
+            "chartData" => return None,
             "recipients" => Dialog::Recipients { csv: String::new(), error: String::new() },
             "font" => Dialog::Font {
                 font: s("font"),
@@ -859,6 +885,51 @@ impl Dialog {
         })
     }
 
+    /// Open a chart's spreadsheet view from its selected package identity. Inspection is
+    /// read-only; unsupported charts remain view-only with the engine's diagnostic.
+    pub fn chart_data(app: &mut WordApp, chart_part: &str) -> Dialog {
+        let document_id = app.session.document_id();
+        let result = app.session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": chart_part}));
+        let mut form = ChartDataForm { document_id, chart_part: chart_part.to_string(), ..Default::default() };
+        match result {
+            Ok(snapshot) => {
+                form.chart_kind = snapshot.get("chartKind").and_then(Value::as_str).unwrap_or_default().to_string();
+                form.series = snapshot
+                    .get("series")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|series| ChartSeriesForm {
+                        name: series.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        categories: series
+                            .get("categories")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect(),
+                        values: series
+                            .get("values")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_f64)
+                            .map(|value| value.to_string())
+                            .collect(),
+                    })
+                    .collect();
+                if form.series.is_empty() {
+                    form.read_only_reason = "validated chart data is empty".into();
+                } else {
+                    form.original = form.series.clone();
+                }
+            }
+            Err(error) => form.read_only_reason = error.to_string(),
+        }
+        Dialog::ChartData { form: Box::new(form) }
+    }
+
     /// Paste Special for a clipboard payload (`text`, `html`, `rtf`; empty = WordCraft's own copy).
     pub fn paste_special(app: &WordApp, payload: &Value) -> Dialog {
         let formats: Vec<String> = wordcraft_engine::cmd::paste::available(&app.session, payload).into_iter().map(str::to_string).collect();
@@ -948,6 +1019,7 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context) {
         Dialog::Recovery { .. } => "Recover Unsaved Documents",
         Dialog::Mendeley { .. } => "Mendeley Library",
         Dialog::Sources { .. } => "Citation Sources",
+        Dialog::ChartData { .. } => "Edit Chart Data",
         Dialog::Recipients { .. } => "Select Recipients",
         Dialog::Font { .. } => "Font",
         Dialog::Paragraph { .. } => "Paragraph",
@@ -1190,9 +1262,146 @@ fn citation_sources(app: &mut WordApp, ui: &mut Ui, form: &mut SourcesForm) -> b
     ui.button("Close").clicked() || ui.input(|input| input.key_pressed(egui::Key::Escape))
 }
 
+/// Spreadsheet-like data editor. It only stages text locally until Apply routes the complete
+/// validated request through the existing `chart.editData` engine command.
+fn chart_series_values(series: &[ChartSeriesForm]) -> Option<Vec<Value>> {
+    series
+        .iter()
+        .map(|series| {
+            let values: Option<Vec<f64>> =
+                series.values.iter().map(|value| value.trim().parse::<f64>().ok().filter(|number| number.is_finite())).collect();
+            values.map(|values| json!({"name": series.name, "categories": series.categories, "values": values}))
+        })
+        .collect()
+}
+
+fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool {
+    ui.label(egui::RichText::new(&form.chart_part).small().weak());
+    if !form.read_only_reason.is_empty() {
+        ui.colored_label(Tokens::get(ui.ctx()).red, tl!(tl!("This chart is read-only")));
+        ui.label(&form.read_only_reason);
+    } else {
+        ui.label(format!("{} · {} {}", form.chart_kind, form.series.len(), tl!(tl!("Series"))));
+        let mut focus_ids = Vec::new();
+        let tab_from = ui
+            .input(|input| input.key_pressed(egui::Key::Tab))
+            .then(|| (ui.memory(|memory| memory.focused()), ui.input(|input| input.modifiers.shift)))
+            .and_then(|(focused, reverse)| focused.map(|focused| (focused, reverse)));
+        egui::ScrollArea::vertical().max_height(390.0).show(ui, |ui| {
+            ui.add_enabled_ui(true, |ui| {
+                egui::ScrollArea::horizontal().id_salt("chart_data_horizontal").show(ui, |ui| {
+                    for (series_index, series) in form.series.iter_mut().enumerate() {
+                        ui.group(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{} {}", tl!(tl!("Series")), series_index + 1));
+                                let label = ui.label(tl!(tl!("Series name")));
+                                let response = ui
+                                    .add_sized(
+                                        [210.0, 24.0],
+                                        egui::TextEdit::singleline(&mut series.name).id_salt(("chart_series_name", series_index)),
+                                    )
+                                    .labelled_by(label.id);
+                                focus_ids.push(response.id);
+                            });
+                            egui::Grid::new(("chart_data_grid", series_index)).striped(true).spacing(vec2(8.0, 4.0)).show(ui, |ui| {
+                                let category_label = ui.strong(tl!(tl!("Category")));
+                                let value_label = ui.strong(tl!(tl!("Value")));
+                                ui.end_row();
+                                for point in 0..series.categories.len().min(series.values.len()) {
+                                    let category = series.categories.get_mut(point);
+                                    let value = series.values.get_mut(point);
+                                    if let (Some(category), Some(value)) = (category, value) {
+                                        let response = ui
+                                            .add_sized(
+                                                [220.0, 24.0],
+                                                egui::TextEdit::singleline(category).id_salt(("chart_category", series_index, point)),
+                                            )
+                                            .labelled_by(category_label.id);
+                                        focus_ids.push(response.id);
+                                        let response = ui
+                                            .add_sized([130.0, 24.0], egui::TextEdit::singleline(value).id_salt(("chart_value", series_index, point)))
+                                            .labelled_by(value_label.id);
+                                        focus_ids.push(response.id);
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                        });
+                    }
+                });
+            });
+        });
+        if let Some((current, reverse)) = tab_from
+            && let Some(index) = focus_ids.iter().position(|id| *id == current)
+            && !focus_ids.is_empty()
+        {
+            let next = if reverse { (index + focus_ids.len() - 1) % focus_ids.len() } else { (index + 1) % focus_ids.len() };
+            if let Some(next_id) = focus_ids.get(next) {
+                ui.memory_mut(|memory| memory.request_focus(*next_id));
+            }
+        }
+        let invalid_value = form.series.iter().enumerate().find_map(|(series_index, series)| {
+            series.values.iter().enumerate().find_map(|(point_index, value)| {
+                value.trim().parse::<f64>().ok().filter(|value| value.is_finite()).is_none().then(|| {
+                    format!(
+                        "{} {}, {} {}: {}",
+                        tl!(tl!("Series")),
+                        series_index + 1,
+                        tl!(tl!("Value")),
+                        point_index + 1,
+                        tl!(tl!("Enter a valid number"))
+                    )
+                })
+            })
+        });
+        let changed = form.series != form.original;
+        let can_apply = changed && invalid_value.is_none();
+        if let Some(message) = invalid_value {
+            ui.colored_label(Tokens::get(ui.ctx()).red, message);
+        }
+        if !form.error.is_empty() {
+            ui.colored_label(Tokens::get(ui.ctx()).red, &form.error);
+        }
+        ui.separator();
+        let (apply, cancel) = ui
+            .horizontal(|ui| (ui.add_enabled(can_apply, egui::Button::new(tl!(tl!("Apply")))).clicked(), ui.button(tl!(tl!("Cancel"))).clicked()))
+            .inner;
+        if cancel || ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+            return true;
+        }
+        if apply {
+            let Some(series) = chart_series_values(&form.series) else {
+                form.error = tl!(tl!("Enter a valid number")).to_string();
+                return false;
+            };
+            let Some(expected_series) = chart_series_values(&form.original) else {
+                form.error = "the original chart snapshot is invalid; reopen the chart editor".into();
+                return false;
+            };
+            match app.run(
+                "chart.editData",
+                json!({
+                    "documentId": form.document_id,
+                    "chartPart": form.chart_part,
+                    "expected": {"chartKind": form.chart_kind, "series": expected_series},
+                    "series": series
+                }),
+            ) {
+                Ok(_) => return true,
+                Err(error) => form.error = error,
+            }
+        }
+    }
+    if !form.read_only_reason.is_empty() && (ui.button(tl!(tl!("Close"))).clicked() || ui.input(|input| input.key_pressed(egui::Key::Escape))) {
+        return true;
+    }
+    false
+}
+
 fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     match d {
         Dialog::Recovery { state } => crate::recovery::show(app, ui, state),
+        Dialog::ChartData { form } => chart_data(app, ui, form),
         Dialog::Mendeley { ris, query, error } => {
             ui.label("In Mendeley: File → Export All → RIS. Paste the exported text below.");
             #[cfg(not(target_arch = "wasm32"))]
@@ -2543,6 +2752,96 @@ mod tests {
         let mut app = WordApp::new(Session::new(wordcraft_doc::Document::new()), crate::Services::default());
         let _ = app.run("document.setText", json!({"text": text}));
         app
+    }
+
+    #[test]
+    fn chart_data_dialog_explains_unsupported_charts_without_mutating_the_document() {
+        use std::sync::Arc;
+        use wordcraft_doc::graphic::{Embedded, EmbeddedRef, Graphic, GraphicKind};
+        use wordcraft_doc::para::InlineObject;
+        let mut app = app_with("");
+        let object = InlineObject::Graphic {
+            w: 160.0,
+            h: 90.0,
+            alt: String::new(),
+            float: Default::default(),
+            graphic: Arc::new(Graphic {
+                kind: GraphicKind::Chart,
+                source: Some(Arc::new(Embedded {
+                    xml: String::new(),
+                    refs: vec![EmbeddedRef {
+                        id: "chart".into(),
+                        kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart".into(),
+                        target: "word/charts/chart1.xml".into(),
+                        external: false,
+                    }],
+                })),
+                ..Default::default()
+            }),
+        };
+        app.session.doc.insert_object(&wordcraft_doc::Pos::body(0, 0), object, &Default::default()).unwrap();
+        let before = serde_json::to_value(&app.session.doc).unwrap();
+        let dirty = app.session.dirty;
+        app.run("ui.chartData", json!({"chartPart": "word/charts/chart1.xml"})).unwrap();
+        let Some(Dialog::ChartData { form }) = &app.dialog else { panic!("chart editor did not open") };
+        assert!(!form.read_only_reason.is_empty(), "a chart without a validated DOCX workbook has a reason");
+        assert!(form.series.is_empty(), "unsupported charts never receive editable guessed data");
+        assert_eq!(serde_json::to_value(&app.session.doc).unwrap(), before);
+        assert_eq!(app.session.dirty, dirty, "opening the editor does not dirty the document");
+        let context = egui::Context::default();
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| show(&mut app, ui.ctx()));
+        output.textures_delta.clear();
+        assert!(app.dialog.is_some(), "the read-only explanation stays open until the user closes it");
+    }
+
+    #[test]
+    fn chart_data_cancel_discards_the_staged_draft() {
+        use egui_kittest::kittest::Queryable;
+        let mut app = app_with("Document content must stay put");
+        let document = serde_json::to_value(&app.session.doc).unwrap();
+        let dirty = app.session.dirty;
+        let draft = ChartSeriesForm { name: "Draft label".into(), categories: vec!["A".into()], values: vec!["1".into()] };
+        app.dialog = Some(Dialog::ChartData {
+            form: Box::new(ChartDataForm {
+                document_id: app.session.document_id(),
+                chart_part: "word/charts/chart1.xml".into(),
+                chart_kind: "column".into(),
+                series: vec![draft.clone()],
+                original: vec![ChartSeriesForm { name: "Original label".into(), ..draft }],
+                ..Default::default()
+            }),
+        });
+        let mut fonts = false;
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(900.0, 650.0)).build_ui_state(
+            move |ui, app: &mut WordApp| {
+                let ctx = ui.ctx().clone();
+                if fonts {
+                    show(app, &ctx);
+                } else {
+                    crate::theme::install_fonts_for(&ctx, false);
+                    fonts = true;
+                }
+            },
+            app,
+        );
+        for _ in 0..3 {
+            harness.step();
+        }
+        let _apply_button = harness.get_by_label("Apply");
+        harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Series name").focus();
+        harness.step();
+        assert!(harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Series name").is_focused());
+        harness.key_press(egui::Key::Tab);
+        harness.step();
+        assert!(
+            harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Category").is_focused(),
+            "Tab advances to the next spreadsheet cell"
+        );
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(harness.state().dialog.is_none());
+        assert_eq!(serde_json::to_value(&harness.state().session.doc).unwrap(), document);
+        assert_eq!(harness.state().session.dirty, dirty);
     }
 
     fn props(app: &WordApp) -> wordcraft_doc::props::ParaProps {

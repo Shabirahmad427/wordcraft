@@ -613,6 +613,25 @@ pub struct SeriesChanges {
     pub values: Option<Vec<f64>>,
 }
 
+/// Values shown in the chart data editor after the chart and its embedded workbook have been
+/// validated against one another. This contains copies only; callers cannot use it to mutate a
+/// package.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChartDataSnapshot {
+    pub chart_kind: String,
+    pub series: Vec<ChartSeriesSnapshot>,
+}
+
+/// One validated series for the read-only chart editor view.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChartSeriesSnapshot {
+    pub name: String,
+    pub categories: Vec<String>,
+    pub values: Vec<f64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct TextTarget {
     worksheet_part: String,
@@ -671,6 +690,25 @@ pub fn prepare_chart_edit(docx: &[u8], chart_part: &str) -> Result<ChartEditPlan
         workbook_part: workbook_rel.target.clone(),
         package_digest: Sha256::digest(docx).into(),
         mapping,
+    })
+}
+
+/// Read the currently validated chart data for a chart editor. Unsupported charts fail with a
+/// reason suitable for a read-only explanation in the UI.
+pub fn inspect_chart_data(docx: &[u8], chart_part: &str) -> Result<ChartDataSnapshot, DocxError> {
+    let plan = prepare_chart_edit(docx, chart_part)?;
+    Ok(ChartDataSnapshot {
+        chart_kind: plan.mapping.chart_kind,
+        series: plan
+            .mapping
+            .series
+            .into_iter()
+            .map(|series| ChartSeriesSnapshot {
+                name: series.name.value,
+                categories: series.categories.into_iter().map(|cell| cell.value).collect(),
+                values: series.values.into_iter().map(|cell| cell.value).collect(),
+            })
+            .collect(),
     })
 }
 

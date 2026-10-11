@@ -6,9 +6,30 @@ use crate::{CmdError, CmdResult, CommandSpec, Session, p};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        CommandSpec::new("chart.inspectData", "Inspect Chart Data", "Agents", inspect_data)
+            .pure()
+            .params(r#"{"documentId": integer, "chartPart": string}"#),
         CommandSpec::new("chart.editData", "Edit Chart Data", "Agents", edit_data)
-            .params(r#"{"documentId": integer, "chartPart": string, "series": [{"name"?: string, "categories"?: [string], "values"?: [number]}]}"#),
+            .params(r#"{"documentId": integer, "chartPart": string, "series": [{"name"?: string, "categories"?: [string], "values"?: [number]}], "expected"?: validated chart snapshot}"#),
     ]
+}
+
+fn inspect_data(session: &mut Session, params: &Value) -> CmdResult {
+    let document_id =
+        params.get("documentId").and_then(Value::as_u64).ok_or_else(|| CmdError::Params("`documentId` (integer) is required".into()))?;
+    if document_id != session.document_id() {
+        return Err(CmdError::Failed("stale chart data request: the open document has changed".into()));
+    }
+    if session.source_package.is_none() {
+        return Err(CmdError::Disabled("chart editing requires an opened, unencrypted DOCX package".into()));
+    }
+    let chart_part = p::req_str(params, "chartPart")?;
+    if !wordcraft_docx::document_has_chart(&session.doc, chart_part) {
+        return Err(CmdError::Failed(format!("chart `{chart_part}` is not part of the current document")));
+    }
+    let current_package = wordcraft_docx::write(&session.doc).map_err(|error| CmdError::Failed(error.to_string()))?;
+    let snapshot = wordcraft_docx::inspect_chart_data(&current_package, chart_part).map_err(|error| CmdError::Failed(error.to_string()))?;
+    serde_json::to_value(snapshot).map_err(|error| CmdError::Failed(error.to_string()))
 }
 
 fn edit_data(session: &mut Session, params: &Value) -> CmdResult {
@@ -31,6 +52,14 @@ fn edit_data(session: &mut Session, params: &Value) -> CmdResult {
     // Serialize the current guarded editor projection first, so any supported edits already in
     // the session are included in the transaction's exact package digest and preserved baseline.
     let current_package = wordcraft_docx::write(&session.doc).map_err(|error| CmdError::Failed(error.to_string()))?;
+    if let Some(expected) = params.get("expected") {
+        let expected: wordcraft_docx::ChartDataSnapshot =
+            serde_json::from_value(expected.clone()).map_err(|error| CmdError::Params(format!("invalid expected chart snapshot: {error}")))?;
+        let current = wordcraft_docx::inspect_chart_data(&current_package, chart_part).map_err(|error| CmdError::Failed(error.to_string()))?;
+        if current != expected {
+            return Err(CmdError::Failed("stale chart mapping: chart data changed after the editor was opened".into()));
+        }
+    }
     let plan = wordcraft_docx::prepare_chart_edit(&current_package, chart_part).map_err(|error| CmdError::Failed(error.to_string()))?;
     let updated_package = wordcraft_docx::apply_chart_edit(&current_package, &plan, &changes).map_err(|error| CmdError::Failed(error.to_string()))?;
 

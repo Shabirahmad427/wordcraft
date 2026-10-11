@@ -1608,6 +1608,13 @@ fn context_menu(app: &mut WordApp, ui: &mut Ui) {
     item(ui, app, "Paragraph…", "ui.dialog", json!({"name": "paragraph"}));
     item(ui, app, "Link…", "ui.dialog", json!({"name": "link"}));
     item(ui, app, "New Comment", "review.newComment", json!({}));
+    if let Some(chart_part) = crate::ribbon::selected_chart_part(&app.session) {
+        ui.separator();
+        if ui.button(tl!("Edit Chart Data")).clicked() {
+            let _ = app.run("ui.chartData", json!({"chartPart": chart_part}));
+            ui.close();
+        }
+    }
     if crate::ribbon::has_picture_selected(&app.session) {
         ui.separator();
         item(ui, app, "Change Picture…", "ui.changePicture", json!({}));

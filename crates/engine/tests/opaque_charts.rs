@@ -96,6 +96,14 @@ fn engine_chart_edit_is_undoable_recoverable_rendered_and_saved_as_one_package_c
     let mut session = Session::new(Document::new());
     session.run("file.open", &json!({"path": source_path})).unwrap();
     let document_id = session.run("file.info", &json!({})).unwrap()["documentId"].as_u64().unwrap();
+    let before_inspection = serde_json::to_value(&session.doc).unwrap();
+    let inspected = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(inspected["chartKind"], "column");
+    assert_eq!(inspected["series"][0]["name"], "Measurements");
+    assert_eq!(inspected["series"][0]["categories"], json!(["A", "B"]));
+    assert_eq!(inspected["series"][0]["values"], json!([42.0, 84.0]));
+    assert!(!session.dirty, "read-only inspection does not dirty the document");
+    assert_eq!(serde_json::to_value(&session.doc).unwrap(), before_inspection, "inspection has no document side effects");
     let original_source = session.source_package.as_ref().unwrap().bytes.clone();
     session.run("text.insert", &json!({"text": "Unsaved manuscript edit: "})).unwrap();
     let original_doc = session.doc.clone();
@@ -134,6 +142,19 @@ fn engine_chart_edit_is_undoable_recoverable_rendered_and_saved_as_one_package_c
     assert!(sheet.contains("Updated measurements"));
     assert!(sheet.contains("Trial X"));
     assert!(sheet.contains(">120</v>"));
+
+    let after_first_edit = serde_json::to_value(&session.doc).unwrap();
+    let stale = session.run(
+        "chart.editData",
+        &json!({
+            "documentId": document_id,
+            "chartPart": "word/charts/chart1.xml",
+            "expected": {"chartKind": "column", "series": [{"name": "Measurements", "categories": ["A", "B"], "values": [42.0, 84.0]}]},
+            "series": [{"name": "Stale draft"}]
+        }),
+    );
+    assert!(stale.is_err(), "a dialog snapshot cannot overwrite newer chart data");
+    assert_eq!(serde_json::to_value(&session.doc).unwrap(), after_first_edit, "stale edits leave document and history state untouched");
 
     // A second edit to the same chart uses the newly committed package/mapping.
     session

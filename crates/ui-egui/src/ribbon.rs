@@ -19,6 +19,22 @@ pub fn has_shape_selected(s: &wordcraft_engine::Session) -> bool {
     matches!(wordcraft_engine::cmd::objects::selected(s), Some((_, wordcraft_doc::para::InlineObject::Shape { .. })))
 }
 
+/// Package part for the one selected chart, when it came from a retained DOCX.
+pub fn selected_chart_part(s: &wordcraft_engine::Session) -> Option<String> {
+    let (_, object) = wordcraft_engine::cmd::objects::selected(s)?;
+    let wordcraft_doc::para::InlineObject::Graphic { graphic, .. } = object else { return None };
+    if graphic.kind != wordcraft_doc::graphic::GraphicKind::Chart {
+        return None;
+    }
+    graphic
+        .source
+        .as_ref()?
+        .refs
+        .iter()
+        .find(|reference| !reference.external && reference.kind.ends_with("/chart"))
+        .map(|reference| reference.target.clone())
+}
+
 /// Contextual tabs for the current selection (pure, tested).
 pub fn contextual_tabs(s: &wordcraft_engine::Session) -> Vec<&'static str> {
     let mut tabs = Vec::new();
@@ -28,6 +44,9 @@ pub fn contextual_tabs(s: &wordcraft_engine::Session) -> Vec<&'static str> {
     }
     if has_picture_selected(s) {
         tabs.push("Picture Format");
+    }
+    if selected_chart_part(s).is_some() {
+        tabs.push("Chart Design");
     }
     if has_shape_selected(s) {
         tabs.push("Shape Format");
@@ -179,6 +198,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                         "Table Layout" => table_layout(app, ui),
                         "Equation" if app.session.math.is_some() => crate::equation_tab::show(app, ui),
                         "Picture Format" => picture_format(app, ui),
+                        "Chart Design" => chart_design(app, ui),
                         "Shape Format" => shape_format(app, ui),
                         _ => home(app, ui),
                     }
@@ -1433,6 +1453,13 @@ fn picture_format(app: &mut WordApp, ui: &mut Ui) {
     });
 }
 
+fn chart_design(app: &mut WordApp, ui: &mut Ui) {
+    let chart_part = selected_chart_part(&app.session).unwrap_or_default();
+    group(ui, "Data", None, app, |ui, app| {
+        big(ui, app, "chart", "Edit Chart Data", "ui.chartData", json!({"chartPart": chart_part}), false);
+    });
+}
+
 fn table_design(app: &mut WordApp, ui: &mut Ui) {
     let look = app.session.sel.focus.path.cell().and_then(|(tp, _, _)| app.session.doc.table(app.session.sel.focus.story, &tp).map(|t| t.props.look));
     group(ui, "Table Style Options", None, app, |ui, app| {
@@ -1697,6 +1724,34 @@ mod tests {
         s.run("select.collapse", &json!({"end": true})).unwrap();
         s.run("text.insert", &json!({"text": "x"})).unwrap();
         assert!(!contextual_tabs(&s).contains(&"Shape Format"));
+    }
+
+    #[test]
+    fn chart_selection_exposes_chart_data_context_tab_and_part() {
+        use std::sync::Arc;
+        use wordcraft_doc::graphic::{Embedded, EmbeddedRef, Graphic, GraphicKind};
+        use wordcraft_doc::para::InlineObject;
+        let mut s = Session::new(wordcraft_doc::Document::new());
+        assert!(!contextual_tabs(&s).contains(&"Chart Design"));
+        let source = Embedded {
+            xml: String::new(),
+            refs: vec![EmbeddedRef {
+                id: "chart1".into(),
+                kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart".into(),
+                target: "word/charts/chart1.xml".into(),
+                external: false,
+            }],
+        };
+        let object = InlineObject::Graphic {
+            w: 160.0,
+            h: 90.0,
+            alt: String::new(),
+            float: Default::default(),
+            graphic: Arc::new(Graphic { kind: GraphicKind::Chart, source: Some(Arc::new(source)), ..Default::default() }),
+        };
+        s.doc.insert_object(&wordcraft_doc::Pos::body(0, 0), object, &Default::default()).unwrap();
+        assert_eq!(selected_chart_part(&s).as_deref(), Some("word/charts/chart1.xml"));
+        assert!(contextual_tabs(&s).contains(&"Chart Design"));
     }
 
     #[test]

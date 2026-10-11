@@ -609,6 +609,15 @@ impl WordApp {
                 self.dialog = dialogs::Dialog::open(s("name").unwrap_or(""), self);
                 json!({"dialog": self.dialog.as_ref().map(|d| d.name())})
             }
+            "ui.chartData" => {
+                let chart_part = s("chartPart").map(str::to_string).or_else(|| ribbon::selected_chart_part(&self.session));
+                let Some(chart_part) = chart_part else {
+                    return Some(Err("select an embedded chart first".into()));
+                };
+                let dialog = dialogs::Dialog::chart_data(self, &chart_part);
+                self.dialog = Some(dialog);
+                json!({"dialog": "chartData"})
+            }
             "ui.closeDialog" => {
                 self.dialog = None;
                 json!({})
