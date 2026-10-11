@@ -34,7 +34,7 @@ every day, checked end to end on the main platform (macOS desktop), including sa
 | Open a .docx someone sent, edit it, send back a .docx Word opens | partial (not blocking) | Word opens our files; typical text/table/picture documents work; never tested on a real-world corpus; charts, SmartArt and OLE dropped silently, move tracking lost (gaps #1, #2, #5) | 0 (beta work: 50–80) |
 | Build a structured document: tables, pictures, headers/footers, page numbers, sections, columns | yes | Tables with row splitting and floating tables (#137), floating pictures (#136), first/odd/even headers; columns don't balance (gap #4) | 0 |
 | Review with others: comments, track changes, accept/reject, compare | yes | Margin balloons, tracked insert/delete incl. paragraph marks (#125, #244), formatting revisions (#41), compare | 0 |
-| References for reports and papers: TOC, footnotes, citations and bibliography, captions | yes | Updatable TOC field (#52), notes, APA/MLA/Chicago/IEEE, Zotero (#189); long footnotes don't continue (gap #4) | 0 |
+| References for reports and papers: TOC, footnotes, citations and bibliography, captions | yes | Updatable TOC field (#52), continued notes, APA/MLA/Chicago/IEEE limited local formatters, Zotero (#189); arbitrary CSL engine selection pending (CSL assessment) | 0 |
 | Share or print: export PDF, print | partial (not blocking) | PDF export and shared-layout preview; Linux CUPS submission, ranges, copies, duplex and cancellation. macOS unverified, Windows uses a PDF viewer, web uses browser printing (gap #6) | 0 (beta work: 6–10) |
 
 **Result: passes.** Every core workflow completes on macOS and the work saves and reopens; the

@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (WordCraft citation source refresh and safe missing-source handling) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** CSL processor dependency assessment; no production-safe CSL 1.0.2 integration selected · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and
 agent control. This page is the summary; the assessment is
@@ -116,6 +116,7 @@ the two partial ones (real-world .docx, printing) complete, roughly.
 ## Recently landed
 - M6: WordCraft-managed citation insertion refreshes existing bibliographies; source replacement refreshes matching citation fields and generated lists; deleting an actively cited source is rejected. The Update Citations and Bibliography command refreshes after manual citation deletion/reordering. Unresolved native tags produce an actionable status while retaining their cached result. Regression coverage confirms an external Zotero ADDIN field and preference property remain unchanged during native style/source refresh. See [citation compatibility](docs/citation-compatibility.md). This is synthetic internal verification only; no Zotero, Mendeley, CSL processor or Microsoft Word application was used.
 - M6B: Source records now retain DOI, ISBN, issue, edition and opaque imported metadata. Added bounded BibTeX/CSL JSON interchange, a searchable source manager with editable metadata and import/export controls, and RIS DOI mapping. Format and engine regression tests cover Unicode and metadata round-tripping, malformed/oversized input handling, source merge, refresh and Undo. Direct interoperability with Zotero, Mendeley, CSL processors and Microsoft Word remains unverified.
+- M6C audit: Compared the Rust CSL processor and current Citum Rust engine/migration path. Neither is a safe drop-in production CSL 1.0.2 formatter for this build: citeproc-rs is still documented as WIP with incomplete suite results and an inactive upstream; Citum uses a distinct style model and explicitly best-effort CSL migration. No formatter dependency or style file was added. Keep the four built-in styles labeled as limited local formatters; see [CSL processor assessment](docs/csl-engine-evaluation.md). Next gate is selecting a maintained processor with a measurable conformance baseline and a rich-field/document adapter.
 - M1: Preserve document-attached custom XML/bibliography data, properties, dependent relationships and content types with bounded graph traversal. Repeated round-trip, hostile-input and multi-page raster/Undo regressions added; independent Word verification remains pending.
 - M5: Drag unmerged column borders and unsplit row borders to resize tables, with one undo step and Escape cancellation (#217, local fix).
 - M7: Accept/Reject resolves tracked paragraph breaks; DOCX preserves their revision tags across saves (#229, local fix).
