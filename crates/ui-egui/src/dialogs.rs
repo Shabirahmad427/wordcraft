@@ -301,6 +301,7 @@ pub struct ChartDataForm {
 struct ChartSeriesForm {
     name: String,
     categories: Vec<String>,
+    x_values: Vec<String>,
     values: Vec<String>,
 }
 
@@ -943,6 +944,14 @@ impl Dialog {
                             .filter_map(Value::as_str)
                             .map(str::to_string)
                             .collect(),
+                        x_values: series
+                            .get("xValues")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_f64)
+                            .map(|value| value.to_string())
+                            .collect(),
                         values: series
                             .get("values")
                             .and_then(Value::as_array)
@@ -1329,13 +1338,22 @@ fn citation_sources(app: &mut WordApp, ui: &mut Ui, form: &mut SourcesForm) -> b
 
 /// Spreadsheet-like data editor. It only stages text locally until Apply routes the complete
 /// validated request through the existing `chart.editData` engine command.
-fn chart_series_values(series: &[ChartSeriesForm]) -> Option<Vec<Value>> {
+fn chart_series_values(chart_kind: &str, series: &[ChartSeriesForm]) -> Option<Vec<Value>> {
     series
         .iter()
         .map(|series| {
             let values: Option<Vec<f64>> =
                 series.values.iter().map(|value| value.trim().parse::<f64>().ok().filter(|number| number.is_finite())).collect();
-            values.map(|values| json!({"name": series.name, "categories": series.categories, "values": values}))
+            if chart_kind == "scatter" {
+                if series.x_values.len() != series.values.len() {
+                    return None;
+                }
+                let x_values: Option<Vec<f64>> =
+                    series.x_values.iter().map(|value| value.trim().parse::<f64>().ok().filter(|number| number.is_finite())).collect();
+                x_values.zip(values).map(|(x_values, values)| json!({"name": series.name, "xValues": x_values, "values": values}))
+            } else {
+                values.map(|values| json!({"name": series.name, "categories": series.categories, "values": values}))
+            }
         })
         .collect()
 }
@@ -1369,11 +1387,17 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                                 focus_ids.push(response.id);
                             });
                             egui::Grid::new(("chart_data_grid", series_index)).striped(true).spacing(vec2(8.0, 4.0)).show(ui, |ui| {
-                                let category_label = ui.strong(tl!(tl!("Category")));
-                                let value_label = ui.strong(tl!(tl!("Value")));
+                                let category_label = ui.strong(if form.chart_kind == "scatter" { "X" } else { tl!(tl!("Category")) });
+                                let value_label = ui.strong(if form.chart_kind == "scatter" { "Y" } else { tl!(tl!("Value")) });
                                 ui.end_row();
-                                for point in 0..series.categories.len().min(series.values.len()) {
-                                    let category = series.categories.get_mut(point);
+                                let point_count = if form.chart_kind == "scatter" {
+                                    series.x_values.len().min(series.values.len())
+                                } else {
+                                    series.categories.len().min(series.values.len())
+                                };
+                                for point in 0..point_count {
+                                    let category =
+                                        if form.chart_kind == "scatter" { series.x_values.get_mut(point) } else { series.categories.get_mut(point) };
                                     let value = series.values.get_mut(point);
                                     if let (Some(category), Some(value)) = (category, value) {
                                         let response = ui
@@ -1406,7 +1430,7 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
             }
         }
         let invalid_value = form.series.iter().enumerate().find_map(|(series_index, series)| {
-            series.values.iter().enumerate().find_map(|(point_index, value)| {
+            series.values.iter().chain(series.x_values.iter()).enumerate().find_map(|(point_index, value)| {
                 value.trim().parse::<f64>().ok().filter(|value| value.is_finite()).is_none().then(|| {
                     format!(
                         "{} {}, {} {}: {}",
@@ -1435,11 +1459,11 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
             return true;
         }
         if apply {
-            let Some(series) = chart_series_values(&form.series) else {
+            let Some(series) = chart_series_values(&form.chart_kind, &form.series) else {
                 form.error = tl!(tl!("Enter a valid number")).to_string();
                 return false;
             };
-            let Some(expected_series) = chart_series_values(&form.original) else {
+            let Some(expected_series) = chart_series_values(&form.chart_kind, &form.original) else {
                 form.error = "the original chart snapshot is invalid; reopen the chart editor".into();
                 return false;
             };
@@ -2892,7 +2916,7 @@ mod tests {
         let mut app = app_with("Document content must stay put");
         let document = serde_json::to_value(&app.session.doc).unwrap();
         let dirty = app.session.dirty;
-        let draft = ChartSeriesForm { name: "Draft label".into(), categories: vec!["A".into()], values: vec!["1".into()] };
+        let draft = ChartSeriesForm { name: "Draft label".into(), categories: vec!["A".into()], values: vec!["1".into()], ..Default::default() };
         app.dialog = Some(Dialog::ChartData {
             form: Box::new(ChartDataForm {
                 document_id: app.session.document_id(),
@@ -2934,6 +2958,27 @@ mod tests {
         assert!(harness.state().dialog.is_none());
         assert_eq!(serde_json::to_value(&harness.state().session.doc).unwrap(), document);
         assert_eq!(harness.state().session.dirty, dirty);
+    }
+
+    #[test]
+    fn scatter_chart_form_serializes_paired_numeric_x_and_y_without_categories() {
+        let series = ChartSeriesForm {
+            name: "Independent series".into(),
+            categories: vec!["ignored".into()],
+            x_values: vec!["1.25".into(), "2".into()],
+            values: vec!["4".into(), "8.5".into()],
+        };
+        assert_eq!(
+            chart_series_values("scatter", std::slice::from_ref(&series)),
+            Some(vec![json!({
+                "name": "Independent series",
+                "xValues": [1.25, 2.0],
+                "values": [4.0, 8.5]
+            })])
+        );
+        let mut incomplete = series;
+        incomplete.x_values.pop();
+        assert_eq!(chart_series_values("scatter", &[incomplete]), None, "scatter pairs must retain equal lengths");
     }
 
     fn props(app: &WordApp) -> wordcraft_doc::props::ParaProps {

@@ -36,8 +36,37 @@ pub(crate) struct ChartMapping {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SeriesMapping {
     pub name: MappedCell<String>,
-    pub categories: Vec<MappedCell<String>>,
-    pub values: Vec<MappedCell<f64>>,
+    pub data: SeriesDataMapping,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum SeriesDataMapping {
+    CategoryValues { categories: Vec<MappedCell<String>>, values: Vec<MappedCell<f64>> },
+    Scatter { x_values: Vec<MappedCell<f64>>, y_values: Vec<MappedCell<f64>> },
+}
+
+#[allow(dead_code)] // Convenient read-only views are also exercised directly by mapper tests.
+impl SeriesMapping {
+    fn categories(&self) -> &[MappedCell<String>] {
+        match &self.data {
+            SeriesDataMapping::CategoryValues { categories, .. } => categories,
+            SeriesDataMapping::Scatter { .. } => &[],
+        }
+    }
+
+    fn x_values(&self) -> &[MappedCell<f64>] {
+        match &self.data {
+            SeriesDataMapping::CategoryValues { .. } => &[],
+            SeriesDataMapping::Scatter { x_values, .. } => x_values,
+        }
+    }
+
+    fn values(&self) -> &[MappedCell<f64>] {
+        match &self.data {
+            SeriesDataMapping::CategoryValues { values, .. } => values,
+            SeriesDataMapping::Scatter { y_values, .. } => y_values,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -140,8 +169,8 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
         .els()
         .filter(|e| matches!(e.name.as_str(), "c:barChart" | "c:lineChart" | "c:areaChart" | "c:pieChart" | "c:doughnutChart" | "c:scatterChart"))
         .collect();
-    if kinds.len() != 1 || !matches!(kinds[0].name.as_str(), "c:barChart" | "c:lineChart" | "c:areaChart" | "c:pieChart" | "c:doughnutChart") {
-        return Err(unsupported("chart family is outside the supported bar, column, line, area, pie, and doughnut subset"));
+    if kinds.len() != 1 {
+        return Err(unsupported("chart family is outside the supported bar, column, line, area, pie, doughnut, and scatter subset"));
     }
     let kind = kinds[0];
     let chart_kind = match kind.name.as_str() {
@@ -149,6 +178,7 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
         "c:areaChart" => "area",
         "c:pieChart" => "pie",
         "c:doughnutChart" => "doughnut",
+        "c:scatterChart" => "scatter",
         "c:barChart" => match kind.child("c:barDir").and_then(|e| e.attr("val")) {
             Some("col") => "column",
             Some("bar") => "bar",
@@ -231,27 +261,9 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
     let mut mapped_cells = 0usize;
     for ser in series {
         let name_source = ser.child("c:tx").ok_or_else(|| unsupported("series name has no source"))?;
-        let category_source = ser.child("c:cat").ok_or_else(|| unsupported("category labels have no source"))?;
-        let value_source = ser.child("c:val").ok_or_else(|| unsupported("series values have no source"))?;
-        if name_source.child("c:strRef").is_none() || category_source.child("c:strRef").is_none() || value_source.child("c:numRef").is_none() {
-            return Err(unsupported("series name/category/value reference types are unsupported"));
-        }
         let name_ref = ref_formula(name_source, "series name")?;
-        let cat_ref = ref_formula(category_source, "category labels")?;
-        let val_ref = ref_formula(value_source, "series values")?;
-        if name_ref.cells.len() != 1 || cat_ref.cells.len() != val_ref.cells.len() || cat_ref.cells.is_empty() {
-            return Err(ambiguous("series ranges have incompatible dimensions"));
-        }
-        mapped_cells = mapped_cells
-            .checked_add(name_ref.cells.len())
-            .and_then(|count| count.checked_add(cat_ref.cells.len()))
-            .and_then(|count| count.checked_add(val_ref.cells.len()))
-            .ok_or_else(|| unsupported("mapped cell budget overflow"))?;
-        if mapped_cells > MAX_MAPPED_CELLS {
-            return Err(unsupported("chart exceeds the mapped cell budget"));
-        }
-        if name_ref.sheet != cat_ref.sheet || cat_ref.sheet != val_ref.sheet {
-            return Err(unsupported("series ranges span different worksheets"));
+        if name_ref.cells.len() != 1 || name_source.child("c:strRef").is_none() {
+            return Err(unsupported("series name must use one string-reference cell"));
         }
         let Some(path) = sheets.get(&name_ref.sheet) else { return Err(unsupported("chart range references a missing worksheet")) };
         if !sheet_cache.contains_key(path) {
@@ -268,12 +280,81 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
         let cells = sheet_cache.get(path).ok_or_else(|| unsupported("worksheet mapping is unavailable"))?;
         let mut names = read_text_range(&name_ref, &name_ref.sheet, path, cells)?;
         let name = names.pop().ok_or_else(|| inconsistent("series name cell is missing"))?;
-        let categories = read_text_range(&cat_ref, &cat_ref.sheet, path, cells)?;
-        let values = read_number_range(&val_ref, &val_ref.sheet, path, cells)?;
         verify_string_cache(ser.child("c:tx"), std::slice::from_ref(&name))?;
-        verify_string_cache(ser.child("c:cat"), &categories)?;
-        verify_number_cache(ser.child("c:val"), &values)?;
-        mapped.push(SeriesMapping { name, categories, values });
+        mapped_cells = mapped_cells.checked_add(name_ref.cells.len()).ok_or_else(|| unsupported("mapped cell budget overflow"))?;
+        let data = if chart_kind == "scatter" {
+            if ser.child("c:cat").is_some() || ser.child("c:val").is_some() {
+                return Err(unsupported("scatter series must use X/Y value references, not category/value references"));
+            }
+            let x_source = ser.child("c:xVal").ok_or_else(|| unsupported("scatter X values have no source"))?;
+            let y_source = ser.child("c:yVal").ok_or_else(|| unsupported("scatter Y values have no source"))?;
+            if x_source.child("c:numRef").is_none() || y_source.child("c:numRef").is_none() {
+                return Err(unsupported("scatter X and Y values must use numeric worksheet references"));
+            }
+            let x_ref = ref_formula(x_source, "scatter X values")?;
+            let y_ref = ref_formula(y_source, "scatter Y values")?;
+            if x_ref.cells.is_empty() || x_ref.cells.len() != y_ref.cells.len() {
+                return Err(ambiguous("scatter X and Y ranges must have the same nonzero number of cells"));
+            }
+            if name_ref.sheet != x_ref.sheet || x_ref.sheet != y_ref.sheet {
+                return Err(unsupported("scatter series name and X/Y ranges must use the same worksheet"));
+            }
+            mapped_cells = mapped_cells
+                .checked_add(x_ref.cells.len())
+                .and_then(|count| count.checked_add(y_ref.cells.len()))
+                .ok_or_else(|| unsupported("mapped cell budget overflow"))?;
+            if mapped_cells > MAX_MAPPED_CELLS {
+                return Err(unsupported("chart exceeds the mapped cell budget"));
+            }
+            let x_values = read_number_range(&x_ref, &x_ref.sheet, path, cells)?;
+            let y_values = read_number_range(&y_ref, &y_ref.sheet, path, cells)?;
+            verify_number_cache(Some(x_source), &x_values)?;
+            verify_number_cache(Some(y_source), &y_values)?;
+            SeriesDataMapping::Scatter { x_values, y_values }
+        } else {
+            let category_source = ser.child("c:cat").ok_or_else(|| unsupported("category labels have no source"))?;
+            let value_source = ser.child("c:val").ok_or_else(|| unsupported("series values have no source"))?;
+            if name_source.child("c:strRef").is_none() || category_source.child("c:strRef").is_none() || value_source.child("c:numRef").is_none() {
+                return Err(unsupported("series name/category/value reference types are unsupported"));
+            }
+            let cat_ref = ref_formula(category_source, "category labels")?;
+            let val_ref = ref_formula(value_source, "series values")?;
+            if cat_ref.cells.len() != val_ref.cells.len() || cat_ref.cells.is_empty() {
+                return Err(ambiguous("series ranges have incompatible dimensions"));
+            }
+            if name_ref.sheet != cat_ref.sheet || cat_ref.sheet != val_ref.sheet {
+                return Err(unsupported("series ranges span different worksheets"));
+            }
+            mapped_cells = mapped_cells
+                .checked_add(cat_ref.cells.len())
+                .and_then(|count| count.checked_add(val_ref.cells.len()))
+                .ok_or_else(|| unsupported("mapped cell budget overflow"))?;
+            if mapped_cells > MAX_MAPPED_CELLS {
+                return Err(unsupported("chart exceeds the mapped cell budget"));
+            }
+            let categories = read_text_range(&cat_ref, &cat_ref.sheet, path, cells)?;
+            let values = read_number_range(&val_ref, &val_ref.sheet, path, cells)?;
+            verify_string_cache(ser.child("c:cat"), &categories)?;
+            verify_number_cache(ser.child("c:val"), &values)?;
+            SeriesDataMapping::CategoryValues { categories, values }
+        };
+        mapped.push(SeriesMapping { name, data });
+    }
+    if chart_kind == "scatter" {
+        let mut sources = BTreeSet::new();
+        for series in &mapped {
+            let cells = std::iter::once((series.name.worksheet_part.as_str(), series.name.address.as_str())).chain(match &series.data {
+                SeriesDataMapping::Scatter { x_values, y_values } => {
+                    x_values.iter().chain(y_values).map(|cell| (cell.worksheet_part.as_str(), cell.address.as_str())).collect::<Vec<_>>()
+                }
+                SeriesDataMapping::CategoryValues { .. } => Vec::new(),
+            });
+            for cell in cells {
+                if !sources.insert((cell.0.to_string(), cell.1.to_string())) {
+                    return Err(ambiguous("scatter series have overlapping or duplicate source-cell references"));
+                }
+            }
+        }
     }
     Ok(ChartMapping { chart_kind: chart_kind.into(), workbook_part: workbook_part.into(), series: mapped })
 }
@@ -625,6 +706,8 @@ pub struct ChartDataChanges {
 pub struct SeriesChanges {
     pub name: Option<String>,
     pub categories: Option<Vec<String>>,
+    #[serde(default)]
+    pub x_values: Option<Vec<f64>>,
     pub values: Option<Vec<f64>>,
 }
 
@@ -644,6 +727,8 @@ pub struct ChartDataSnapshot {
 pub struct ChartSeriesSnapshot {
     pub name: String,
     pub categories: Vec<String>,
+    #[serde(default)]
+    pub x_values: Vec<f64>,
     pub values: Vec<f64>,
 }
 
@@ -718,10 +803,16 @@ pub fn inspect_chart_data(docx: &[u8], chart_part: &str) -> Result<ChartDataSnap
             .mapping
             .series
             .into_iter()
-            .map(|series| ChartSeriesSnapshot {
-                name: series.name.value,
-                categories: series.categories.into_iter().map(|cell| cell.value).collect(),
-                values: series.values.into_iter().map(|cell| cell.value).collect(),
+            .map(|series| {
+                let (categories, x_values, values) = match series.data {
+                    SeriesDataMapping::CategoryValues { categories, values } => {
+                        (categories.into_iter().map(|cell| cell.value).collect(), Vec::new(), values.into_iter().map(|cell| cell.value).collect())
+                    }
+                    SeriesDataMapping::Scatter { x_values, y_values } => {
+                        (Vec::new(), x_values.into_iter().map(|cell| cell.value).collect(), y_values.into_iter().map(|cell| cell.value).collect())
+                    }
+                };
+                ChartSeriesSnapshot { name: series.name.value, categories, x_values, values }
             })
             .collect(),
     })
@@ -760,7 +851,7 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
     }
 
     let mut expected = fresh.clone();
-    let chart_bytes = update_chart_caches(chart, changes)?;
+    let chart_bytes = update_chart_caches(chart, &fresh, changes)?;
     let cell_edits = build_cell_edits(&fresh, changes, &mut expected)?;
     let workbook_bytes = apply_workbook_edits(workbook, &cell_edits)?;
     let mut replacements = BTreeMap::from([(plan.chart_part.clone(), chart_bytes), (plan.workbook_part.clone(), workbook_bytes)]);
@@ -821,6 +912,7 @@ fn validate_changes(mapping: &ChartMapping, changes: &ChartDataChanges) -> Resul
     }
     let mut any = false;
     for (source, change) in mapping.series.iter().zip(&changes.series) {
+        let scatter = matches!(&source.data, SeriesDataMapping::Scatter { .. });
         if let Some(name) = &change.name {
             any = true;
             validate_label(name)?;
@@ -830,28 +922,49 @@ fn validate_changes(mapping: &ChartMapping, changes: &ChartDataChanges) -> Resul
         }
         if let Some(categories) = &change.categories {
             any = true;
-            if categories.len() != source.categories.len() {
+            let SeriesDataMapping::CategoryValues { categories: source_categories, .. } = &source.data else {
+                return Err(transaction_error("scatter charts use numeric X/Y values and do not accept category labels"));
+            };
+            if categories.len() != source_categories.len() {
                 return Err(transaction_error("category edit length must match the validated chart range"));
             }
             for label in categories {
                 validate_label(label)?;
             }
-            if source
-                .categories
+            if source_categories
                 .iter()
                 .any(|cell| !matches!(&cell.source, CellSource::SharedString(_) | CellSource::InlineString | CellSource::StringValue))
             {
                 return Err(transaction_error("category range contains a non-string cell"));
             }
         }
+        if let Some(x_values) = &change.x_values {
+            any = true;
+            let SeriesDataMapping::Scatter { x_values: source_x, .. } = &source.data else {
+                return Err(transaction_error("X values can only be edited for validated scatter charts"));
+            };
+            if x_values.len() != source_x.len() {
+                return Err(transaction_error("scatter X value count must match the validated source range"));
+            }
+            if x_values.iter().any(|value| !value.is_finite()) {
+                return Err(transaction_error("scatter X values must be finite numbers"));
+            }
+        }
         if let Some(values) = &change.values {
             any = true;
-            if values.len() != source.values.len() {
+            let source_values = match &source.data {
+                SeriesDataMapping::CategoryValues { values, .. } => values,
+                SeriesDataMapping::Scatter { y_values, .. } => y_values,
+            };
+            if values.len() != source_values.len() {
                 return Err(transaction_error("numeric edit length must match the validated chart range"));
             }
             if values.iter().any(|value| !value.is_finite()) {
                 return Err(transaction_error("chart values must be finite numbers"));
             }
+        }
+        if !scatter && change.x_values.is_some() {
+            return Err(transaction_error("X values can only be edited for validated scatter charts"));
         }
     }
     if !any {
@@ -882,14 +995,31 @@ fn build_cell_edits(
             add_text_edit(&mut edits, &series.name, value)?;
             expected_series.name.value = value.clone();
         }
-        if let Some(values) = &change.categories {
-            for ((cell, value), expected_cell) in series.categories.iter().zip(values).zip(&mut expected_series.categories) {
+        if let (Some(values), SeriesDataMapping::CategoryValues { categories, .. }) = (&change.categories, &series.data)
+            && let SeriesDataMapping::CategoryValues { categories: expected_categories, .. } = &mut expected_series.data
+        {
+            for ((cell, value), expected_cell) in categories.iter().zip(values).zip(expected_categories) {
                 add_text_edit(&mut edits, cell, value)?;
                 expected_cell.value = value.clone();
             }
         }
+        if let (Some(values), SeriesDataMapping::Scatter { x_values, .. }) = (&change.x_values, &series.data)
+            && let SeriesDataMapping::Scatter { x_values: expected_x, .. } = &mut expected_series.data
+        {
+            for ((cell, value), expected_cell) in x_values.iter().zip(values).zip(expected_x) {
+                add_value_edit(&mut edits, cell, *value)?;
+                expected_cell.value = *value;
+            }
+        }
         if let Some(values) = &change.values {
-            for ((cell, value), expected_cell) in series.values.iter().zip(values).zip(&mut expected_series.values) {
+            let (cells, expected_cells) = match (&series.data, &mut expected_series.data) {
+                (SeriesDataMapping::CategoryValues { values: cells, .. }, SeriesDataMapping::CategoryValues { values: expected, .. }) => {
+                    (cells, expected)
+                }
+                (SeriesDataMapping::Scatter { y_values: cells, .. }, SeriesDataMapping::Scatter { y_values: expected, .. }) => (cells, expected),
+                _ => return Err(transaction_error("chart series mapping type changed during edit")),
+            };
+            for ((cell, value), expected_cell) in cells.iter().zip(values).zip(expected_cells) {
                 add_value_edit(&mut edits, cell, *value)?;
                 expected_cell.value = *value;
             }
@@ -921,12 +1051,12 @@ fn insert_cell_edit(edits: &mut BTreeMap<TextTarget, CellEdit>, target: TextTarg
     Ok(())
 }
 
-fn update_chart_caches(chart: &[u8], changes: &ChartDataChanges) -> Result<Vec<u8>, DocxError> {
+fn update_chart_caches(chart: &[u8], mapping: &ChartMapping, changes: &ChartDataChanges) -> Result<Vec<u8>, DocxError> {
     let nodes = preserved_xml::inspect(chart)?;
     if nodes.is_empty() {
         return Err(transaction_error("chart XML has no root"));
     }
-    let chart_kinds: Vec<_> = ["barChart", "lineChart", "areaChart", "pieChart", "doughnutChart"]
+    let chart_kinds: Vec<_> = ["barChart", "lineChart", "areaChart", "pieChart", "doughnutChart", "scatterChart"]
         .into_iter()
         .flat_map(|name| descendants(&nodes, 0, CHART_NS, name))
         .collect();
@@ -939,11 +1069,19 @@ fn update_chart_caches(chart: &[u8], changes: &ChartDataChanges) -> Result<Vec<u
     }
     let mut splices = Vec::new();
     for (series_index, (series_node, change)) in chart_series.iter().zip(&changes.series).enumerate() {
-        for (container_name, cache_name, values) in [
-            ("tx", "strCache", change.name.as_ref().map(|value| vec![value.clone()])),
-            ("cat", "strCache", change.categories.clone()),
-            ("val", "numCache", change.values.as_ref().map(|values| values.iter().map(ToString::to_string).collect())),
-        ] {
+        let mut cache_edits = vec![("tx", "strCache", change.name.as_ref().map(|value| vec![value.clone()]))];
+        match mapping.series.get(series_index).map(|series| &series.data) {
+            Some(SeriesDataMapping::CategoryValues { .. }) => {
+                cache_edits.push(("cat", "strCache", change.categories.clone()));
+                cache_edits.push(("val", "numCache", change.values.as_ref().map(|values| values.iter().map(ToString::to_string).collect())));
+            }
+            Some(SeriesDataMapping::Scatter { .. }) => {
+                cache_edits.push(("xVal", "numCache", change.x_values.as_ref().map(|values| values.iter().map(ToString::to_string).collect())));
+                cache_edits.push(("yVal", "numCache", change.values.as_ref().map(|values| values.iter().map(ToString::to_string).collect())));
+            }
+            None => return Err(transaction_error("chart series mapping is missing")),
+        }
+        for (container_name, cache_name, values) in cache_edits {
             let Some(values) = values else { continue };
             let container = child_index(&nodes, *series_node, CHART_NS, container_name)
                 .ok_or_else(|| transaction_error(format!("series {series_index} is missing {container_name}")))?;
@@ -1299,6 +1437,31 @@ mod tests {
             .replace("xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"", "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"").into_bytes()
     }
 
+    fn scatter_chart(series_two: bool) -> Vec<u8> {
+        let second = if series_two {
+            r#"<c:ser><c:idx val="1"/><c:order val="1"/><c:tx><c:strRef><c:f>Data!D1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Series two</c:v></c:pt></c:strCache></c:strRef></c:tx><c:xVal><c:numRef><c:f>Data!E1:E3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt><c:pt idx="2"><c:v>3</c:v></c:pt></c:numCache></c:numRef></c:xVal><c:yVal><c:numRef><c:f>Data!F1:F3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>30</c:v></c:pt><c:pt idx="1"><c:v>40</c:v></c:pt><c:pt idx="2"><c:v>50</c:v></c:pt></c:numCache></c:numRef></c:yVal></c:ser>"#
+        } else {
+            ""
+        };
+        format!(r#"<c:chartSpace xmlns:c="{CHART_NS}" xmlns:r="{DOC_REL_NS}"><c:chart><c:plotArea><c:scatterChart><c:scatterStyle val="marker"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>Data!A1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Series one</c:v></c:pt></c:strCache></c:strRef></c:tx><c:xVal><c:numRef><c:f>Data!C1:C3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>42</c:v></c:pt><c:pt idx="2"><c:v>84</c:v></c:pt></c:numCache></c:numRef></c:xVal><c:yVal><c:numRef><c:f>Data!D2:D4</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>7</c:v></c:pt><c:pt idx="1"><c:v>9</c:v></c:pt><c:pt idx="2"><c:v>12</c:v></c:pt></c:numCache></c:numRef></c:yVal></c:ser>{second}<c:axId val="1"/><c:axId val="2"/></c:scatterChart><c:valAx><c:axId val="1"/><c:axPos val="b"/></c:valAx><c:valAx><c:axId val="2"/><c:axPos val="l"/></c:valAx></c:plotArea></c:chart><c:externalData r:id="book"/></c:chartSpace>"#)
+            .into_bytes()
+    }
+
+    fn scatter_workbook() -> Vec<u8> {
+        let mut parts = Package::open(&workbook(false, false, false))
+            .unwrap()
+            .entries()
+            .map(|(name, bytes)| (name.to_string(), bytes.to_vec()))
+            .collect::<BTreeMap<_, _>>();
+        let sheet = String::from_utf8(parts["xl/worksheets/sheet1.xml"].clone()).unwrap();
+        let sheet = sheet
+            .replace(r#"<row r="1">"#, r#"<row r="1"><c r="E1"><v>1</v></c><c r="F1"><v>30</v></c>"#)
+            .replace(r#"<row r="2">"#, r#"<row r="2"><c r="E2"><v>2</v></c><c r="F2"><v>40</v></c>"#)
+            .replace(r#"<row r="3">"#, r#"<row r="3"><c r="E3"><v>3</v></c><c r="F3"><v>50</v></c>"#);
+        parts.insert("xl/worksheets/sheet1.xml".into(), sheet.into_bytes());
+        zip(&parts)
+    }
+
     fn rels(external: bool) -> Vec<Rel> {
         vec![Rel { id: "book".into(), kind: format!("{XLSX_OFFICE}package"), target: "word/embeddings/book.xlsx".into(), external }]
     }
@@ -1338,6 +1501,14 @@ mod tests {
         zip(&files)
     }
 
+    fn scatter_docx_fixture(second_series: bool) -> Vec<u8> {
+        let base = docx_fixture(false, false, false, false);
+        let mut files = Package::open(&base).unwrap().entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        files.insert("word/charts/chart1.xml".into(), scatter_chart(second_series));
+        files.insert("word/embeddings/book.xlsx".into(), scatter_workbook());
+        zip(&files)
+    }
+
     fn mapped(result: Classification) -> ChartMapping {
         match result {
             Classification::Mappable(v) => v,
@@ -1354,9 +1525,130 @@ mod tests {
             assert_eq!(workbook, original);
             assert_eq!(mapping.chart_kind, "column");
             assert_eq!(mapping.series[0].name.address, "A1");
-            assert_eq!(mapping.series[0].categories.iter().map(|c| c.value.as_str()).collect::<Vec<_>>(), ["Same", "Other", "Same"]);
-            assert_eq!(mapping.series[0].values.iter().map(|v| v.value).collect::<Vec<_>>(), [10.0, 42.0, 84.0]);
+            assert_eq!(mapping.series[0].categories().iter().map(|c| c.value.as_str()).collect::<Vec<_>>(), ["Same", "Other", "Same"]);
+            assert_eq!(mapping.series[0].values().iter().map(|v| v.value).collect::<Vec<_>>(), [10.0, 42.0, 84.0]);
         }
+    }
+
+    #[test]
+    fn maps_single_and_multiple_scatter_series_to_exact_numeric_x_y_cells() {
+        let workbook = scatter_workbook();
+        let original = workbook.clone();
+        for (multiple, expected_series) in [(false, 1), (true, 2)] {
+            let mapping = mapped(map_chart(&scatter_chart(multiple), &rels(false), "word/embeddings/book.xlsx", &workbook));
+            assert_eq!(mapping.chart_kind, "scatter");
+            assert_eq!(mapping.series.len(), expected_series);
+            assert_eq!(mapping.series[0].name.address, "A1");
+            assert_eq!(mapping.series[0].x_values().iter().map(|cell| cell.address.as_str()).collect::<Vec<_>>(), ["C1", "C2", "C3"]);
+            assert_eq!(mapping.series[0].x_values().iter().map(|cell| cell.value).collect::<Vec<_>>(), [10.0, 42.0, 84.0]);
+            assert_eq!(mapping.series[0].values().iter().map(|cell| cell.address.as_str()).collect::<Vec<_>>(), ["D2", "D3", "D4"]);
+            assert_eq!(mapping.series[0].values().iter().map(|cell| cell.value).collect::<Vec<_>>(), [7.0, 9.0, 12.0]);
+            assert!(mapping.series[0].categories().is_empty());
+            if multiple {
+                assert_eq!(mapping.series[1].name.address, "D1");
+                assert_eq!(mapping.series[1].x_values().iter().map(|cell| cell.address.as_str()).collect::<Vec<_>>(), ["E1", "E2", "E3"]);
+                assert_eq!(mapping.series[1].values().iter().map(|cell| cell.address.as_str()).collect::<Vec<_>>(), ["F1", "F2", "F3"]);
+            }
+        }
+        assert_eq!(workbook, original, "mapping is read-only");
+    }
+
+    #[test]
+    fn rejects_unsafe_or_inconsistent_scatter_datasets() {
+        let chart = scatter_chart(false);
+        let scatter_book_bytes = scatter_workbook();
+        assert!(matches!(
+            map_chart(&chart, &rels(true), "word/embeddings/book.xlsx", &scatter_book_bytes),
+            Classification::Unsupported(reason) if reason.contains("external")
+        ));
+        let formula_workbook = workbook(true, false, false);
+        assert!(matches!(
+            map_chart(&chart, &rels(false), "word/embeddings/book.xlsx", &formula_workbook),
+            Classification::Unsupported(reason) if reason.contains("formula-driven")
+        ));
+        let bad_length = String::from_utf8(chart.clone()).unwrap().replace("Data!D2:D4", "Data!D2:D3");
+        assert!(matches!(
+            map_chart(bad_length.as_bytes(), &rels(false), "word/embeddings/book.xlsx", &scatter_book_bytes),
+            Classification::Ambiguous(reason) if reason.contains("same nonzero")
+        ));
+        let noncontiguous = String::from_utf8(chart.clone()).unwrap().replace("Data!C1:C3", "Data!C1,C3");
+        assert!(matches!(
+            map_chart(noncontiguous.as_bytes(), &rels(false), "word/embeddings/book.xlsx", &scatter_book_bytes),
+            Classification::Unsupported(reason) if reason.contains("noncontiguous")
+        ));
+        let mismatched_cache = String::from_utf8(chart.clone()).unwrap().replace("<c:v>42</c:v>", "<c:v>43</c:v>");
+        assert!(matches!(
+            map_chart(mismatched_cache.as_bytes(), &rels(false), "word/embeddings/book.xlsx", &scatter_book_bytes),
+            Classification::Inconsistent(reason) if reason.contains("cache")
+        ));
+        let overlap = String::from_utf8(chart).unwrap().replace(
+            "Data!D2:D4</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"3\"/><c:pt idx=\"0\"><c:v>7</c:v></c:pt><c:pt idx=\"1\"><c:v>9</c:v></c:pt><c:pt idx=\"2\"><c:v>12</c:v>",
+            "Data!C1:C3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"3\"/><c:pt idx=\"0\"><c:v>10</c:v></c:pt><c:pt idx=\"1\"><c:v>42</c:v></c:pt><c:pt idx=\"2\"><c:v>84</c:v>",
+        );
+        assert!(matches!(
+            map_chart(overlap.as_bytes(), &rels(false), "word/embeddings/book.xlsx", &scatter_book_bytes),
+            Classification::Ambiguous(reason) if reason.contains("overlapping")
+        ));
+    }
+
+    #[test]
+    fn scatter_transaction_updates_x_y_caches_and_cells_atomically() {
+        let source = scatter_docx_fixture(true);
+        let original_parts = Package::open(&source).unwrap();
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let changes = ChartDataChanges {
+            series: vec![
+                SeriesChanges { x_values: Some(vec![11.0, 22.0, 33.0]), values: Some(vec![110.0, 220.0, 330.0]), ..Default::default() },
+                SeriesChanges { x_values: Some(vec![4.0, 5.0, 6.0]), values: Some(vec![44.0, 55.0, 66.0]), ..Default::default() },
+            ],
+        };
+        let output = apply_chart_edit(&source, &plan, &changes).unwrap();
+        let updated = Package::open(&output).unwrap();
+        let snapshot = inspect_chart_data(&output, "word/charts/chart1.xml").unwrap();
+        assert_eq!(snapshot.chart_kind, "scatter");
+        assert_eq!(snapshot.series[0].x_values, [11.0, 22.0, 33.0]);
+        assert_eq!(snapshot.series[0].values, [110.0, 220.0, 330.0]);
+        assert_eq!(snapshot.series[1].x_values, [4.0, 5.0, 6.0]);
+        assert_eq!(snapshot.series[1].values, [44.0, 55.0, 66.0]);
+        let chart = updated.get("word/charts/chart1.xml").unwrap();
+        assert!(chart.windows(b"<c:v>22</c:v>".len()).any(|window| window == b"<c:v>22</c:v>"));
+        assert!(chart.windows(b"<c:v>220</c:v>".len()).any(|window| window == b"<c:v>220</c:v>"));
+        let book = Package::open(updated.get("word/embeddings/book.xlsx").unwrap()).unwrap();
+        let sheet = book.get("xl/worksheets/sheet1.xml").unwrap();
+        for value in ["11", "22", "33", "110", "220", "330", "4", "5", "6", "44", "55", "66"] {
+            assert!(sheet.windows(format!(">{value}</v>").len()).any(|window| window == format!(">{value}</v>").as_bytes()));
+        }
+        for (name, bytes) in original_parts.entries() {
+            if name != "word/charts/chart1.xml" && name != "word/embeddings/book.xlsx" {
+                assert_eq!(updated.get(name), Some(bytes), "unrelated DOCX content changed: {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn scatter_transaction_rejects_stale_malformed_and_nonfinite_changes_without_mutation() {
+        let source = scatter_docx_fixture(false);
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        for change in [
+            ChartDataChanges { series: vec![SeriesChanges { x_values: Some(vec![1.0]), values: Some(vec![1.0, 2.0, 3.0]), ..Default::default() }] },
+            ChartDataChanges { series: vec![SeriesChanges { x_values: Some(vec![1.0, f64::INFINITY, 3.0]), ..Default::default() }] },
+            ChartDataChanges { series: vec![SeriesChanges { categories: Some(vec!["a".into(), "b".into(), "c".into()]), ..Default::default() }] },
+        ] {
+            assert!(apply_chart_edit(&source, &plan, &change).is_err());
+            assert!(prepare_chart_edit(&source, "word/charts/chart1.xml").is_ok());
+        }
+        let stale_plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let mut stale_source = source.clone();
+        stale_source.push(0);
+        assert!(
+            apply_chart_edit(
+                &stale_source,
+                &stale_plan,
+                &ChartDataChanges { series: vec![SeriesChanges { values: Some(vec![1.0, 2.0, 3.0]), ..Default::default() }] }
+            )
+            .is_err()
+        );
+        assert_eq!(source, scatter_docx_fixture(false), "failed edits preserve the complete original package bytes");
     }
 
     #[test]
@@ -1364,7 +1656,7 @@ mod tests {
         let original_chart = chart_direction(false, "bar");
         let mapping = mapped(map_chart(&original_chart, &rels(false), "word/embeddings/book.xlsx", &workbook(false, false, false)));
         assert_eq!(mapping.chart_kind, "bar");
-        assert_eq!(mapping.series[0].categories.iter().map(|cell| cell.value.as_str()).collect::<Vec<_>>(), ["Same", "Other", "Same"]);
+        assert_eq!(mapping.series[0].categories().iter().map(|cell| cell.value.as_str()).collect::<Vec<_>>(), ["Same", "Other", "Same"]);
 
         let package = docx_fixture(false, false, false, false);
         let mut parts =
@@ -1380,6 +1672,7 @@ mod tests {
                     name: Some("Horizontal".into()),
                     categories: Some(vec!["North".into(), "South".into(), "West".into()]),
                     values: Some(vec![11.0, 22.0, 33.0]),
+                    ..Default::default()
                 }],
             },
         )
@@ -1420,6 +1713,7 @@ mod tests {
                     name: Some("Line measurements".into()),
                     categories: Some(vec!["First".into(), "Second".into(), "Third".into()]),
                     values: Some(vec![15.0, 25.0, 35.0]),
+                    ..Default::default()
                 }],
             },
         )
@@ -1460,6 +1754,7 @@ mod tests {
                     name: Some("Area measurements".into()),
                     categories: Some(vec!["First".into(), "Second".into(), "Third".into()]),
                     values: Some(vec![16.0, 26.0, 36.0]),
+                    ..Default::default()
                 }],
             },
         )
@@ -1501,6 +1796,7 @@ mod tests {
                         name: Some("Revised series".into()),
                         categories: Some(vec!["Cyan".into(), "Magenta".into(), "Yellow".into()]),
                         values: Some(vec![17.0, 27.0, 37.0]),
+                        ..Default::default()
                     }],
                 },
             )
@@ -1527,8 +1823,8 @@ mod tests {
         let m = mapped(map_chart(&chart(true), &rels(false), "word/embeddings/book.xlsx", &workbook(false, false, false)));
         assert_eq!(m.series.len(), 2);
         assert_eq!(m.series[1].name.address, "D1");
-        assert_eq!(m.series[1].values[2].address, "D4");
-        assert_eq!(m.series[1].categories, m.series[0].categories);
+        assert_eq!(m.series[1].values()[2].address, "D4");
+        assert_eq!(m.series[1].categories(), m.series[0].categories());
     }
 
     #[test]
@@ -1603,6 +1899,7 @@ mod tests {
                 name: Some("Updated series".into()),
                 categories: Some(vec!["Alpha".into(), "Beta & gamma".into(), "Gamma".into()]),
                 values: Some(vec![12.5, 45.0, 91.25]),
+                ..Default::default()
             }],
         };
         let output = apply_chart_edit(&source, &plan, &changes).unwrap();
@@ -1612,8 +1909,8 @@ mod tests {
         let workbook = updated.get("word/embeddings/book.xlsx").unwrap();
         let map = mapped(map_chart(updated.get("word/charts/chart1.xml").unwrap(), &rels.list, "word/embeddings/book.xlsx", workbook));
         assert_eq!(map.series[0].name.value, "Updated series");
-        assert_eq!(map.series[0].categories.iter().map(|c| c.value.as_str()).collect::<Vec<_>>(), ["Alpha", "Beta & gamma", "Gamma"]);
-        assert_eq!(map.series[0].values.iter().map(|cell| cell.value).collect::<Vec<_>>(), [12.5, 45.0, 91.25]);
+        assert_eq!(map.series[0].categories().iter().map(|c| c.value.as_str()).collect::<Vec<_>>(), ["Alpha", "Beta & gamma", "Gamma"]);
+        assert_eq!(map.series[0].values().iter().map(|cell| cell.value).collect::<Vec<_>>(), [12.5, 45.0, 91.25]);
         for (name, bytes) in original.entries() {
             if name != "word/charts/chart1.xml" && name != "word/embeddings/book.xlsx" {
                 assert_eq!(updated.get(name), Some(bytes), "unrelated DOCX part changed: {name}");
@@ -1641,11 +1938,13 @@ mod tests {
                         name: Some("Primary".into()),
                         categories: Some(vec!["Repeated".into(), "New category".into(), "Repeated".into()]),
                         values: Some(vec![11.0, 22.0, 33.0]),
+                        ..Default::default()
                     },
                     SeriesChanges {
                         name: Some("Secondary".into()),
                         categories: Some(vec!["Repeated".into(), "New category".into(), "Repeated".into()]),
                         values: Some(vec![44.0, 55.0, 66.0]),
+                        ..Default::default()
                     },
                 ],
             },
@@ -1661,9 +1960,9 @@ mod tests {
         ));
         assert_eq!(mapping.series[0].name.value, "Primary");
         assert_eq!(mapping.series[1].name.value, "Secondary");
-        assert_eq!(mapping.series[0].categories[1].value, "New category");
-        assert_eq!(mapping.series[0].values[2].value, 33.0);
-        assert_eq!(mapping.series[1].values[1].value, 55.0);
+        assert_eq!(mapping.series[0].categories()[1].value, "New category");
+        assert_eq!(mapping.series[0].values()[2].value, 33.0);
+        assert_eq!(mapping.series[1].values()[1].value, 55.0);
         let xlsx = Package::open(package.get("word/embeddings/book.xlsx").unwrap()).unwrap();
         assert!(std::str::from_utf8(xlsx.get("xl/sharedStrings.xml").unwrap()).unwrap().contains("Primary"));
     }

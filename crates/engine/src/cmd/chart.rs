@@ -10,7 +10,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .pure()
             .params(r#"{"documentId": integer, "chartPart": string}"#),
         CommandSpec::new("chart.editData", "Edit Chart Data", "Agents", edit_data)
-            .params(r#"{"documentId": integer, "chartPart": string, "series": [{"name"?: string, "categories"?: [string], "values"?: [number]}], "expected"?: validated chart snapshot}"#),
+            .params(r#"{"documentId": integer, "chartPart": string, "series": [{"name"?: string, "categories"?: [string], "xValues"?: [number], "values"?: [number]}], "expected"?: validated chart snapshot}"#),
     ]
 }
 

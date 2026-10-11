@@ -57,6 +57,20 @@ fn editable_area_chart_fixture() -> Vec<u8> {
     archive(&files)
 }
 
+fn editable_scatter_chart_fixture() -> Vec<u8> {
+    let mut files = unpack(&editable_chart_fixture());
+    let chart = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart><c:plotArea><c:scatterChart><c:scatterStyle val="marker"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>'Scientific data'!$A$1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Measurements</c:v></c:pt></c:strCache></c:strRef></c:tx><c:xVal><c:numRef><c:f>'Scientific data'!$B$2:$B$3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>42</c:v></c:pt><c:pt idx="1"><c:v>84</c:v></c:pt></c:numCache></c:numRef></c:xVal><c:yVal><c:numRef><c:f>'Scientific data'!$C$2:$C$3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>4</c:v></c:pt><c:pt idx="1"><c:v>8</c:v></c:pt></c:numCache></c:numRef></c:yVal></c:ser><c:axId val="1"/><c:axId val="2"/></c:scatterChart><c:valAx><c:axId val="1"/><c:axPos val="b"/></c:valAx><c:valAx><c:axId val="2"/><c:axPos val="l"/></c:valAx></c:plotArea></c:chart><c:externalData r:id="book"/></c:chartSpace>"#;
+    files.insert("word/charts/chart1.xml".into(), chart.as_bytes().to_vec());
+    let mut workbook = unpack(&files["word/embeddings/data.xlsx"]);
+    let sheet = String::from_utf8(workbook["xl/worksheets/sheet1.xml"].clone())
+        .unwrap()
+        .replace(r#"<c r="B2"><v>42</v></c>"#, r#"<c r="B2"><v>42</v></c><c r="C2"><v>4</v></c>"#)
+        .replace(r#"<c r="B3"><v>84</v></c>"#, r#"<c r="B3"><v>84</v></c><c r="C3"><v>8</v></c>"#);
+    workbook.insert("xl/worksheets/sheet1.xml".into(), sheet.into_bytes());
+    files.insert("word/embeddings/data.xlsx".into(), archive(&workbook));
+    archive(&files)
+}
+
 fn editable_slice_chart_fixture(chart_type: &str) -> Vec<u8> {
     let local = match chart_type {
         "pie" => "pieChart",
@@ -599,5 +613,79 @@ fn failed_save_after_chart_edit_keeps_working_package_and_original_file_intact()
     assert_eq!(*session.source_package.as_ref().unwrap().bytes, *source);
     assert_eq!(session.dirty, dirty);
     assert_eq!(std::fs::read(path).unwrap(), original);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn scatter_chart_edit_survives_render_undo_recovery_and_docx_reopen() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-scatter-chart-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source_path = directory.join("scatter.docx");
+    let saved_path = directory.join("scatter-edited.docx");
+    let original = editable_scatter_chart_fixture();
+    std::fs::write(&source_path, &original).unwrap();
+
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source_path})).unwrap();
+    let document_id = session.document_id();
+    let snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(snapshot["chartKind"], "scatter");
+    assert_eq!(snapshot["series"][0]["xValues"], json!([42.0, 84.0]));
+    assert_eq!(snapshot["series"][0]["values"], json!([4.0, 8.0]));
+    let before_layout = session.layout();
+    let before_raster = wordcraft_render::render_page(&session.doc, &before_layout.pages[0], 1.0, &Default::default()).to_straight();
+
+    session
+        .run(
+            "chart.editData",
+            &json!({
+                "documentId": document_id,
+                "chartPart": "word/charts/chart1.xml",
+                "expected": snapshot,
+                "series": [{"name": "Measurements", "xValues": [50.0, 90.0], "values": [6.0, 14.0]}]
+            }),
+        )
+        .unwrap();
+    let edited_package = wordcraft_docx::write(&session.doc).unwrap();
+    let edited_parts = unpack(&edited_package);
+    let original_parts = unpack(&original);
+    for (part, bytes) in &original_parts {
+        if !matches!(part.as_str(), "word/charts/chart1.xml" | "word/embeddings/data.xlsx") {
+            assert_eq!(edited_parts.get(part), Some(bytes), "unrelated DOCX part changed: {part}");
+        }
+    }
+    let chart = String::from_utf8(edited_parts["word/charts/chart1.xml"].clone()).unwrap();
+    assert!(chart.contains("<c:xVal>"));
+    assert!(chart.contains("<c:yVal>"));
+    assert!(chart.contains(">50</c:v>") && chart.contains(">14</c:v>"));
+    let workbook = unpack(&edited_parts["word/embeddings/data.xlsx"]);
+    let sheet = String::from_utf8(workbook["xl/worksheets/sheet1.xml"].clone()).unwrap();
+    assert!(sheet.contains(r#"<c r="B2"><v>50</v></c>"#));
+    assert!(sheet.contains(r#"<c r="C3"><v>14</v></c>"#));
+    let after_layout = session.layout();
+    let after_raster = wordcraft_render::render_page(&session.doc, &after_layout.pages[0], 1.0, &Default::default()).to_straight();
+    assert_ne!(before_raster, after_raster, "scatter cache edit refreshes rendered output");
+
+    session.run("edit.undo", &json!({})).unwrap();
+    let undone = wordcraft_docx::inspect_chart_data(&wordcraft_docx::write(&session.doc).unwrap(), "word/charts/chart1.xml").unwrap();
+    assert_eq!(undone.series[0].x_values, [42.0, 84.0]);
+    assert_eq!(undone.series[0].values, [4.0, 8.0]);
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), edited_package);
+
+    let recovery_store = Store::new(directory.join("recovery")).unwrap();
+    let recovery_id = recovery_store.save(&unique_id(), document_id, &Snapshot::capture(&session)).unwrap();
+    let mut recovered = Session::new(Document::new());
+    recovery_store.load(&recovery_id).unwrap().restore(&mut recovered);
+    assert_eq!(wordcraft_docx::write(&recovered.doc).unwrap(), edited_package);
+    recovered.run("file.save", &json!({"path": saved_path})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": directory.join("scatter-edited.docx")})).unwrap();
+    let reopened_snapshot =
+        wordcraft_docx::inspect_chart_data(&std::fs::read(directory.join("scatter-edited.docx")).unwrap(), "word/charts/chart1.xml").unwrap();
+    assert_eq!(reopened_snapshot.chart_kind, "scatter");
+    assert_eq!(reopened_snapshot.series[0].x_values, [50.0, 90.0]);
+    assert_eq!(reopened_snapshot.series[0].values, [6.0, 14.0]);
+    assert_eq!(std::fs::read(source_path).unwrap(), original, "source DOCX remains unchanged");
     std::fs::remove_dir_all(directory).unwrap();
 }
