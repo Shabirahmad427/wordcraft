@@ -460,6 +460,41 @@ pub(crate) fn inspect_document(doc: &wordcraft_doc::Document) -> Vec<Classificat
     found
 }
 
+/// Whether the current document model contains a chart graphic linked to `chart_part`.
+/// This prevents callers from using a package-only chart name to edit an unrelated/orphan part.
+pub fn document_has_chart(doc: &wordcraft_doc::Document, chart_part: &str) -> bool {
+    use wordcraft_doc::{Block, InlineObject};
+    let mut blocks: Vec<&Block> = doc.body.iter().map(std::sync::Arc::as_ref).collect();
+    for part in doc.parts.values() {
+        blocks.extend(part.blocks.iter().map(std::sync::Arc::as_ref));
+    }
+    while let Some(block) = blocks.pop() {
+        match block {
+            Block::Para(para) => {
+                if para.objects.iter().any(|object| {
+                    let InlineObject::Graphic { graphic, .. } = object else { return false };
+                    graphic.kind == wordcraft_doc::graphic::GraphicKind::Chart
+                        && graphic.source.as_ref().is_some_and(|source| {
+                            source.refs.iter().any(|reference| {
+                                !reference.external && reference.target == chart_part && rel_is(&reference.kind, &format!("{XLSX_OFFICE}chart"))
+                            })
+                        })
+                }) {
+                    return true;
+                }
+            }
+            Block::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        blocks.extend(cell.blocks.iter().map(std::sync::Arc::as_ref));
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 fn text_at(range: &Range, sheet: &str, sheet_path: &str, cells: &BTreeMap<String, CellValue>, index: usize) -> MResult<MappedCell<String>> {
     let address = range.cells.get(index).ok_or_else(|| inconsistent("range cell is missing"))?;
     let key = cell_name(address);
@@ -557,22 +592,22 @@ const MAX_MUTATION_XML: usize = 16 * 1024 * 1024;
 /// package content has changed since the mapping was produced.
 #[derive(Clone, Debug)]
 #[allow(dead_code)] // Internal transaction API is intentionally staged before editor integration.
-pub(crate) struct ChartEditPlan {
+pub struct ChartEditPlan {
     chart_part: String,
     workbook_part: String,
     package_digest: [u8; 32],
     mapping: ChartMapping,
 }
 
-#[derive(Clone, Debug, Default)]
-#[allow(dead_code)] // Internal transaction API is intentionally staged before editor integration.
-pub(crate) struct ChartDataChanges {
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChartDataChanges {
     pub series: Vec<SeriesChanges>,
 }
 
-#[derive(Clone, Debug, Default)]
-#[allow(dead_code)] // Internal transaction API is intentionally staged before editor integration.
-pub(crate) struct SeriesChanges {
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SeriesChanges {
     pub name: Option<String>,
     pub categories: Option<Vec<String>>,
     pub values: Option<Vec<f64>>,
@@ -597,8 +632,7 @@ struct Splice {
 }
 
 /// Create a transaction plan only for a chart that the read-only mapper validates.
-#[allow(dead_code)] // Internal transaction API is intentionally staged before editor integration.
-pub(crate) fn prepare_chart_edit(docx: &[u8], chart_part: &str) -> Result<ChartEditPlan, DocxError> {
+pub fn prepare_chart_edit(docx: &[u8], chart_part: &str) -> Result<ChartEditPlan, DocxError> {
     let package = Package::open(docx)?;
     crate::preservation::validate(&package)?;
     if !safe_package_part(chart_part) {
@@ -644,8 +678,7 @@ pub(crate) fn prepare_chart_edit(docx: &[u8], chart_part: &str) -> Result<ChartE
 ///
 /// No caller-owned bytes are mutated. Both chart caches and exactly mapped workbook cells are
 /// staged, revalidated, and returned as a new DOCX only after package and mapping validation pass.
-#[allow(dead_code)] // Internal transaction API is intentionally staged before editor integration.
-pub(crate) fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataChanges) -> Result<Vec<u8>, DocxError> {
+pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataChanges) -> Result<Vec<u8>, DocxError> {
     if Sha256::digest(docx).as_slice() != plan.package_digest {
         return Err(transaction_error("stale chart mapping: original package bytes have changed"));
     }

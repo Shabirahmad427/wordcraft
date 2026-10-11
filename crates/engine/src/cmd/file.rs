@@ -286,6 +286,7 @@ fn info(s: &mut Session, _: &Value) -> CmdResult {
     let l = s.layout();
     Ok(json!({
         "path": s.path.as_ref().map(|p| p.to_string_lossy().to_string()),
+        "documentId": s.document_id(),
         "dirty": s.dirty,
         "pages": l.pages.len(),
         "words": s.doc.word_count(),

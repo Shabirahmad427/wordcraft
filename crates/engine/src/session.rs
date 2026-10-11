@@ -146,9 +146,10 @@ struct Undo {
     label: String,
     doc: Document,
     sel: Selection,
+    source_package: Option<SourcePackage>,
 }
 
-/// What [`Session::restore`] needs to take commands back exactly: the document, the selection,
+/// What [`Session::restore`] needs to take commands back exactly: the document, package source, the selection,
 /// the undo and redo stacks (also the oldest undo steps the undo limit pushes out meanwhile), the
 /// open typing group, a pending [`Session::join_next_undo`] and the dirty flag. See
 /// [`Session::edit_snapshot`].
@@ -165,6 +166,7 @@ pub struct EditSnapshot {
     typing_open: bool,
     join_next: bool,
     dirty: bool,
+    source_package: Option<SourcePackage>,
 }
 
 /// Undo steps that the commands run between [`Session::edit_snapshot`] and [`Session::restore`]
@@ -429,7 +431,12 @@ impl Session {
             return;
         }
         self.typing_open = label == "Typing";
-        self.history.push(Arc::new(Undo { label: label.to_string(), doc: self.doc.clone(), sel: self.sel.clone() }));
+        self.history.push(Arc::new(Undo {
+            label: label.to_string(),
+            doc: self.doc.clone(),
+            sel: self.sel.clone(),
+            source_package: self.source_package.clone(),
+        }));
         if self.history.len() > MAX_UNDO {
             self.history.remove(0);
             self.undo_evicted += 1;
@@ -439,7 +446,7 @@ impl Session {
     /// Record `doc`/`sel` as their own undo step after the fact and close the typing group, so
     /// Undo right after an automatic change (AutoFormat, AutoCorrect) reverts only that change.
     pub fn push_undo(&mut self, label: &str, doc: Document, sel: Selection) {
-        self.history.push(Arc::new(Undo { label: label.to_string(), doc, sel }));
+        self.history.push(Arc::new(Undo { label: label.to_string(), doc, sel, source_package: self.source_package.clone() }));
         if self.history.len() > MAX_UNDO {
             self.history.remove(0);
             self.undo_evicted += 1;
@@ -490,7 +497,12 @@ impl Session {
     pub fn undo(&mut self) -> bool {
         self.typing_open = false;
         let Some(u) = self.history.pop().map(Arc::unwrap_or_clone) else { return false };
-        let cur = Undo { label: u.label.clone(), doc: std::mem::replace(&mut self.doc, u.doc), sel: std::mem::replace(&mut self.sel, u.sel) };
+        let cur = Undo {
+            label: u.label.clone(),
+            doc: std::mem::replace(&mut self.doc, u.doc),
+            sel: std::mem::replace(&mut self.sel, u.sel),
+            source_package: std::mem::replace(&mut self.source_package, u.source_package),
+        };
         self.redo.push(Arc::new(cur));
         self.touch();
         true
@@ -498,7 +510,12 @@ impl Session {
     pub fn redo(&mut self) -> bool {
         self.typing_open = false;
         let Some(u) = self.redo.pop().map(Arc::unwrap_or_clone) else { return false };
-        let cur = Undo { label: u.label.clone(), doc: std::mem::replace(&mut self.doc, u.doc), sel: std::mem::replace(&mut self.sel, u.sel) };
+        let cur = Undo {
+            label: u.label.clone(),
+            doc: std::mem::replace(&mut self.doc, u.doc),
+            sel: std::mem::replace(&mut self.sel, u.sel),
+            source_package: std::mem::replace(&mut self.source_package, u.source_package),
+        };
         self.history.push(Arc::new(cur));
         self.touch();
         true
@@ -531,7 +548,7 @@ impl Session {
     /// A snapshot to put back with [`Session::restore`], for a caller that runs a command and
     /// may want to take it back without a trace (cheap: the document's blocks are shared).
     ///
-    /// Covered: `doc`, `sel`, the undo stack (its length, and its oldest steps when it is near
+    /// Covered: `doc`, `source_package`, `sel`, the undo stack (its length, and its oldest steps when it is near
     /// the limit), `redo`, the open typing group, a pending `join_next_undo` and `dirty`. `rev`,
     /// `cache` and `layout` are derived (`restore` bumps `rev`). The other fields are not
     /// covered: a caller that lets the command change them (the view, the find state, the
@@ -577,7 +594,7 @@ impl Session {
             autocorrect_on: _,
             autocorrect_user: _,
             versions: _,
-            source_package: _,
+            source_package,
             recovery_dir: _,
             building_blocks: _,
             autosave: _,
@@ -609,6 +626,7 @@ impl Session {
             typing_open: *typing_open,
             join_next: *join_next,
             dirty: *dirty,
+            source_package: source_package.clone(),
         }
     }
 
@@ -616,7 +634,7 @@ impl Session {
     /// selection or undo/redo (undo steps the limit pushed out meanwhile come back). The layout
     /// is recomputed.
     pub fn restore(&mut self, snap: EditSnapshot) {
-        let EditSnapshot { doc, sel, history_len, evicted, head, redo, typing_open, join_next, dirty } = snap;
+        let EditSnapshot { doc, sel, history_len, evicted, head, redo, typing_open, join_next, dirty, source_package } = snap;
         let gone = usize::try_from(self.undo_evicted.saturating_sub(evicted)).unwrap_or(usize::MAX);
         if gone > 0 {
             let back = gone.min(head.len());
@@ -632,6 +650,7 @@ impl Session {
         self.join_next = join_next;
         self.touch();
         self.dirty = dirty;
+        self.source_package = source_package;
     }
 
     /// Make the selection valid for the current document.
@@ -706,6 +725,7 @@ impl Session {
                 self.typing_open,
                 self.undo_evicted,
                 self.column.clone(),
+                self.source_package.clone(),
             ))
         } else {
             None
@@ -753,7 +773,7 @@ impl Session {
                 }
             }
             Err(e) => {
-                if let Some((d, s, h, r, t, ev, c)) = before_doc {
+                if let Some((d, s, h, r, t, ev, c, source_package)) = before_doc {
                     self.doc = d;
                     self.sel = s;
                     self.history = h;
@@ -762,6 +782,7 @@ impl Session {
                     // The steps the command pushed out are back, so they no longer count as gone.
                     self.undo_evicted = ev;
                     self.column = c;
+                    self.source_package = source_package;
                 }
                 self.status = e.to_string();
             }
