@@ -10,7 +10,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .pure()
             .params(r#"{"documentId": integer, "chartPart": string}"#),
         CommandSpec::new("chart.editData", "Edit Chart Data", "Agents", edit_data)
-            .params(r#"{"documentId": integer, "chartPart": string, "legendPosition"?: "l"|"r"|"t"|"b", "series": [{"name"?: string, "categories"?: [string], "xValues"?: [number], "values"?: [number]}], "expected"?: validated chart snapshot}"#),
+            .params(r#"{"documentId": integer, "chartPart": string, "legendPosition"?: "l"|"r"|"t"|"b", "chartTitle"?: string, "horizontalAxisTitle"?: string, "verticalAxisTitle"?: string, "series": [{"name"?: string, "categories"?: [string], "xValues"?: [number], "values"?: [number]}], "expected"?: validated chart snapshot}"#),
     ]
 }
 
@@ -46,7 +46,13 @@ fn edit_data(session: &mut Session, params: &Value) -> CmdResult {
         return Err(CmdError::Failed(format!("chart `{chart_part}` is not part of the current document")));
     }
     let raw_changes = params.get("series").cloned().ok_or_else(|| CmdError::Params("`series` (array) is required".into()))?;
-    let raw_changes = json!({"legendPosition": params.get("legendPosition"), "series": raw_changes});
+    let raw_changes = json!({
+        "legendPosition": params.get("legendPosition"),
+        "chartTitle": params.get("chartTitle"),
+        "horizontalAxisTitle": params.get("horizontalAxisTitle"),
+        "verticalAxisTitle": params.get("verticalAxisTitle"),
+        "series": raw_changes
+    });
     let changes: wordcraft_docx::ChartDataChanges =
         serde_json::from_value(raw_changes).map_err(|error| CmdError::Params(format!("invalid chart changes: {error}")))?;
 

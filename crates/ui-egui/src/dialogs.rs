@@ -290,6 +290,12 @@ pub struct ChartDataForm {
     chart_kind: String,
     legend_position: String,
     original_legend_position: Option<String>,
+    chart_title: String,
+    original_chart_title: Option<String>,
+    horizontal_axis_title: String,
+    original_horizontal_axis_title: Option<String>,
+    vertical_axis_title: String,
+    original_vertical_axis_title: Option<String>,
     series: Vec<ChartSeriesForm>,
     #[serde(skip)]
     original: Vec<ChartSeriesForm>,
@@ -933,6 +939,12 @@ impl Dialog {
                 form.chart_kind = snapshot.get("chartKind").and_then(Value::as_str).unwrap_or_default().to_string();
                 form.original_legend_position = snapshot.get("legendPosition").and_then(Value::as_str).map(str::to_string);
                 form.legend_position = form.original_legend_position.clone().unwrap_or_default();
+                form.original_chart_title = snapshot.get("chartTitle").and_then(Value::as_str).map(str::to_string);
+                form.chart_title = form.original_chart_title.clone().unwrap_or_default();
+                form.original_horizontal_axis_title = snapshot.get("horizontalAxisTitle").and_then(Value::as_str).map(str::to_string);
+                form.horizontal_axis_title = form.original_horizontal_axis_title.clone().unwrap_or_default();
+                form.original_vertical_axis_title = snapshot.get("verticalAxisTitle").and_then(Value::as_str).map(str::to_string);
+                form.vertical_axis_title = form.original_vertical_axis_title.clone().unwrap_or_default();
                 form.series = snapshot
                     .get("series")
                     .and_then(Value::as_array)
@@ -1418,6 +1430,32 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                 ui.label(tl!(tl!("No explicitly supported legend position is available for this chart.")));
             }
         });
+        ui.horizontal(|ui| {
+            if form.original_chart_title.is_some() {
+                ui.label(tl!(tl!("Chart title")));
+                ui.add_sized([300.0, 24.0], egui::TextEdit::singleline(&mut form.chart_title));
+            } else {
+                ui.label(tl!(tl!("No safe existing chart title is available to edit.")));
+            }
+        });
+        if !matches!(form.chart_kind.as_str(), "pie" | "doughnut") {
+            ui.horizontal(|ui| {
+                if form.original_horizontal_axis_title.is_some() {
+                    ui.label(tl!(tl!("Horizontal axis title")));
+                    ui.add_sized([260.0, 24.0], egui::TextEdit::singleline(&mut form.horizontal_axis_title));
+                } else {
+                    ui.label(tl!(tl!("No safe existing horizontal axis title is available to edit.")));
+                }
+            });
+            ui.horizontal(|ui| {
+                if form.original_vertical_axis_title.is_some() {
+                    ui.label(tl!(tl!("Vertical axis title")));
+                    ui.add_sized([260.0, 24.0], egui::TextEdit::singleline(&mut form.vertical_axis_title));
+                } else {
+                    ui.label(tl!(tl!("No safe existing vertical axis title is available to edit.")));
+                }
+            });
+        }
         let mut focus_ids = Vec::new();
         let tab_from = ui
             .input(|input| input.key_pressed(egui::Key::Tab))
@@ -1497,10 +1535,30 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
             })
         });
         let legend_changed = form.original_legend_position.as_deref().is_some_and(|original| form.legend_position != original);
-        let changed = form.series != form.original || legend_changed;
-        let can_apply = changed && invalid_value.is_none();
+        let chart_title_change = changed_existing_title(form.original_chart_title.as_deref(), &form.chart_title);
+        let horizontal_axis_title_change = changed_existing_title(form.original_horizontal_axis_title.as_deref(), &form.horizontal_axis_title);
+        let vertical_axis_title_change = changed_existing_title(form.original_vertical_axis_title.as_deref(), &form.vertical_axis_title);
+        let chart_title_changed = chart_title_change.is_some();
+        let horizontal_axis_title_changed = horizontal_axis_title_change.is_some();
+        let vertical_axis_title_changed = vertical_axis_title_change.is_some();
+        let changed =
+            form.series != form.original || legend_changed || chart_title_changed || horizontal_axis_title_changed || vertical_axis_title_changed;
+        let invalid_title = [
+            (chart_title_changed, form.chart_title.as_str()),
+            (horizontal_axis_title_changed, form.horizontal_axis_title.as_str()),
+            (vertical_axis_title_changed, form.vertical_axis_title.as_str()),
+        ]
+        .iter()
+        .any(|(changed, value)| *changed && (value.trim().is_empty() || value.trim() != *value || value.len() > 4096));
+        let can_apply = changed && invalid_value.is_none() && !invalid_title;
         if let Some(message) = invalid_value {
             ui.colored_label(Tokens::get(ui.ctx()).red, message);
+        }
+        if invalid_title {
+            ui.colored_label(
+                Tokens::get(ui.ctx()).red,
+                tl!(tl!("Titles cannot be blank or have leading/trailing whitespace; title removal is not supported.")),
+            );
         }
         if !form.error.is_empty() {
             ui.colored_label(Tokens::get(ui.ctx()).red, &form.error);
@@ -1529,9 +1587,15 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                     "expected": {
                         "chartKind": form.chart_kind,
                         "legendPosition": form.original_legend_position,
+                        "chartTitle": form.original_chart_title,
+                        "horizontalAxisTitle": form.original_horizontal_axis_title,
+                        "verticalAxisTitle": form.original_vertical_axis_title,
                         "series": expected_series
                     },
                     "legendPosition": legend_changed.then_some(form.legend_position.as_str()),
+                    "chartTitle": chart_title_change,
+                    "horizontalAxisTitle": horizontal_axis_title_change,
+                    "verticalAxisTitle": vertical_axis_title_change,
                     "series": series
                 }),
             ) {
@@ -1553,6 +1617,10 @@ fn legend_position_label(position: &str) -> String {
         "b" => tl!(tl!("Bottom")).to_string(),
         _ => tl!(tl!("Right")).to_string(),
     }
+}
+
+fn changed_existing_title<'a>(original: Option<&str>, draft: &'a str) -> Option<&'a str> {
+    original.and_then(|original| (draft != original).then_some(draft))
 }
 
 fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -3045,6 +3113,13 @@ mod tests {
         assert_eq!(legend_position_label("t"), "Top");
         assert_eq!(legend_position_label("b"), "Bottom");
         assert_eq!(legend_position_label("r"), "Right");
+    }
+
+    #[test]
+    fn chart_title_draft_only_edits_existing_supported_titles() {
+        assert_eq!(changed_existing_title(Some("Old"), "New"), Some("New"));
+        assert_eq!(changed_existing_title(Some("Old"), "Old"), None);
+        assert_eq!(changed_existing_title(None, "New"), None, "the dialog does not invent OOXML title structures");
     }
 
     #[test]

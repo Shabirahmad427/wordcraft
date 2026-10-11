@@ -35,6 +35,27 @@ fn editable_chart_fixture_with_direction(direction: &str) -> Vec<u8> {
     archive(&files)
 }
 
+fn editable_chart_fixture_with_titles() -> Vec<u8> {
+    let mut files = unpack(&editable_chart_fixture());
+    let chart = String::from_utf8(files["word/charts/chart1.xml"].clone())
+        .unwrap()
+        .replace(
+            "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"",
+            "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"",
+        )
+        .replace(
+            "<c:chart><c:plotArea>",
+            r#"<c:chart><c:title><c:tx><c:rich><a:p><a:r><a:rPr b="1"/><a:t>Original title</a:t></a:r></a:p></c:rich></c:tx></c:title><c:plotArea>"#,
+        )
+        .replace(
+            "</c:barChart>",
+            r#"<c:axId val="1"/><c:axId val="2"/></c:barChart>"#,
+        );
+    let axes = r#"<c:catAx><c:axId val="1"/><c:axPos val="b"/><c:title><c:tx><c:rich><a:p><a:r><a:t>Category labels</a:t></a:r></a:p></c:rich></c:tx></c:title></c:catAx><c:valAx><c:axId val="2"/><c:axPos val="l"/><c:title><c:tx><c:rich><a:p><a:r><a:t>Measurements</a:t></a:r></a:p></c:rich></c:tx></c:title></c:valAx>"#;
+    files.insert("word/charts/chart1.xml".into(), chart.replace("</c:plotArea>", &format!("{axes}</c:plotArea>")).into_bytes());
+    archive(&files)
+}
+
 fn editable_line_chart_fixture() -> Vec<u8> {
     let mut files = unpack(&editable_chart_fixture());
     let chart = String::from_utf8(files["word/charts/chart1.xml"].clone())
@@ -300,6 +321,65 @@ fn chart_legend_position_command_is_undoable_and_preserves_workbook_bytes() {
     assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), before);
     session.run("edit.redo", &json!({})).unwrap();
     assert_eq!(unpack(&wordcraft_docx::write(&session.doc).unwrap()), changed);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn chart_and_axis_title_command_preserves_formatting_workbook_and_undo_state() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-chart-titles-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.docx");
+    let destination = directory.join("edited.docx");
+    std::fs::write(&source, editable_chart_fixture_with_titles()).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source})).unwrap();
+    let document_id = session.document_id();
+    let before = wordcraft_docx::write(&session.doc).unwrap();
+    let before_parts = unpack(&before);
+    let snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(snapshot["chartTitle"], "Original title");
+    assert_eq!(snapshot["horizontalAxisTitle"], "Category labels");
+    assert_eq!(snapshot["verticalAxisTitle"], "Measurements");
+    let layout = session.layout();
+    let before_pixels = wordcraft_render::render_page(&session.doc, &layout.pages[0], 1.0, &Default::default()).to_straight();
+    session
+        .run(
+            "chart.editData",
+            &json!({
+                "documentId": document_id,
+                "chartPart": "word/charts/chart1.xml",
+                "expected": snapshot,
+                "chartTitle": "Revised & reviewed",
+                "horizontalAxisTitle": "Horizontal categories",
+                "verticalAxisTitle": "Vertical measurements",
+                "series": [{}]
+            }),
+        )
+        .unwrap();
+    let edited = wordcraft_docx::write(&session.doc).unwrap();
+    let edited_parts = unpack(&edited);
+    assert_eq!(edited_parts["word/embeddings/data.xlsx"], before_parts["word/embeddings/data.xlsx"]);
+    let chart = String::from_utf8(edited_parts["word/charts/chart1.xml"].clone()).unwrap();
+    assert!(chart.contains("<a:rPr b=\"1\"/>"), "run formatting survives title replacement");
+    assert!(chart.contains("Revised &amp; reviewed"));
+    assert!(chart.contains("Horizontal categories"));
+    assert!(chart.contains("Vertical measurements"));
+    let after_layout = session.layout();
+    let after_pixels = wordcraft_render::render_page(&session.doc, &after_layout.pages[0], 1.0, &Default::default()).to_straight();
+    assert_ne!(before_pixels, after_pixels, "chart-title cache refresh changes the rendered chart");
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), before);
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), edited);
+    session.run("file.save", &json!({"path": destination})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": destination})).unwrap();
+    let reopened_snapshot =
+        reopened.run("chart.inspectData", &json!({"documentId": reopened.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(reopened_snapshot["chartTitle"], "Revised & reviewed");
+    assert_eq!(reopened_snapshot["horizontalAxisTitle"], "Horizontal categories");
+    assert_eq!(reopened_snapshot["verticalAxisTitle"], "Vertical measurements");
+    assert_eq!(wordcraft_docx::write(&reopened.doc).unwrap(), edited);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
