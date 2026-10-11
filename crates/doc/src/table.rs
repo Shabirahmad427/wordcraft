@@ -244,18 +244,31 @@ impl Table {
     pub fn split_cell(&mut self, r: usize, c: usize, n: usize) {
         let n = n.clamp(1, MAX_COLS);
         let Some(row) = self.rows.get_mut(r) else { return };
-        let Some(cell) = row.cells.get_mut(c) else { return };
-        let span = cell.span();
+        let Some(span) = row.cells.get(c).map(Cell::span) else { return };
         if n <= 1 {
             return;
         }
-        let w = cell.props.width.map(|w| w / n as f32);
-        cell.props.width = w;
+        let grid_col = row.cells.iter().take(c).map(Cell::span).sum::<usize>();
+        let boundary = |part: usize| span / n * part + (span % n).min(part);
+        let widths: Vec<f32> = (0..n)
+            .map(|part| {
+                let start = grid_col + boundary(part);
+                let end = grid_col + boundary(part + 1);
+                self.grid.get(start..end).unwrap_or(&[]).iter().copied().sum()
+            })
+            .collect();
+        let Some(cell) = row.cells.get_mut(c) else { return };
+        let mut original_props = cell.props.clone();
+        original_props.vmerge = VMerge::None;
+        original_props.span = (boundary(1) - boundary(0)).max(1) as u32;
+        original_props.width = widths.first().copied().filter(|w| *w > 0.0);
+        cell.props = original_props.clone();
         if span >= n {
-            cell.props.span = (span - (n - 1)) as u32;
             for k in 1..n {
                 let mut nc = Cell::empty();
-                nc.props.width = w;
+                nc.props = original_props.clone();
+                nc.props.span = (boundary(k + 1) - boundary(k)) as u32;
+                nc.props.width = widths.get(k).copied().filter(|w| *w > 0.0);
                 row.cells.insert(c + k, nc);
             }
         } else {
@@ -336,5 +349,35 @@ mod tests {
         v.merge(0, 2, 0, 0);
         assert_eq!(v.rows[0].cells[0].props.vmerge, VMerge::Restart);
         assert_eq!(v.rows[2].cells[0].props.vmerge, VMerge::Continue);
+    }
+
+    #[test]
+    fn splitting_a_wide_merged_cell_distributes_its_grid_and_content_once() {
+        let mut t = Table::new(1, 4, 400.0);
+        t.merge_right(0, 0, 3);
+        t.rows[0].cells[0].blocks = vec![para_block(Paragraph::with_text("preserved", Default::default()))];
+
+        t.split_cell(0, 0, 2);
+
+        let cells = &t.rows[0].cells;
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells.iter().map(Cell::span).collect::<Vec<_>>(), [2, 2]);
+        assert_eq!(cells[0].props.width, Some(200.0));
+        assert_eq!(cells[1].props.width, Some(200.0));
+        assert_eq!(cells[0].blocks.iter().filter_map(|b| b.as_para()).map(Paragraph::plain_text).collect::<String>(), "preserved");
+        assert!(cells[1].blocks.iter().all(|b| b.as_para().is_none_or(Paragraph::is_empty)));
+        assert_eq!(t.total_width(), 400.0);
+    }
+
+    #[test]
+    fn splitting_into_more_cells_partitions_the_existing_grid_in_reading_order() {
+        let mut t = Table::new(1, 5, 500.0);
+        t.merge_right(0, 0, 4);
+
+        t.split_cell(0, 0, 3);
+
+        assert_eq!(t.rows[0].cells.iter().map(Cell::span).collect::<Vec<_>>(), [2, 2, 1]);
+        assert_eq!(t.rows[0].cells.iter().filter_map(|c| c.props.width).collect::<Vec<_>>(), [200.0, 200.0, 100.0]);
+        assert_eq!(t.rows[0].cells.iter().map(Cell::span).sum::<usize>(), t.grid.len());
     }
 }

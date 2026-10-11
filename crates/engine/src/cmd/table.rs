@@ -37,6 +37,10 @@ pub fn specs() -> Vec<CommandSpec> {
         t(CommandSpec::new("table.split", "Split Cells", "Table Layout › Merge", |s, v| {
             let n = p::u64(v, "columns").unwrap_or(2).clamp(1, 63) as usize;
             let (tp, r, c) = cell(s)?;
+            let target = s.doc.table(s.sel.focus.story, &tp).and_then(|table| table.rows.get(r)).and_then(|row| row.cells.get(c));
+            if target.is_some_and(|cell| cell.props.vmerge != wordcraft_doc::props::VMerge::None) {
+                return Err(CmdError::Failed("split the vertical merge before splitting this cell".into()));
+            }
             s.doc.table_mut(s.sel.focus.story, &tp)?.split_cell(r, c, n);
             fix_caret(s, &tp, r, c)
         })

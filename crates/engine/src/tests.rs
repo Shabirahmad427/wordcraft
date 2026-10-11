@@ -686,6 +686,21 @@ fn tables_commands() {
     assert!(s.run("table.merge", &json!({})).is_err());
 }
 
+#[test]
+fn splitting_a_vertically_merged_cell_is_rejected_without_changing_the_table() {
+    use wordcraft_doc::props::VMerge;
+
+    let mut s = s();
+    run(&mut s, "insert.table", json!({"rows": 2, "cols": 2}));
+    let (table_path, _, _) = s.sel.focus.path.cell().expect("table cell path");
+    let table = s.doc.table_mut(s.sel.focus.story, &table_path).unwrap();
+    table.rows[0].cells[0].props.vmerge = VMerge::Restart;
+    let before = s.doc.table(s.sel.focus.story, &table_path).unwrap().clone();
+
+    assert!(s.run("table.split", &json!({"columns": 2})).is_err());
+    assert_eq!(s.doc.table(s.sel.focus.story, &table_path), Some(&before));
+}
+
 /// AutoFit Contents (#44) measures the text: a column of short words narrows, a column with a
 /// long sentence widens (wrapping within the page), and the widths are written to the grid.
 #[test]

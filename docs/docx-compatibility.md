@@ -1,5 +1,21 @@
 # DOCX preservation contract and verification
 
+## Phase 6C table-edit audit
+
+WordCraft's existing table model and commands support row/column insertion and deletion, cell
+merge/split, table/cell borders and shading, row heights, grid widths, repeated headers, row
+splitting across pages, captions, and existing SEQ/REF caption references. The layout engine also
+handles nested tables and reports table overflow. Charts can be rendered from cached values but
+are preservation-only; SmartArt uses its saved drawing, and neither has a safe data-edit path.
+Editing a nearby worksheet/table does not update an embedded chart workbook, so the original chart
+package graph remains opaque and preserved.
+
+Cell splitting now apportions a wide merged cell's existing grid columns across the requested
+cells in reading order and retains its content only in the first result. A DOCX write/read
+regression checks the resulting spans and widths. Splitting a vertically merged cell is rejected
+because the current command edits only one row and cannot safely update the matching vertical
+merge chain. This is an internal synthetic regression, not a Word-produced visual comparison.
+
 ## Earlier chart audit from 199822f
 
 Existing implementations already cover custom XML/bibliography package graphs, complex citation fields (including Zotero/Mendeley field instructions), OMML equations, footnotes, tables, lists, sections, headers/footers, tracked changes, atomic saves and complete native recovery archives. Those implementations are reused. They do not establish lossless preservation of arbitrary OOXML.

@@ -273,6 +273,28 @@ fn tables_with_merges_round_trip() {
 }
 
 #[test]
+fn split_merged_cell_grid_and_content_survive_docx_round_trip() {
+    let mut table = Table::new(1, 4, 400.0);
+    table.merge_right(0, 0, 3);
+    table.rows[0].cells[0].blocks = vec![para_block(Paragraph::with_text("measured result", CharProps::default()))];
+    table.split_cell(0, 0, 2);
+    let mut document = Document::new();
+    document.body = vec![para_block(Paragraph::new()), Arc::new(Block::Table(table.clone())), para_block(Paragraph::new())];
+
+    let reopened = rt(&document);
+    let result = reopened.body.get(1).and_then(|block| block.as_table()).expect("table after reopen");
+    assert_eq!(result.grid, table.grid);
+    assert_eq!(result.rows[0].cells.iter().map(Cell::span).collect::<Vec<_>>(), [2, 2]);
+    assert_eq!(result.rows[0].cells[0].props.width, Some(200.0));
+    assert_eq!(result.rows[0].cells[1].props.width, Some(200.0));
+    assert_eq!(
+        result.rows[0].cells[0].blocks.iter().filter_map(|block| block.as_para()).map(Paragraph::plain_text).collect::<String>(),
+        "measured result"
+    );
+    assert!(result.rows[0].cells[1].blocks.iter().all(|block| block.as_para().is_none_or(Paragraph::is_empty)));
+}
+
+#[test]
 fn sections_headers_footers_round_trip() {
     let mut d = Document::new();
     let page = |instr: &str| {
