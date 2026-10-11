@@ -2,10 +2,15 @@
 //!
 //! This deliberately produces no writable handles. It accepts only contiguous A1 ranges on
 //! ordinary worksheets and verifies every displayed cache value against the backing cell.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::package::{ContentTypes, EMBEDDED_PARTS, EmbeddedManifest, Package, Rel, rel_is};
 use crate::xml::{self, El};
+use crate::{
+    DocxError,
+    package::{ContentTypes, EMBEDDED_PARTS, EmbeddedManifest, Package, Rel, rel_is, zip_entries},
+    preserved_xml::{self, Element, qualified},
+};
+use sha2::{Digest, Sha256};
 
 const MAX_POINTS: usize = 10_000;
 const MAX_SERIES: usize = 256;
@@ -41,6 +46,15 @@ pub(crate) struct MappedCell<T> {
     pub worksheet_part: String,
     pub address: String,
     pub value: T,
+    source: CellSource,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum CellSource {
+    SharedString(usize),
+    InlineString,
+    StringValue,
+    Number,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,7 +71,7 @@ struct Range {
 
 #[derive(Clone, Debug)]
 enum CellValue {
-    Text(String),
+    Text(String, CellSource),
     Number(f64),
     Unsupported(String),
 }
@@ -366,10 +380,16 @@ fn parse_sheet(root: &El, shared: &[String]) -> MResult<BTreeMap<String, CellVal
                         .child("x:v")
                         .and_then(|e| e.text().parse::<usize>().ok())
                         .ok_or_else(|| unsupported("shared-string cell has an invalid index"))?;
-                    CellValue::Text(shared.get(index).ok_or_else(|| unsupported("shared-string cell index is missing"))?.clone())
+                    CellValue::Text(
+                        shared.get(index).ok_or_else(|| unsupported("shared-string cell index is missing"))?.clone(),
+                        CellSource::SharedString(index),
+                    )
                 }
-                "inlineStr" => CellValue::Text(cell.child("x:is").ok_or_else(|| unsupported("inline string cell has no value"))?.deep_text()),
-                "str" => CellValue::Text(cell.child("x:v").map(El::text).unwrap_or_default()),
+                "inlineStr" => CellValue::Text(
+                    cell.child("x:is").ok_or_else(|| unsupported("inline string cell has no value"))?.deep_text(),
+                    CellSource::InlineString,
+                ),
+                "str" => CellValue::Text(cell.child("x:v").map(El::text).unwrap_or_default(), CellSource::StringValue),
                 "n" => {
                     let n = cell
                         .child("x:v")
@@ -444,7 +464,7 @@ fn text_at(range: &Range, sheet: &str, sheet_path: &str, cells: &BTreeMap<String
     let address = range.cells.get(index).ok_or_else(|| inconsistent("range cell is missing"))?;
     let key = cell_name(address);
     let value = match cells.get(&key) {
-        Some(CellValue::Text(value)) => value.clone(),
+        Some(CellValue::Text(value, _)) => value.clone(),
         Some(CellValue::Number(_)) => return Err(inconsistent("text chart reference points to a numeric cell")),
         Some(CellValue::Unsupported(reason)) => return Err(unsupported(reason)),
         None => return Err(inconsistent("chart range references a missing worksheet cell")),
@@ -452,7 +472,11 @@ fn text_at(range: &Range, sheet: &str, sheet_path: &str, cells: &BTreeMap<String
     if value.len() > MAX_LABEL_BYTES {
         return Err(unsupported("worksheet label exceeds the text limit"));
     }
-    Ok(MappedCell { worksheet: sheet.to_string(), worksheet_part: sheet_path.to_string(), address: key, value })
+    let source = match cells.get(&key) {
+        Some(CellValue::Text(_, source)) => source.clone(),
+        _ => return Err(inconsistent("text chart cell source is unavailable")),
+    };
+    Ok(MappedCell { worksheet: sheet.to_string(), worksheet_part: sheet_path.to_string(), address: key, value, source })
 }
 
 fn read_text_range(range: &Range, sheet: &str, sheet_path: &str, cells: &BTreeMap<String, CellValue>) -> MResult<Vec<MappedCell<String>>> {
@@ -467,11 +491,11 @@ fn read_number_range(range: &Range, sheet: &str, sheet_path: &str, cells: &BTree
             let key = cell_name(addr);
             let value = match cells.get(&key) {
                 Some(CellValue::Number(value)) => *value,
-                Some(CellValue::Text(_)) => return Err(inconsistent("numeric chart reference points to a text cell")),
+                Some(CellValue::Text(_, _)) => return Err(inconsistent("numeric chart reference points to a text cell")),
                 Some(CellValue::Unsupported(reason)) => return Err(unsupported(reason)),
                 None => return Err(inconsistent("chart range references a missing worksheet cell")),
             };
-            Ok(MappedCell { worksheet: sheet.to_string(), worksheet_part: sheet_path.to_string(), address: key, value })
+            Ok(MappedCell { worksheet: sheet.to_string(), worksheet_part: sheet_path.to_string(), address: key, value, source: CellSource::Number })
         })
         .collect()
 }
@@ -521,6 +545,617 @@ fn verify_number_cache(container: Option<&El>, values: &[MappedCell<f64>]) -> MR
     Ok(())
 }
 
+const CHART_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const SHEET_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const DOC_REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const CHART_CONTENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+const XLSX_CONTENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";
+const MAX_MUTATION_XML: usize = 16 * 1024 * 1024;
+
+/// An immutable authorization for one exact DOCX package and one validated chart mapping.
+/// The digest prevents a caller from applying changes after either package part or any unrelated
+/// package content has changed since the mapping was produced.
+#[derive(Clone, Debug)]
+#[allow(dead_code)] // Internal transaction API is intentionally staged before editor integration.
+pub(crate) struct ChartEditPlan {
+    chart_part: String,
+    workbook_part: String,
+    package_digest: [u8; 32],
+    mapping: ChartMapping,
+}
+
+#[derive(Clone, Debug, Default)]
+#[allow(dead_code)] // Internal transaction API is intentionally staged before editor integration.
+pub(crate) struct ChartDataChanges {
+    pub series: Vec<SeriesChanges>,
+}
+
+#[derive(Clone, Debug, Default)]
+#[allow(dead_code)] // Internal transaction API is intentionally staged before editor integration.
+pub(crate) struct SeriesChanges {
+    pub name: Option<String>,
+    pub categories: Option<Vec<String>>,
+    pub values: Option<Vec<f64>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct TextTarget {
+    worksheet_part: String,
+    address: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum CellEdit {
+    Text(String),
+    Number(f64),
+}
+
+#[derive(Clone, Debug)]
+struct Splice {
+    range: std::ops::Range<usize>,
+    replacement: Vec<u8>,
+}
+
+/// Create a transaction plan only for a chart that the read-only mapper validates.
+#[allow(dead_code)] // Internal transaction API is intentionally staged before editor integration.
+pub(crate) fn prepare_chart_edit(docx: &[u8], chart_part: &str) -> Result<ChartEditPlan, DocxError> {
+    let package = Package::open(docx)?;
+    crate::preservation::validate(&package)?;
+    if !safe_package_part(chart_part) {
+        return Err(transaction_error("chart part path is unsafe"));
+    }
+    let content_types = ContentTypes::read(&package);
+    if content_types.of(chart_part) != Some(CHART_CONTENT_TYPE) {
+        return Err(transaction_error("chart part has a missing or unsupported content type"));
+    }
+    let chart = package.get(chart_part).ok_or_else(|| transaction_error("chart part is missing"))?;
+    if !has_incoming_chart_relationship(&package, chart_part)? {
+        return Err(transaction_error("chart part has no package relationship to it"));
+    }
+    let chart_rels = package.rels_checked(chart_part)?;
+    let workbook_rels: Vec<_> = chart_rels.list.iter().filter(|r| rel_is(&r.kind, &format!("{XLSX_OFFICE}package"))).collect();
+    if workbook_rels.len() != 1 {
+        return Err(transaction_error("chart must have exactly one embedded workbook relationship"));
+    }
+    let workbook_rel = workbook_rels.first().ok_or_else(|| transaction_error("embedded workbook relationship is unavailable"))?;
+    if workbook_rel.external || !safe_package_part(&workbook_rel.target) {
+        return Err(transaction_error("external or unsafe workbook relationships cannot be edited"));
+    }
+    let workbook = package.get(&workbook_rel.target).ok_or_else(|| transaction_error("embedded workbook part is missing"))?;
+    let mapping = match map_chart(chart, &chart_rels.list, &workbook_rel.target, workbook) {
+        Classification::Mappable(mapping) => mapping,
+        Classification::Unsupported(reason) => return Err(transaction_error(format!("chart is read-only: {reason}"))),
+        Classification::Ambiguous(reason) => return Err(transaction_error(format!("chart mapping is ambiguous: {reason}"))),
+        Classification::Inconsistent(reason) => return Err(transaction_error(format!("chart data is inconsistent: {reason}"))),
+    };
+    let workbook_types = ContentTypes::read(&Package::open(workbook)?);
+    if workbook_types.of("xl/workbook.xml") != Some(XLSX_CONTENT_TYPE) {
+        return Err(transaction_error("embedded workbook content type is unsupported"));
+    }
+    Ok(ChartEditPlan {
+        chart_part: chart_part.to_string(),
+        workbook_part: workbook_rel.target.clone(),
+        package_digest: Sha256::digest(docx).into(),
+        mapping,
+    })
+}
+
+/// Apply a constrained chart edit as one all-or-nothing package transaction.
+///
+/// No caller-owned bytes are mutated. Both chart caches and exactly mapped workbook cells are
+/// staged, revalidated, and returned as a new DOCX only after package and mapping validation pass.
+#[allow(dead_code)] // Internal transaction API is intentionally staged before editor integration.
+pub(crate) fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataChanges) -> Result<Vec<u8>, DocxError> {
+    if Sha256::digest(docx).as_slice() != plan.package_digest {
+        return Err(transaction_error("stale chart mapping: original package bytes have changed"));
+    }
+    validate_changes(&plan.mapping, changes)?;
+    let package = Package::open(docx)?;
+    crate::preservation::validate(&package)?;
+    let chart = package.get(&plan.chart_part).ok_or_else(|| transaction_error("planned chart part is missing"))?;
+    let rels = package.rels_checked(&plan.chart_part)?;
+    let workbook_rel = rels
+        .list
+        .iter()
+        .find(|r| rel_is(&r.kind, &format!("{XLSX_OFFICE}package")) && !r.external)
+        .ok_or_else(|| transaction_error("planned embedded workbook relationship is missing"))?;
+    if workbook_rel.target != plan.workbook_part {
+        return Err(transaction_error("stale chart mapping: workbook relationship changed"));
+    }
+    let workbook = package.get(&plan.workbook_part).ok_or_else(|| transaction_error("planned workbook part is missing"))?;
+    let fresh = match map_chart(chart, &rels.list, &plan.workbook_part, workbook) {
+        Classification::Mappable(mapping) => mapping,
+        Classification::Unsupported(reason) => return Err(transaction_error(format!("chart became read-only: {reason}"))),
+        Classification::Ambiguous(reason) => return Err(transaction_error(format!("chart mapping became ambiguous: {reason}"))),
+        Classification::Inconsistent(reason) => return Err(transaction_error(format!("chart data became inconsistent: {reason}"))),
+    };
+    if fresh != plan.mapping {
+        return Err(transaction_error("stale chart mapping: mapped cells or source values changed"));
+    }
+
+    let mut expected = fresh.clone();
+    let chart_bytes = update_chart_caches(chart, changes)?;
+    let cell_edits = build_cell_edits(&fresh, changes, &mut expected)?;
+    let workbook_bytes = apply_workbook_edits(workbook, &cell_edits)?;
+    let mut replacements = BTreeMap::from([(plan.chart_part.clone(), chart_bytes), (plan.workbook_part.clone(), workbook_bytes)]);
+
+    let entries: Vec<(String, Vec<u8>)> =
+        package.entries().map(|(name, bytes)| (name.to_string(), replacements.remove(name).unwrap_or_else(|| bytes.to_vec()))).collect();
+    if !replacements.is_empty() {
+        return Err(transaction_error("transaction attempted to add or replace an unplanned package part"));
+    }
+    let output = zip_entries(&entries)?;
+    let reopened = Package::open(&output)?;
+    crate::preservation::validate(&reopened)?;
+    let result_chart = reopened.get(&plan.chart_part).ok_or_else(|| transaction_error("updated chart part is missing"))?;
+    let result_rels = reopened.rels_checked(&plan.chart_part)?;
+    let result_workbook = reopened.get(&plan.workbook_part).ok_or_else(|| transaction_error("updated workbook part is missing"))?;
+    match map_chart(result_chart, &result_rels.list, &plan.workbook_part, result_workbook) {
+        Classification::Mappable(mapping) if mapping == expected => Ok(output),
+        Classification::Mappable(_) => Err(transaction_error("post-update chart/workbook values do not match the requested edit")),
+        Classification::Unsupported(reason) | Classification::Ambiguous(reason) | Classification::Inconsistent(reason) => {
+            Err(transaction_error(format!("post-update validation failed: {reason}")))
+        }
+    }
+}
+
+fn transaction_error(reason: impl Into<String>) -> DocxError {
+    DocxError::Preservation(format!("chart transaction: {}", reason.into()))
+}
+
+fn safe_package_part(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 1024
+        && !path.contains(['\\', ':', '#', '?'])
+        && path.split('/').all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
+fn has_incoming_chart_relationship(package: &Package, chart_part: &str) -> Result<bool, DocxError> {
+    for (path, _) in package.entries().filter(|(path, _)| path.ends_with(".rels")) {
+        let owner = if path == "_rels/.rels" {
+            String::new()
+        } else {
+            let (directory, filename) = path.rsplit_once('/').ok_or_else(|| transaction_error("invalid relationship path"))?;
+            let directory =
+                directory.strip_suffix("_rels").ok_or_else(|| transaction_error("relationship outside an _rels directory"))?.trim_end_matches('/');
+            let filename = filename.strip_suffix(".rels").ok_or_else(|| transaction_error("invalid relationship filename"))?;
+            if directory.is_empty() { filename.to_string() } else { format!("{directory}/{filename}") }
+        };
+        if package.rels_checked(&owner)?.list.iter().any(|r| !r.external && r.target == chart_part && rel_is(&r.kind, &format!("{XLSX_OFFICE}chart")))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn validate_changes(mapping: &ChartMapping, changes: &ChartDataChanges) -> Result<(), DocxError> {
+    if changes.series.len() != mapping.series.len() {
+        return Err(transaction_error("change set must contain exactly one entry per chart series"));
+    }
+    let mut any = false;
+    for (source, change) in mapping.series.iter().zip(&changes.series) {
+        if let Some(name) = &change.name {
+            any = true;
+            validate_label(name)?;
+            if !matches!(&source.name.source, CellSource::SharedString(_) | CellSource::InlineString | CellSource::StringValue) {
+                return Err(transaction_error("series name is not stored in an editable string cell"));
+            }
+        }
+        if let Some(categories) = &change.categories {
+            any = true;
+            if categories.len() != source.categories.len() {
+                return Err(transaction_error("category edit length must match the validated chart range"));
+            }
+            for label in categories {
+                validate_label(label)?;
+            }
+            if source
+                .categories
+                .iter()
+                .any(|cell| !matches!(&cell.source, CellSource::SharedString(_) | CellSource::InlineString | CellSource::StringValue))
+            {
+                return Err(transaction_error("category range contains a non-string cell"));
+            }
+        }
+        if let Some(values) = &change.values {
+            any = true;
+            if values.len() != source.values.len() {
+                return Err(transaction_error("numeric edit length must match the validated chart range"));
+            }
+            if values.iter().any(|value| !value.is_finite()) {
+                return Err(transaction_error("chart values must be finite numbers"));
+            }
+        }
+    }
+    if !any {
+        return Err(transaction_error("change set contains no edits"));
+    }
+    Ok(())
+}
+
+fn validate_label(value: &str) -> Result<(), DocxError> {
+    if value.len() > MAX_LABEL_BYTES
+        || value.trim() != value
+        || value.chars().any(|c| !(c == '\t' || c == '\n' || c == '\r' || c >= '\u{20}') || matches!(c, '\u{fffe}' | '\u{ffff}'))
+    {
+        return Err(transaction_error("labels must be XML-safe, at most 4096 bytes, and have no leading or trailing whitespace"));
+    }
+    Ok(())
+}
+
+fn build_cell_edits(
+    mapping: &ChartMapping,
+    changes: &ChartDataChanges,
+    expected: &mut ChartMapping,
+) -> Result<BTreeMap<TextTarget, CellEdit>, DocxError> {
+    let mut edits = BTreeMap::new();
+    for (series_index, (series, change)) in mapping.series.iter().zip(&changes.series).enumerate() {
+        let expected_series = expected.series.get_mut(series_index).ok_or_else(|| transaction_error("series mapping changed during transaction"))?;
+        if let Some(value) = &change.name {
+            add_text_edit(&mut edits, &series.name, value)?;
+            expected_series.name.value = value.clone();
+        }
+        if let Some(values) = &change.categories {
+            for ((cell, value), expected_cell) in series.categories.iter().zip(values).zip(&mut expected_series.categories) {
+                add_text_edit(&mut edits, cell, value)?;
+                expected_cell.value = value.clone();
+            }
+        }
+        if let Some(values) = &change.values {
+            for ((cell, value), expected_cell) in series.values.iter().zip(values).zip(&mut expected_series.values) {
+                add_value_edit(&mut edits, cell, *value)?;
+                expected_cell.value = *value;
+            }
+        }
+    }
+    Ok(edits)
+}
+
+fn add_text_edit(edits: &mut BTreeMap<TextTarget, CellEdit>, cell: &MappedCell<String>, value: &str) -> Result<(), DocxError> {
+    insert_cell_edit(
+        edits,
+        TextTarget { worksheet_part: cell.worksheet_part.clone(), address: cell.address.clone() },
+        CellEdit::Text(value.to_string()),
+    )
+}
+
+fn add_value_edit(edits: &mut BTreeMap<TextTarget, CellEdit>, cell: &MappedCell<f64>, value: f64) -> Result<(), DocxError> {
+    insert_cell_edit(edits, TextTarget { worksheet_part: cell.worksheet_part.clone(), address: cell.address.clone() }, CellEdit::Number(value))
+}
+
+fn insert_cell_edit(edits: &mut BTreeMap<TextTarget, CellEdit>, target: TextTarget, edit: CellEdit) -> Result<(), DocxError> {
+    if let Some(previous) = edits.get(&target) {
+        if previous != &edit {
+            return Err(transaction_error(format!("conflicting duplicate update for {}!{}", target.worksheet_part, target.address)));
+        }
+        return Ok(());
+    }
+    edits.insert(target, edit);
+    Ok(())
+}
+
+fn update_chart_caches(chart: &[u8], changes: &ChartDataChanges) -> Result<Vec<u8>, DocxError> {
+    let nodes = preserved_xml::inspect(chart)?;
+    let root = nodes.first().ok_or_else(|| transaction_error("chart XML has no root"))?;
+    let bar_charts = descendants(&nodes, 0, CHART_NS, "barChart");
+    if bar_charts.len() != 1 {
+        return Err(transaction_error("chart no longer has one supported column-chart cache"));
+    }
+    let chart_series = child_indices(&nodes, *bar_charts.first().ok_or_else(|| transaction_error("chart plot area is missing"))?, CHART_NS, "ser");
+    if chart_series.len() != changes.series.len() {
+        return Err(transaction_error("chart series changed after mapping"));
+    }
+    let _ = root;
+    let mut splices = Vec::new();
+    for (series_index, (series_node, change)) in chart_series.iter().zip(&changes.series).enumerate() {
+        for (container_name, cache_name, values) in [
+            ("tx", "strCache", change.name.as_ref().map(|value| vec![value.clone()])),
+            ("cat", "strCache", change.categories.clone()),
+            ("val", "numCache", change.values.as_ref().map(|values| values.iter().map(ToString::to_string).collect())),
+        ] {
+            let Some(values) = values else { continue };
+            let container = child_index(&nodes, *series_node, CHART_NS, container_name)
+                .ok_or_else(|| transaction_error(format!("series {series_index} is missing {container_name}")))?;
+            let references = child_indices_any(&nodes, container, CHART_NS, &["strRef", "numRef"]);
+            if references.len() != 1 {
+                return Err(transaction_error("chart source has multiple or unsupported references"));
+            }
+            let reference = *references.first().ok_or_else(|| transaction_error("chart source reference is missing"))?;
+            let caches = child_indices(&nodes, reference, CHART_NS, cache_name);
+            if caches.len() != 1 {
+                return Err(transaction_error("chart source has multiple or missing caches"));
+            }
+            let cache = *caches.first().ok_or_else(|| transaction_error("chart source cache is missing"))?;
+            let points = child_indices(&nodes, cache, CHART_NS, "pt");
+            if points.len() != values.len() {
+                return Err(transaction_error("chart cache length changed after mapping"));
+            }
+            for (point, value) in points.into_iter().zip(values) {
+                let point_index = nodes
+                    .get(point)
+                    .and_then(|node| node.attrs.get(&qualified("", "idx")))
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .ok_or_else(|| transaction_error("chart cache point index is malformed"))?;
+                let expected_index = splices_in_cache_index(&nodes, cache, point)?;
+                if expected_index != point_index {
+                    return Err(transaction_error("chart cache points are not in their expected order"));
+                }
+                let value_node = child_index(&nodes, point, CHART_NS, "v").ok_or_else(|| transaction_error("chart cache point has no value"))?;
+                add_text_node_splice(chart, &nodes, value_node, &value, &mut splices)?;
+            }
+        }
+    }
+    apply_splices(chart, splices)
+}
+
+fn splices_in_cache_index(nodes: &[Element], cache: usize, point: usize) -> Result<usize, DocxError> {
+    child_indices(nodes, cache, CHART_NS, "pt")
+        .iter()
+        .position(|candidate| *candidate == point)
+        .ok_or_else(|| transaction_error("chart cache point is not owned by its cache"))
+}
+
+fn child_indices(nodes: &[Element], parent: usize, namespace: &str, local: &str) -> Vec<usize> {
+    nodes
+        .get(parent)
+        .map(|node| node.children.iter().filter_map(|index| nodes.get(*index).filter(|child| child.is(namespace, local)).map(|_| *index)).collect())
+        .unwrap_or_default()
+}
+
+fn child_indices_any(nodes: &[Element], parent: usize, namespace: &str, locals: &[&str]) -> Vec<usize> {
+    nodes
+        .get(parent)
+        .map(|node| {
+            node.children
+                .iter()
+                .filter_map(|index| nodes.get(*index).filter(|child| locals.iter().any(|local| child.is(namespace, local))).map(|_| *index))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn child_index(nodes: &[Element], parent: usize, namespace: &str, local: &str) -> Option<usize> {
+    child_indices(nodes, parent, namespace, local).into_iter().next()
+}
+
+fn descendants(nodes: &[Element], parent: usize, namespace: &str, local: &str) -> Vec<usize> {
+    let mut found = Vec::new();
+    let mut pending = vec![parent];
+    while let Some(index) = pending.pop() {
+        if let Some(node) = nodes.get(index) {
+            for child in node.children.iter().rev() {
+                if let Some(element) = nodes.get(*child) {
+                    if element.is(namespace, local) {
+                        found.push(*child);
+                    }
+                    pending.push(*child);
+                }
+            }
+        }
+    }
+    found
+}
+
+fn add_text_node_splice(source: &[u8], nodes: &[Element], index: usize, value: &str, splices: &mut Vec<Splice>) -> Result<(), DocxError> {
+    let node = nodes.get(index).ok_or_else(|| transaction_error("XML text node is unavailable"))?;
+    if node.empty || !node.children.is_empty() {
+        return Err(transaction_error("mapped XML value is not a simple text node"));
+    }
+    let raw_content = source.get(node.content.clone()).ok_or_else(|| transaction_error("XML text content span is invalid"))?;
+    if [b"<!--".as_slice(), b"<![CDATA[".as_slice(), b"<?".as_slice()]
+        .iter()
+        .any(|marker| raw_content.windows(marker.len()).any(|window| window == *marker))
+    {
+        return Err(transaction_error("comments, CDATA and processing instructions in mapped values are read-only"));
+    }
+    let encoded = escape_xml_text(value)?;
+    if node.content.end > source.len() || node.content.start > node.content.end {
+        return Err(transaction_error("XML text span is invalid"));
+    }
+    splices.push(Splice { range: node.content.clone(), replacement: encoded.into_bytes() });
+    Ok(())
+}
+
+fn escape_xml_text(value: &str) -> Result<String, DocxError> {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '\r' => escaped.push_str("&#13;"),
+            '\n' => escaped.push_str("&#10;"),
+            '\t' => escaped.push_str("&#9;"),
+            c if c >= '\u{20}' && !matches!(c, '\u{fffe}' | '\u{ffff}') => escaped.push(c),
+            _ => return Err(transaction_error("label contains a forbidden XML character")),
+        }
+    }
+    Ok(escaped)
+}
+
+fn apply_splices(source: &[u8], mut splices: Vec<Splice>) -> Result<Vec<u8>, DocxError> {
+    splices.sort_by_key(|splice| splice.range.start);
+    for adjacent in splices.windows(2) {
+        if adjacent.first().is_some_and(|a| a.range.end > adjacent.get(1).map_or(0, |b| b.range.start)) {
+            return Err(transaction_error("XML updates overlap"));
+        }
+    }
+    let final_len = splices
+        .iter()
+        .try_fold(source.len(), |length, splice| {
+            length.checked_sub(splice.range.len()).and_then(|length| length.checked_add(splice.replacement.len()))
+        })
+        .ok_or_else(|| transaction_error("XML updated size overflow"))?;
+    if final_len > MAX_MUTATION_XML {
+        return Err(transaction_error("updated XML exceeds the preservation limit"));
+    }
+    let mut output = Vec::with_capacity(final_len);
+    let mut position = 0usize;
+    for splice in splices {
+        let untouched = source.get(position..splice.range.start).ok_or_else(|| transaction_error("XML splice range is out of bounds"))?;
+        output.extend_from_slice(untouched);
+        output.extend_from_slice(&splice.replacement);
+        position = splice.range.end;
+    }
+    output.extend_from_slice(source.get(position..).ok_or_else(|| transaction_error("XML splice tail is out of bounds"))?);
+    Ok(output)
+}
+
+fn apply_workbook_edits(workbook: &[u8], edits: &BTreeMap<TextTarget, CellEdit>) -> Result<Vec<u8>, DocxError> {
+    let package = Package::open(workbook).map_err(|error| transaction_error(format!("embedded XLSX is unsafe: {error}")))?;
+    let workbook_part = "xl/workbook.xml";
+    let workbook_xml = package.get(workbook_part).ok_or_else(|| transaction_error("XLSX workbook.xml is missing"))?;
+    let workbook_nodes = preserved_xml::inspect(workbook_xml)?;
+    let rels = package.rels_checked(workbook_part)?;
+    let sheets_node =
+        descendants(&workbook_nodes, 0, SHEET_NS, "sheets").first().copied().ok_or_else(|| transaction_error("XLSX sheet list is missing"))?;
+    let sheet_nodes = child_indices(&workbook_nodes, sheets_node, SHEET_NS, "sheet");
+    let mut all_sheet_parts = BTreeSet::new();
+    for sheet in sheet_nodes {
+        let rel_id = workbook_nodes
+            .get(sheet)
+            .and_then(|node| node.attrs.get(&qualified(DOC_REL_NS, "id")))
+            .ok_or_else(|| transaction_error("XLSX sheet relationship ID is missing"))?;
+        let rel = rels
+            .by_id(rel_id)
+            .filter(|rel| !rel.external && rel_is(&rel.kind, &format!("{XLSX_OFFICE}worksheet")))
+            .ok_or_else(|| transaction_error("XLSX sheet relationship is invalid"))?;
+        all_sheet_parts.insert(rel.target.clone());
+    }
+    let shared_rel = rels.by_type(&format!("{XLSX_OFFICE}sharedStrings"));
+    let shared_part = shared_rel.map(|rel| rel.target.clone());
+    let mut splices: BTreeMap<String, Vec<Splice>> = BTreeMap::new();
+    let mut shared_edits: BTreeMap<usize, String> = BTreeMap::new();
+    let mut shared_target_uses: BTreeMap<usize, BTreeSet<TextTarget>> = BTreeMap::new();
+
+    for (target, edit) in edits {
+        let source_xml = package.get(&target.worksheet_part).ok_or_else(|| transaction_error("mapped worksheet is missing"))?;
+        let nodes = preserved_xml::inspect(source_xml)?;
+        let cell_node = find_cell(&nodes, &target.address).ok_or_else(|| transaction_error("mapped worksheet cell disappeared"))?;
+        let cell = nodes.get(cell_node).ok_or_else(|| transaction_error("mapped worksheet cell is unavailable"))?;
+        if !descendants(&nodes, cell_node, SHEET_NS, "f").is_empty() {
+            return Err(transaction_error("formula-driven cells are read-only"));
+        }
+        match edit {
+            CellEdit::Number(value) => {
+                if cell.attrs.get(&qualified("", "t")).is_some_and(|kind| !matches!(kind.as_str(), "n")) {
+                    return Err(transaction_error("numeric target cell changed type"));
+                }
+                let value_node =
+                    child_index(&nodes, cell_node, SHEET_NS, "v").ok_or_else(|| transaction_error("numeric target cell has no value"))?;
+                let canonical = value.to_string();
+                add_text_node_splice(source_xml, &nodes, value_node, &canonical, splices.entry(target.worksheet_part.clone()).or_default())?;
+            }
+            CellEdit::Text(value) => match cell.attrs.get(&qualified("", "t")).map(String::as_str).unwrap_or("n") {
+                "inlineStr" => {
+                    let inline =
+                        child_index(&nodes, cell_node, SHEET_NS, "is").ok_or_else(|| transaction_error("inline string cell changed structure"))?;
+                    let text = child_index(&nodes, inline, SHEET_NS, "t")
+                        .filter(|_| child_indices(&nodes, inline, SHEET_NS, "r").is_empty())
+                        .ok_or_else(|| transaction_error("rich or unsupported inline strings are read-only"))?;
+                    add_text_node_splice(source_xml, &nodes, text, value, splices.entry(target.worksheet_part.clone()).or_default())?;
+                }
+                "str" => {
+                    let value_node = child_index(&nodes, cell_node, SHEET_NS, "v").ok_or_else(|| transaction_error("string cell has no value"))?;
+                    add_text_node_splice(source_xml, &nodes, value_node, value, splices.entry(target.worksheet_part.clone()).or_default())?;
+                }
+                "s" => {
+                    let shared_index = child_index(&nodes, cell_node, SHEET_NS, "v")
+                        .and_then(|value_node| nodes.get(value_node))
+                        .and_then(|value_node| value_node.text.parse::<usize>().ok())
+                        .ok_or_else(|| transaction_error("shared-string cell index is invalid"))?;
+                    if let Some(previous) = shared_edits.get(&shared_index)
+                        && previous != value
+                    {
+                        return Err(transaction_error(format!("conflicting updates target shared-string item {shared_index}")));
+                    }
+                    shared_edits.insert(shared_index, value.clone());
+                    shared_target_uses.entry(shared_index).or_default().insert(target.clone());
+                }
+                _ => return Err(transaction_error("mapped string cell has an unsupported storage type")),
+            },
+        }
+    }
+
+    if !shared_edits.is_empty() {
+        let shared_part = shared_part.ok_or_else(|| transaction_error("shared-string relationship is missing"))?;
+        let mapped_targets: BTreeSet<_> =
+            edits.iter().filter_map(|(target, edit)| matches!(edit, CellEdit::Text(_)).then_some(target.clone())).collect();
+        for part in &all_sheet_parts {
+            let bytes = package.get(part).ok_or_else(|| transaction_error(format!("worksheet {part} is missing")))?;
+            let nodes = preserved_xml::inspect(bytes)?;
+            for cell_node in descendants(&nodes, 0, SHEET_NS, "c") {
+                let Some(cell) = nodes.get(cell_node) else { continue };
+                if cell.attrs.get(&qualified("", "t")).map(String::as_str) != Some("s") {
+                    continue;
+                }
+                let Some(index) = child_index(&nodes, cell_node, SHEET_NS, "v")
+                    .and_then(|value_node| nodes.get(value_node))
+                    .and_then(|value_node| value_node.text.parse::<usize>().ok())
+                else {
+                    continue;
+                };
+                let Some(new_value) = shared_edits.get(&index) else { continue };
+                let address = cell.attrs.get(&qualified("", "r")).cloned().ok_or_else(|| transaction_error("shared-string cell has no address"))?;
+                let target = TextTarget { worksheet_part: part.clone(), address };
+                if !mapped_targets.contains(&target) || shared_target_uses.get(&index).is_none_or(|uses| !uses.contains(&target)) {
+                    return Err(transaction_error(format!("shared-string item {index} is also used by an unmapped cell")));
+                }
+                if edits.get(&target) != Some(&CellEdit::Text(new_value.clone())) {
+                    return Err(transaction_error(format!("shared-string item {index} has a conflicting cell edit")));
+                }
+            }
+        }
+        let shared_xml = package.get(&shared_part).ok_or_else(|| transaction_error("shared strings part is missing"))?;
+        let shared_nodes = preserved_xml::inspect(shared_xml)?;
+        let item_nodes = child_indices(&shared_nodes, 0, SHEET_NS, "si");
+        for (index, value) in shared_edits {
+            let item = *item_nodes.get(index).ok_or_else(|| transaction_error("shared-string item index is out of range"))?;
+            let text_nodes = descendants(&shared_nodes, item, SHEET_NS, "t");
+            if text_nodes.len() != 1 || !child_indices(&shared_nodes, item, SHEET_NS, "r").is_empty() {
+                return Err(transaction_error("rich shared strings are read-only"));
+            }
+            add_text_node_splice(
+                shared_xml,
+                &shared_nodes,
+                *text_nodes.first().ok_or_else(|| transaction_error("shared-string text is missing"))?,
+                &value,
+                splices.entry(shared_part.clone()).or_default(),
+            )?;
+        }
+    }
+
+    let mut replacements = BTreeMap::new();
+    for (part, part_splices) in splices {
+        let original = package.get(&part).ok_or_else(|| transaction_error("updated XLSX part disappeared"))?;
+        replacements.insert(part, apply_splices(original, part_splices)?);
+    }
+    let entries =
+        package.entries().map(|(name, bytes)| (name.to_string(), replacements.remove(name).unwrap_or_else(|| bytes.to_vec()))).collect::<Vec<_>>();
+    if !replacements.is_empty() {
+        return Err(transaction_error("XLSX update referenced an unplanned part"));
+    }
+    let output = zip_entries(&entries)?;
+    let reopened = Package::open(&output).map_err(|error| transaction_error(format!("updated XLSX package is invalid: {error}")))?;
+    for (part, _) in edits
+        .keys()
+        .map(|target| target.worksheet_part.as_str())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|part| reopened.get(part).map(|bytes| (part, bytes)))
+    {
+        let _ = preserved_xml::inspect(reopened.get(part).ok_or_else(|| transaction_error("updated worksheet is missing"))?)?;
+    }
+    Ok(output)
+}
+
+fn find_cell(nodes: &[Element], address: &str) -> Option<usize> {
+    descendants(nodes, 0, SHEET_NS, "c")
+        .into_iter()
+        .find(|index| nodes.get(*index).and_then(|node| node.attrs.get(&qualified("", "r"))).is_some_and(|value| value == address))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,7 +1189,7 @@ mod tests {
             ("xl/worksheets/sheet1.xml".to_string(), format!(r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">{a1}{b1}{c1}<c r="D1" t="inlineStr"><is><t>Series two</t></is></c></row><row r="2">{b2}{c2}<c r="D2"><v>7</v></c></row><row r="3">{b3}<c r="C3"><v>84</v></c><c r="D3"><v>9</v></c></row><row r="4"><c r="D4"><v>12</v></c></row></sheetData></worksheet>"#).into_bytes()),
         ]);
         if shared {
-            files.insert("xl/sharedStrings.xml".into(), br#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>Series one</t></si><si><t>Same</t></si><si><r><t>Oth</t></r><r><t>er</t></r></si></sst>"#.to_vec());
+            files.insert("xl/sharedStrings.xml".into(), br#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>Series one</t></si><si><t>Same</t></si><si><t>Other</t></si></sst>"#.to_vec());
         }
         zip(&files)
     }
@@ -580,6 +1215,32 @@ mod tests {
             writer.write_all(bytes).unwrap();
         }
         writer.finish().unwrap().into_inner()
+    }
+
+    fn docx_fixture(shared: bool, second_series: bool, formula: bool, external: bool) -> Vec<u8> {
+        let base = crate::write(&wordcraft_doc::Document::from_text("transaction fixture")).unwrap();
+        let mut files = Package::open(&base).unwrap().entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let chart_xml = chart(second_series);
+        let embedded = workbook(formula, shared, false);
+        let document_rels = files.get("word/_rels/document.xml.rels").unwrap().clone();
+        let document_rels = String::from_utf8(document_rels).unwrap().replace(
+            "</Relationships>",
+            &format!(r#"<Relationship Id="chartForTransaction" Type="{XLSX_OFFICE}chart" Target="charts/chart1.xml"/></Relationships>"#),
+        );
+        files.insert("word/_rels/document.xml.rels".into(), document_rels.into_bytes());
+        let content_types = files.get("[Content_Types].xml").unwrap().clone();
+        let content_types = String::from_utf8(content_types).unwrap().replace(
+            "</Types>",
+            r#"<Override PartName="/word/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/><Override PartName="/word/embeddings/book.xlsx" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/></Types>"#,
+        );
+        files.insert("[Content_Types].xml".into(), content_types.into_bytes());
+        files.insert("word/charts/chart1.xml".into(), chart_xml);
+        files.insert(
+            "word/charts/_rels/chart1.xml.rels".into(),
+            format!(r#"<Relationships xmlns="{REL_NS}"><Relationship Id="book" Type="{XLSX_OFFICE}package" Target="../embeddings/book.xlsx"{}/></Relationships>"#, if external { r#" TargetMode="External""# } else { "" }).into_bytes(),
+        );
+        files.insert("word/embeddings/book.xlsx".into(), embedded);
+        zip(&files)
     }
 
     fn mapped(result: Classification) -> ChartMapping {
@@ -671,5 +1332,175 @@ mod tests {
         assert_eq!(range.sheet, "Research data");
         assert_eq!(range.cells.iter().map(cell_name).collect::<Vec<_>>(), ["B2", "B3", "B4"]);
         assert!(matches!(parse_range("Data!A1:A2,C1:C2"), Err(Reason::Unsupported(_))));
+    }
+
+    #[test]
+    fn chart_transaction_updates_inline_cells_and_caches_and_preserves_other_parts() {
+        let source = docx_fixture(false, false, false, false);
+        let source_before = source.clone();
+        let original = Package::open(&source).unwrap();
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let changes = ChartDataChanges {
+            series: vec![SeriesChanges {
+                name: Some("Updated series".into()),
+                categories: Some(vec!["Alpha".into(), "Beta & gamma".into(), "Gamma".into()]),
+                values: Some(vec![12.5, 45.0, 91.25]),
+            }],
+        };
+        let output = apply_chart_edit(&source, &plan, &changes).unwrap();
+        assert_eq!(source, source_before, "the source byte buffer is immutable");
+        let updated = Package::open(&output).unwrap();
+        let rels = updated.rels_checked("word/charts/chart1.xml").unwrap();
+        let workbook = updated.get("word/embeddings/book.xlsx").unwrap();
+        let map = mapped(map_chart(updated.get("word/charts/chart1.xml").unwrap(), &rels.list, "word/embeddings/book.xlsx", workbook));
+        assert_eq!(map.series[0].name.value, "Updated series");
+        assert_eq!(map.series[0].categories.iter().map(|c| c.value.as_str()).collect::<Vec<_>>(), ["Alpha", "Beta & gamma", "Gamma"]);
+        assert_eq!(map.series[0].values.iter().map(|cell| cell.value).collect::<Vec<_>>(), [12.5, 45.0, 91.25]);
+        for (name, bytes) in original.entries() {
+            if name != "word/charts/chart1.xml" && name != "word/embeddings/book.xlsx" {
+                assert_eq!(updated.get(name), Some(bytes), "unrelated DOCX part changed: {name}");
+            }
+        }
+        let old_xlsx = Package::open(original.get("word/embeddings/book.xlsx").unwrap()).unwrap();
+        let new_xlsx = Package::open(workbook).unwrap();
+        for (name, bytes) in old_xlsx.entries() {
+            if name != "xl/worksheets/sheet1.xml" {
+                assert_eq!(new_xlsx.get(name), Some(bytes), "unrelated XLSX part changed: {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn chart_transaction_updates_shared_strings_and_multiple_series() {
+        let source = docx_fixture(true, true, false, false);
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let output = apply_chart_edit(
+            &source,
+            &plan,
+            &ChartDataChanges {
+                series: vec![
+                    SeriesChanges {
+                        name: Some("Primary".into()),
+                        categories: Some(vec!["Repeated".into(), "New category".into(), "Repeated".into()]),
+                        values: Some(vec![11.0, 22.0, 33.0]),
+                    },
+                    SeriesChanges {
+                        name: Some("Secondary".into()),
+                        categories: Some(vec!["Repeated".into(), "New category".into(), "Repeated".into()]),
+                        values: Some(vec![44.0, 55.0, 66.0]),
+                    },
+                ],
+            },
+        )
+        .unwrap();
+        let package = Package::open(&output).unwrap();
+        let chart_rels = package.rels_checked("word/charts/chart1.xml").unwrap();
+        let mapping = mapped(map_chart(
+            package.get("word/charts/chart1.xml").unwrap(),
+            &chart_rels.list,
+            "word/embeddings/book.xlsx",
+            package.get("word/embeddings/book.xlsx").unwrap(),
+        ));
+        assert_eq!(mapping.series[0].name.value, "Primary");
+        assert_eq!(mapping.series[1].name.value, "Secondary");
+        assert_eq!(mapping.series[0].categories[1].value, "New category");
+        assert_eq!(mapping.series[0].values[2].value, 33.0);
+        assert_eq!(mapping.series[1].values[1].value, 55.0);
+        let xlsx = Package::open(package.get("word/embeddings/book.xlsx").unwrap()).unwrap();
+        assert!(std::str::from_utf8(xlsx.get("xl/sharedStrings.xml").unwrap()).unwrap().contains("Primary"));
+    }
+
+    #[test]
+    fn chart_transaction_rejects_unsafe_stale_or_conflicting_edits_without_output() {
+        let source = docx_fixture(false, true, false, false);
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let conflicting = ChartDataChanges {
+            series: vec![
+                SeriesChanges { categories: Some(vec!["First".into(), "Second".into(), "Third".into()]), ..Default::default() },
+                SeriesChanges { categories: Some(vec!["Conflict".into(), "Second".into(), "Third".into()]), ..Default::default() },
+            ],
+        };
+        assert!(apply_chart_edit(&source, &plan, &conflicting).is_err());
+        let invalid_number = ChartDataChanges {
+            series: vec![SeriesChanges { values: Some(vec![f64::NAN, 1.0, 2.0]), ..Default::default() }, SeriesChanges::default()],
+        };
+        assert!(apply_chart_edit(&source, &plan, &invalid_number).is_err());
+        let mut stale = source.clone();
+        let last = stale.len().saturating_sub(1);
+        if let Some(byte) = stale.get_mut(last) {
+            *byte ^= 1;
+        }
+        assert!(
+            apply_chart_edit(
+                &stale,
+                &plan,
+                &ChartDataChanges {
+                    series: vec![SeriesChanges { values: Some(vec![1.0, 2.0, 3.0]), ..Default::default() }, SeriesChanges::default()]
+                }
+            )
+            .is_err()
+        );
+        assert!(prepare_chart_edit(&source, "word/charts/../document.xml").is_err());
+        assert!(prepare_chart_edit(b"not a zip", "word/charts/chart1.xml").is_err());
+    }
+
+    #[test]
+    fn chart_transaction_refuses_formula_driven_and_external_workbooks() {
+        let formula = docx_fixture(false, false, true, false);
+        assert!(prepare_chart_edit(&formula, "word/charts/chart1.xml").is_err());
+        let external = docx_fixture(false, false, false, true);
+        assert!(prepare_chart_edit(&external, "word/charts/chart1.xml").is_err());
+    }
+
+    #[test]
+    fn chart_transaction_rejects_cache_mismatch_rich_strings_and_unmapped_shared_aliases() {
+        let mut mismatched = Package::open(&docx_fixture(false, false, false, false))
+            .unwrap()
+            .entries()
+            .map(|(n, b)| (n.to_string(), b.to_vec()))
+            .collect::<BTreeMap<_, _>>();
+        let bad_chart =
+            String::from_utf8(mismatched.get("word/charts/chart1.xml").unwrap().clone()).unwrap().replace("<c:v>84</c:v>", "<c:v>85</c:v>");
+        mismatched.insert("word/charts/chart1.xml".into(), bad_chart.into_bytes());
+        assert!(prepare_chart_edit(&zip(&mismatched), "word/charts/chart1.xml").is_err());
+
+        let source = docx_fixture(true, false, false, false);
+        let source_before = source.clone();
+        let rich_changes = ChartDataChanges {
+            series: vec![SeriesChanges { categories: Some(vec!["Changed".into(), "Other".into(), "Changed".into()]), ..Default::default() }],
+        };
+        let mut rich_files = Package::open(&source).unwrap().entries().map(|(n, b)| (n.to_string(), b.to_vec())).collect::<BTreeMap<_, _>>();
+        let mut xlsx = Package::open(rich_files.get("word/embeddings/book.xlsx").unwrap())
+            .unwrap()
+            .entries()
+            .map(|(n, b)| (n.to_string(), b.to_vec()))
+            .collect::<BTreeMap<_, _>>();
+        let strings = String::from_utf8(xlsx.get("xl/sharedStrings.xml").unwrap().clone())
+            .unwrap()
+            .replace("<si><t>Other</t></si>", "<si><r><t>Oth</t></r><r><t>er</t></r></si>");
+        xlsx.insert("xl/sharedStrings.xml".into(), strings.into_bytes());
+        rich_files.insert("word/embeddings/book.xlsx".into(), zip(&xlsx));
+        let rich_source = zip(&rich_files);
+        let rich_plan = prepare_chart_edit(&rich_source, "word/charts/chart1.xml").unwrap();
+        assert!(apply_chart_edit(&rich_source, &rich_plan, &rich_changes).is_err());
+
+        let mut alias_files = Package::open(&source).unwrap().entries().map(|(n, b)| (n.to_string(), b.to_vec())).collect::<BTreeMap<_, _>>();
+        let mut xlsx = Package::open(alias_files.get("word/embeddings/book.xlsx").unwrap())
+            .unwrap()
+            .entries()
+            .map(|(n, b)| (n.to_string(), b.to_vec()))
+            .collect::<BTreeMap<_, _>>();
+        let sheet = String::from_utf8(xlsx.get("xl/worksheets/sheet1.xml").unwrap().to_vec()).unwrap().replacen(
+            "</row>",
+            "<c r=\"E1\" t=\"s\"><v>0</v></c></row>",
+            1,
+        );
+        xlsx.insert("xl/worksheets/sheet1.xml".into(), sheet.into_bytes());
+        alias_files.insert("word/embeddings/book.xlsx".into(), zip(&xlsx));
+        let alias_source = zip(&alias_files);
+        let alias_plan = prepare_chart_edit(&alias_source, "word/charts/chart1.xml").unwrap();
+        let label_edit = ChartDataChanges { series: vec![SeriesChanges { name: Some("Renamed".into()), ..Default::default() }] };
+        assert!(apply_chart_edit(&alias_source, &alias_plan, &label_edit).is_err());
+        assert_eq!(source, source_before);
     }
 }
