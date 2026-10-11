@@ -7,7 +7,7 @@
 - Replaced the four externally called reusable workflows with local, reviewable snapshots based on `craft-common-actions@8f081ff5db115de44313c9db09415c359bf2ca01`; all nested action references are now full immutable SHAs. Removed the nested `install-linux-deps@main` path and kept its package setup while calling the pinned, checksum-verifying nfpm action directly.
 - Changed workflow permissions to read-only by default. Only the release-publishing job receives `contents: write`, and only on the `release` branch. Pull-request and scheduled workflows do not receive release secrets or write permissions.
 - Default nfpm, Trunk and actionlint downloads have pinned SHA-256 checks. Rust `stable`, FreeBSD's rustup bootstrap, WiX/NuGet package bytes, OS repositories and hosted runner images remain mutable dependencies; see [security notes](docs/save-security.md). The source review is focused, not an independent supply-chain audit.
-- PyYAML parsing, actionlint 1.7.12, full-SHA existence checks, all six `cargo xtask ci` gates, Linux GUI/CLI release builds, and release-mode Windows GNU/macOS target checks passed. GitHub-hosted workflow runs remain pending the push; this update has no Rust-source changes.
+- PyYAML parsing, actionlint 1.7.12, full-SHA existence checks, all six `cargo xtask ci` gates, Linux GUI/CLI release builds, and release-mode Windows GNU/macOS target checks passed. GitHub Packaging lint passed on the fork after fixing its ShellCheck finding. FreeBSD and Windows ARM64 runs on the same commit are still in progress; native release publishing was not triggered. This update has no Rust-source changes.
 
 ## Upstream synchronization (2026-10-11)
 
