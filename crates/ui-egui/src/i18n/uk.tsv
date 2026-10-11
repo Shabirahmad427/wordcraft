@@ -1333,3 +1333,24 @@
 	Content exceeds page area on {count} page(s).	Вміст виходить за межі області на {count} сторінках.
 	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	Перша проблема: {element} виходить за {axis} межу на сторінці {page}. Вміст збережено. Натисніть, щоб перейти туди.
 	Formatted	Відформатовано
+	Printer	Принтер
+	Select printer	Виберіть принтер
+	No printers are available.	Немає доступних принтерів.
+	Copies	Копії
+	Collate	Впорядкувати копії
+	Duplex	Двосторонній друк
+	One-sided	Односторонній
+	Two-sided, long edge	Двосторонній, довгий край
+	Two-sided, short edge	Двосторонній, короткий край
+	Paper size	Розмір паперу
+	Printer default	За замовчуванням принтера
+	Fit to page	Умістити на сторінці
+	All pages	Усі сторінки
+	Print preview	Попередній перегляд друку
+	Print dialog opened.	Діалог друку відкрито.
+	{selected} of {pages} pages	{selected} із {pages} сторінок
+	Copies must be between 1 and 999.	Кількість копій має бути від 1 до 999.
+	The system print dialog is unavailable. You can open a PDF copy to print from another viewer.	Системний діалог друку недоступний. Відкрийте PDF в іншому переглядачі для друку.
+	Page {page} has content that may be clipped.	Вміст сторінки {page} може бути обрізано.
+	Cancel print job	Скасувати завдання друку
+	Print job canceled.	Завдання друку скасовано.

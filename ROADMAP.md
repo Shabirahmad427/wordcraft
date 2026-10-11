@@ -28,7 +28,7 @@ from a signed download, without losing work.
 | **DOCX fidelity against a corpus of real-world files** (open, render, round-trip, fix) | Synthetic preservation regressions started; independent real-world corpus verification still missing |
 | Long footnotes that continue onto later pages | landed (40% page-area cap; continuation pages keep remaining lines visible). Multicolumn pagination now reserves note space page-wide and reflows earlier columns. Equivalent in-memory and DOCX-reopened notes match pixels when the in-memory story includes its OOXML self-reference mark. Word behavior, page-specific note styles and custom continuation separators remain unverified |
 | Balanced multicolumn layout | safe final-page paragraph balancing landed; complex-content and multi-page balancing remain open |
-| Native printing (today printing goes through PDF) | missing (≈4 h) |
+| Print preview and native printing | first version: shared-layout preview and CUPS queues on Linux; macOS code path unverified, Windows still opens PDF in its viewer |
 | Signed builds for macOS, Windows, Linux, FreeBSD and web | pipeline written; **needs the GitHub remote and release secrets from the owner** |
 | Real app icon / mascot art | placeholder; **needs owner art** |
 
@@ -107,7 +107,7 @@ the two partial ones (real-world .docx, printing) complete, roughly.
 | M7 | Review | **done** (margin balloons landed) |
 | M8 | View | mostly done |
 | M9 | Mailings | done (first version) |
-| M10 | File/Backstage | mostly done; native printing missing |
+| M10 | File/Backstage | mostly done; native print preview and Linux CUPS submission landed; Windows native controls remain missing |
 | M11 | Draw + objects | text wrap and text boxes done; ink, rotation, grouping missing |
 | M12 | Formats breadth (PDF, ODT, RTF, HTML, MD, TXT) | **done** (first versions) |
 | M13 | Performance budgets | on track (1.4 ms relayout) |
@@ -218,3 +218,10 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 - Merge conflict resolutions retained both sides’ tests and UI translations. DOCX scanner state now carries both package-wide preservation and the upstream embedded-part manifest; layout rendering retains upstream freeform geometry together with the fork’s overflow diagnostics and shape story references.
 - Merge validation: all six `cargo xtask ci` gates passed (fmt, Clippy, workspace tests, assets, layers, WASM); 1,137 tests passed, none failed (one ignored). Linux GUI and CLI release builds passed. A chart recovery regression found during the full suite is fixed by serializing the inert embedded drawing source and relationship references in recovery snapshots. The upstream Estonian catalog was completed for the new command labels.
 - Integration merge: `30b06020b20667bdc607dd6410eba97138e60fcd` (two-parent merge of fork `8086c22` and upstream `e4b7d15`). Upstream base tip: `e4b7d15`; 15 upstream commits integrated from shared base `79b6f33`. No Microsoft Word reference output was used. Verification is Linux-only; no Windows/macOS native build or print-driver test was run.
+
+## Print preview and CUPS submission (based on `6e2d3f7`, 2026-10-10)
+
+- File › Print renders a horizontal page preview from the same output `DocLayout` used to create the selected-page PDF. Range selection, overflow warnings and preview pagination therefore share one layout result. Printing leaves document contents and undo state unchanged.
+- Linux desktop integrates CUPS queues, copies/collation, discovered media and duplex modes, orientation/scaling requests, and cancellation for queued jobs. Errors and absent queues leave the PDF viewer fallback available. The web retains browser printing.
+- macOS is wired to the CUPS command interface but was not built or tested on macOS; Windows keeps the existing PDF-viewer flow without WordCraft printer controls. No physical printer or Microsoft Word comparison was available.
+- Focused tests cover page ranges, multipage selected-PDF preview, native option/cancel handoff and CUPS parsing/argument construction. All six `cargo xtask ci` gates pass; the workspace reports **1,141 passed, 0 failed, 1 ignored** across 49 suites. Linux GUI and CLI release builds pass. No physical printer, macOS build or Windows printer integration was available for verification.

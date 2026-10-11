@@ -1,11 +1,10 @@
-//! Desktop printing (#15): File › Print hands the document to the system's print flow.
+//! Desktop print services. Linux and macOS use the CUPS command interface to enumerate printers,
+//! query advertised options, submit the preview's PDF and cancel queued jobs. Other platforms
+//! retain the PDF-viewer flow through [`Services::print`].
 //!
-//! The app renders the document to PDF (`ui.print`, the Print button on File › Print) and calls
-//! [`Services::print`] with the bytes. Here they go to a fresh temporary file
-//! (`wordcraft-print-….pdf` in the OS temp folder), which is then opened without waiting for it:
-//! in Preview on macOS (`open -a Preview`), and in the default PDF app elsewhere (`xdg-open` and
-//! friends on Linux and BSD, the file association on Windows, via the `open` crate). The user
-//! prints from there through the system print dialog.
+//! The viewer fallback writes a private, unique `wordcraft-print-….pdf` in the OS temp directory
+//! and opens it without waiting: Preview on macOS, or the default PDF app elsewhere. Viewer-owned
+//! files are kept for an hour because the viewer may open them after the app returns.
 //!
 //! The viewer reads the file after we return, so it can't be removed right away: files older than
 //! [`KEEP`] are cleaned up off the UI thread when the app starts and after each print.
@@ -17,6 +16,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use wordcraft_ui_egui::printing::{Duplex, NativePrintBackend, NativePrintOptions, PrintJob, Printer, PrinterCapabilities};
 
 /// Temporary print files start with this and end with `.pdf`.
 const PREFIX: &str = "wordcraft-print-";
@@ -25,6 +26,154 @@ const KEEP: Duration = Duration::from_secs(60 * 60);
 
 /// The `Services::print` hook.
 pub type Hook = Box<dyn Fn(&[u8]) -> Result<(), String>>;
+
+/// CUPS/IPPs system spooler used on Linux and macOS. Windows keeps the PDF-viewer flow.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Default)]
+pub struct CupsBackend;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl NativePrintBackend for CupsBackend {
+    fn printers(&self) -> Result<Vec<Printer>, String> {
+        let output = std::process::Command::new("lpstat").arg("-e").output().map_err(|e| format!("CUPS is unavailable: {e}"))?;
+        if !output.status.success() {
+            return Err(command_error("lpstat", &output.stderr));
+        }
+        let defaults = std::process::Command::new("lpstat").arg("-d").output().ok();
+        let default = defaults
+            .filter(|out| out.status.success())
+            .and_then(|out| String::from_utf8_lossy(&out.stdout).split_once(':').map(|(_, name)| name.trim().to_string()))
+            .unwrap_or_default();
+        let names: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|name| {
+                !name.is_empty() && !name.starts_with('-') && !name.chars().any(|c| c.is_control() || c.is_whitespace() || matches!(c, '/' | '#'))
+            })
+            .map(str::to_string)
+            .collect();
+        Ok(names.into_iter().map(|name| Printer { is_default: name == default, name }).collect())
+    }
+
+    fn capabilities(&self, printer: &str) -> Result<PrinterCapabilities, String> {
+        if !self.printers()?.iter().any(|p| p.name == printer) {
+            return Err("The selected printer is no longer available.".into());
+        }
+        let output = std::process::Command::new("lpoptions")
+            .args(["-p", printer, "-l"])
+            .output()
+            .map_err(|e| format!("couldn't read printer options: {e}"))?;
+        if !output.status.success() {
+            return Err(command_error("lpoptions", &output.stderr));
+        }
+        Ok(parse_capabilities(&String::from_utf8_lossy(&output.stdout)))
+    }
+
+    fn submit(&self, pdf: &[u8], options: &NativePrintOptions) -> Result<PrintJob, String> {
+        if !self.printers()?.iter().any(|p| p.name == options.printer) {
+            return Err("The selected printer is no longer available.".into());
+        }
+        let caps = self.capabilities(&options.printer)?;
+        if options.duplex != Duplex::Simplex && !caps.duplex.contains(&options.duplex) {
+            return Err("The selected printer does not support that duplex mode.".into());
+        }
+        if options.media.as_ref().is_some_and(|media| !caps.media.contains(media)) {
+            return Err("The selected paper size is no longer available.".into());
+        }
+        if !(1..=999).contains(&options.copies) {
+            return Err("Copies must be between 1 and 999.".into());
+        }
+        let path = write_temp(&std::env::temp_dir(), pdf).map_err(|e| format!("couldn't prepare the print job: {e}"))?;
+        let output = std::process::Command::new("lp").args(lp_arguments(&path, options)).output();
+        let _ = std::fs::remove_file(&path);
+        let output = output.map_err(|e| format!("CUPS could not submit the print job: {e}"))?;
+        if !output.status.success() {
+            return Err(command_error("lp", &output.stderr));
+        }
+        let receipt = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let id = parse_job_id(&receipt);
+        Ok(PrintJob { id, receipt: if receipt.is_empty() { "Print job submitted.".into() } else { receipt } })
+    }
+
+    fn cancel(&self, job_id: &str) -> Result<(), String> {
+        if job_id.is_empty() || !job_id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.')) {
+            return Err("The print queue returned an invalid job identifier.".into());
+        }
+        let output = std::process::Command::new("cancel").arg(job_id).output().map_err(|e| format!("couldn't cancel print job: {e}"))?;
+        if output.status.success() { Ok(()) } else { Err(command_error("cancel", &output.stderr)) }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn parse_job_id(receipt: &str) -> Option<String> {
+    let id = receipt.split_once("request id is ")?.1.split_whitespace().next()?.trim_matches(|c: char| matches!(c, '(' | ')'));
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))).then(|| id.to_string())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn lp_arguments(path: &Path, options: &NativePrintOptions) -> Vec<std::ffi::OsString> {
+    let mut args = vec!["-d".into(), options.printer.clone().into(), "-n".into(), options.copies.to_string().into()];
+    if options.collated {
+        args.extend(["-o".into(), "collate=true".into()]);
+    }
+    let duplex = match options.duplex {
+        Duplex::Simplex => Some("sides=one-sided"),
+        Duplex::LongEdge => Some("sides=two-sided-long-edge"),
+        Duplex::ShortEdge => Some("sides=two-sided-short-edge"),
+    };
+    if let Some(value) = duplex {
+        args.extend(["-o".into(), value.into()]);
+    }
+    if let Some(media) = options.media.as_deref().filter(|s| !s.is_empty()) {
+        args.extend(["-o".into(), format!("media={media}").into()]);
+    }
+    if options.landscape {
+        args.extend(["-o".into(), "orientation-requested=4".into()]);
+    }
+    if options.fit_to_page {
+        args.extend(["-o".into(), "fit-to-page".into()]);
+    }
+    args.extend(["--".into(), path.as_os_str().to_owned()]);
+    args
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn parse_capabilities(text: &str) -> PrinterCapabilities {
+    let mut result = PrinterCapabilities::default();
+    for line in text.lines().take(256) {
+        let Some((property, values)) = line.split_once(':') else { continue };
+        let key = property.split('/').next().unwrap_or("").trim().to_ascii_lowercase();
+        let choices: Vec<&str> = values.split_whitespace().map(|s| s.trim_start_matches('*')).filter(|s| !s.is_empty()).take(128).collect();
+        if matches!(key.as_str(), "pagesize" | "media") {
+            result.media.extend(
+                choices.iter().filter(|s| s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))).map(|s| (*s).to_string()),
+            );
+        }
+        if key == "duplex" || key == "sides" {
+            if choices.iter().any(|s| matches!(*s, "DuplexNoTumble" | "two-sided-long-edge")) {
+                result.duplex.push(Duplex::LongEdge);
+            }
+            if choices.iter().any(|s| matches!(*s, "DuplexTumble" | "two-sided-short-edge")) {
+                result.duplex.push(Duplex::ShortEdge);
+            }
+        }
+    }
+    result.media.sort();
+    result.media.dedup();
+    result.duplex.sort_by_key(|d| match d {
+        Duplex::Simplex => 0,
+        Duplex::LongEdge => 1,
+        Duplex::ShortEdge => 2,
+    });
+    result.duplex.dedup();
+    result
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn command_error(command: &str, stderr: &[u8]) -> String {
+    let reason = String::from_utf8_lossy(stderr).trim().to_string();
+    if reason.is_empty() { format!("{command} failed.") } else { format!("{command}: {reason}") }
+}
 
 /// The desktop print hook; also clears print files left over from earlier runs.
 pub fn hook() -> Hook {
@@ -225,5 +374,52 @@ mod tests {
         assert!(fresh.exists() && other.exists() && !old.exists());
         assert_eq!(remove_stale(&dir.join("missing"), SystemTime::now(), KEEP), 0, "a missing folder is fine");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn cups_capabilities_and_options_map_only_supported_values() {
+        let caps = parse_capabilities(
+            "PageSize/Media Size: *Letter A4 Legal\nDuplex/2-Sided Printing: None *DuplexNoTumble DuplexTumble\nResolution/Quality: 300dpi 600dpi\n",
+        );
+        assert_eq!(caps.media, ["A4", "Legal", "Letter"]);
+        assert_eq!(caps.duplex, [Duplex::LongEdge, Duplex::ShortEdge]);
+
+        let args = lp_arguments(
+            Path::new("/tmp/document with spaces.pdf"),
+            &NativePrintOptions {
+                printer: "OfficeQueue".into(),
+                copies: 3,
+                collated: true,
+                duplex: Duplex::ShortEdge,
+                media: Some("A4".into()),
+                landscape: true,
+                fit_to_page: true,
+            },
+        );
+        let args: Vec<String> = args.into_iter().map(|arg| arg.to_string_lossy().into_owned()).collect();
+        assert_eq!(
+            args,
+            [
+                "-d",
+                "OfficeQueue",
+                "-n",
+                "3",
+                "-o",
+                "collate=true",
+                "-o",
+                "sides=two-sided-short-edge",
+                "-o",
+                "media=A4",
+                "-o",
+                "orientation-requested=4",
+                "-o",
+                "fit-to-page",
+                "--",
+                "/tmp/document with spaces.pdf"
+            ]
+        );
+        assert_eq!(parse_job_id("request id is OfficeQueue-41 (1 file(s))"), Some("OfficeQueue-41".into()));
+        assert_eq!(parse_job_id("unexpected lp output"), None);
     }
 }

@@ -5237,6 +5237,7 @@ dependencies = [
  "wordcraft-fonts",
  "wordcraft-geom",
  "wordcraft-layout",
+ "wordcraft-pdf",
  "wordcraft-render",
  "wordcraft-zotero",
 ]

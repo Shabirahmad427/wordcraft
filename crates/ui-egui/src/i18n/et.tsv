@@ -1334,3 +1334,24 @@
 	Page overflow	Lehe ületäitumine
 	Restore Recovery Version	Taasta versioon
 	Save Original Package	Salvesta algne pakett
+	Printer	Printer
+	Select printer	Vali printer
+	No printers are available.	Printersid pole saadaval.
+	Copies	Koopiad
+	Collate	Eksemplarhaaval
+	Duplex	Kahepoolne
+	One-sided	Ühepoolne
+	Two-sided, long edge	Kahepoolne, pikk serv
+	Two-sided, short edge	Kahepoolne, lühike serv
+	Paper size	Paberi suurus
+	Printer default	Printeri vaikevalik
+	Fit to page	Mahuta lehele
+	All pages	Kõik lehed
+	Print preview	Prindi eelvaade
+	Print dialog opened.	Printimisdialoog avati.
+	{selected} of {pages} pages	{selected} / {pages} lehte
+	Copies must be between 1 and 999.	Koopiate arv peab olema 1–999.
+	The system print dialog is unavailable. You can open a PDF copy to print from another viewer.	Süsteemi printimisdialoog pole saadaval. Ava PDF mõnes muus vaaturis printimiseks.
+	Page {page} has content that may be clipped.	Lehel {page} võib osa sisust kärbitud olla.
+	Cancel print job	Tühista printimistöö
+	Print job canceled.	Printimistöö tühistati.

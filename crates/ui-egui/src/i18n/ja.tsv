@@ -1321,3 +1321,24 @@
 	Content exceeds page area on {count} page(s).	{count} ページでコンテンツがページ領域を超えています。
 	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	最初の問題: {element} が {page} ページで {axis} の境界を超えています。内容は保持されています。クリックすると移動します。
 	Formatted	書式変更
+	Printer	プリンター
+	Select printer	プリンターを選択
+	No printers are available.	利用できるプリンターがありません。
+	Copies	部数
+	Collate	部単位で印刷
+	Duplex	両面印刷
+	One-sided	片面
+	Two-sided, long edge	長辺とじ
+	Two-sided, short edge	短辺とじ
+	Paper size	用紙サイズ
+	Printer default	プリンターの既定
+	Fit to page	ページに合わせる
+	All pages	すべてのページ
+	Print preview	印刷プレビュー
+	Print dialog opened.	印刷ダイアログを開きました。
+	{selected} of {pages} pages	{pages} ページ中 {selected} ページ
+	Copies must be between 1 and 999.	部数は 1～999 です。
+	The system print dialog is unavailable. You can open a PDF copy to print from another viewer.	システムの印刷ダイアログは利用できません。PDF を別のビューアーで開いて印刷できます。
+	Page {page} has content that may be clipped.	{page} ページの内容が切り取られる可能性があります。
+	Cancel print job	印刷ジョブをキャンセル
+	Print job canceled.	印刷ジョブをキャンセルしました。

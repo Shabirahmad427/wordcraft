@@ -411,9 +411,9 @@ impl Session {
         self.layout = Some((self.rev, ww, self.view.mode, l.clone(), self.view.proofing));
         l
     }
-    /// A layout for output (PDF, images, print): no proofing marks, print view.
+    /// A layout for output (PDF, images, print): no proofing marks, print view and final text.
     pub fn export_layout(&self) -> Arc<DocLayout> {
-        let opts = LayoutOptions { view: ViewMode::Print, web_width: 0.0, show_hidden: false, hide_deleted: false, proofing: false };
+        let opts = LayoutOptions { view: ViewMode::Print, web_width: 0.0, show_hidden: false, hide_deleted: true, proofing: false };
         Arc::new(wordcraft_layout::layout(&self.doc, &mut LayoutCache::new(), &opts))
     }
 

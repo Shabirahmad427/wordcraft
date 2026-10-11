@@ -35,7 +35,7 @@ every day, checked end to end on the main platform (macOS desktop), including sa
 | Build a structured document: tables, pictures, headers/footers, page numbers, sections, columns | yes | Tables with row splitting and floating tables (#137), floating pictures (#136), first/odd/even headers; columns don't balance (gap #4) | 0 |
 | Review with others: comments, track changes, accept/reject, compare | yes | Margin balloons, tracked insert/delete incl. paragraph marks (#125, #244), formatting revisions (#41), compare | 0 |
 | References for reports and papers: TOC, footnotes, citations and bibliography, captions | yes | Updatable TOC field (#52), notes, APA/MLA/Chicago/IEEE, Zotero (#189); long footnotes don't continue (gap #4) | 0 |
-| Share or print: export PDF, print | partial (not blocking) | PDF export solid (krilla); desktop printing goes through a PDF, no native print dialog (gap #6) | 0 (beta work: 6–10) |
+| Share or print: export PDF, print | partial (not blocking) | PDF export and shared-layout preview; Linux CUPS submission, ranges, copies, duplex and cancellation. macOS unverified, Windows uses a PDF viewer, web uses browser printing (gap #6) | 0 (beta work: 6–10) |
 
 **Result: passes.** Every core workflow completes on macOS and the work saves and reopens; the
 partial rows are fidelity gaps (beta work), not broken workflows. WordCraft stays **alpha**.

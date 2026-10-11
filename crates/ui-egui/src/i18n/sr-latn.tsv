@@ -1331,3 +1331,24 @@
 	Content exceeds page area on {count} page(s).	Sadržaj prelazi oblast stranice na {count} stranica.
 	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	Prvi problem: {element} prelazi {axis} granicu na stranici {page}. Sadržaj je sačuvan. Kliknite da pređete tamo.
 	Formatted	Formatirano
+	Printer	Štampač
+	Select printer	Izaberite štampač
+	No printers are available.	Nema dostupnih štampača.
+	Copies	Kopije
+	Collate	Poređaj kopije
+	Duplex	Obostrano
+	One-sided	Jednostrano
+	Two-sided, long edge	Obostrano, duža ivica
+	Two-sided, short edge	Obostrano, kraća ivica
+	Paper size	Veličina papira
+	Printer default	Podrazumevano za štampač
+	Fit to page	Uklopi na stranicu
+	All pages	Sve stranice
+	Print preview	Pregled štampe
+	Print dialog opened.	Dijalog za štampu je otvoren.
+	{selected} of {pages} pages	{selected} od {pages} stranica
+	Copies must be between 1 and 999.	Broj kopija mora biti od 1 do 999.
+	The system print dialog is unavailable. You can open a PDF copy to print from another viewer.	Sistemski dijalog za štampu nije dostupan. Otvorite PDF u drugom pregledaču radi štampe.
+	Page {page} has content that may be clipped.	Sadržaj na stranici {page} može biti odsečen.
+	Cancel print job	Otkaži zadatak štampe
+	Print job canceled.	Zadatak štampe je otkazan.

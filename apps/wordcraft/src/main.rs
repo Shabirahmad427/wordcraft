@@ -126,6 +126,8 @@ fn services(file_dialog: file_dialogs::Hook) -> Services {
     Services {
         file_dialog: Some(file_dialog),
         print: Some(print::hook()),
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        native_print: Some(Box::new(print::CupsBackend)),
         clipboard_picture: Some(Box::new(clipboard_picture)),
         ..Default::default()
     }

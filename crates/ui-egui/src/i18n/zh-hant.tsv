@@ -1322,3 +1322,24 @@
 	Content exceeds page area on {count} page(s).	內容在 {count} 頁超出頁面範圍。
 	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	第一個問題：第 {page} 頁的 {element} 超出{axis}邊界。內容已保留。按一下即可前往該頁。
 	Formatted	已設定格式
+	Printer	印表機
+	Select printer	選取印表機
+	No printers are available.	沒有可用的印表機。
+	Copies	份數
+	Collate	逐份列印
+	Duplex	雙面列印
+	One-sided	單面
+	Two-sided, long edge	雙面，長邊翻轉
+	Two-sided, short edge	雙面，短邊翻轉
+	Paper size	紙張大小
+	Printer default	印表機預設值
+	Fit to page	符合頁面
+	All pages	所有頁面
+	Print preview	列印預覽
+	Print dialog opened.	已開啟列印對話方塊。
+	{selected} of {pages} pages	共 {pages} 頁，已選 {selected} 頁
+	Copies must be between 1 and 999.	份數必須介於 1 到 999。
+	The system print dialog is unavailable. You can open a PDF copy to print from another viewer.	系統列印對話方塊無法使用。可在其他檢視器開啟 PDF 副本列印。
+	Page {page} has content that may be clipped.	第 {page} 頁的內容可能遭到裁切。
+	Cancel print job	取消列印工作
+	Print job canceled.	已取消列印工作。

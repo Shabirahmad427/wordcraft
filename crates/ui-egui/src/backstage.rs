@@ -107,7 +107,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
             "new" => new_page(app, ui),
             "open" => open_page(app, ui),
             "info" => info_page(app, ui),
-            "print" | "export" => export_page(app, ui),
+            "print" => print_page(app, ui),
+            "export" => export_page(app, ui),
             "options" => options_page(app, ui),
             _ => home_page(app, ui),
         });
@@ -329,21 +330,8 @@ fn info_page(app: &mut WordApp, ui: &mut Ui) {
 }
 
 fn export_page(app: &mut WordApp, ui: &mut Ui) {
-    let is_print = app.ui.backstage_page == "print";
-    heading(ui, if is_print { "Print" } else { "Export" });
-    if is_print && app.services.print.is_some() {
-        ui.label(tl!("Send the document straight to the system print dialog, or save a copy in another format below."));
-        ui.add_space(12.0);
-        if ui.add(egui::Button::new(egui::RichText::new(tl!("Print")).font(medium(13.5))).min_size(vec2(320.0, 34.0))).clicked() {
-            let _ = app.run("ui.print", json!({}));
-        }
-        ui.add_space(12.0);
-        ui.separator();
-        ui.add_space(12.0);
-        ui.label(tl!("Or save a copy in another format:"));
-    } else {
-        ui.label(tl!("Save a copy in another format. Printing goes through a PDF you can print from any viewer."));
-    }
+    heading(ui, "Export");
+    ui.label(tl!("Save a copy in another format."));
     ui.add_space(12.0);
     for (label, ext) in [
         ("PDF document (*.pdf)", "pdf"),
@@ -356,6 +344,243 @@ fn export_page(app: &mut WordApp, ui: &mut Ui) {
         ("Plain text (*.txt)", "txt"),
         ("Page image (*.png)", "png"),
     ] {
+        if ui.add(egui::Button::new(egui::RichText::new(tl!(label)).font(medium(13.5))).min_size(vec2(320.0, 34.0))).clicked() {
+            app.export_dialog(ext);
+        }
+        ui.add_space(4.0);
+    }
+}
+
+fn print_page(app: &mut WordApp, ui: &mut Ui) {
+    use crate::printing::{Duplex, NativePrintOptions, parse_page_range};
+    use std::collections::BTreeSet;
+
+    heading(ui, "Print");
+    let layout = app.session.export_layout();
+    let page_count = layout.pages.len();
+    if let Some(backend) = app.services.native_print.as_ref()
+        && !app.print_preview.loaded
+    {
+        app.print_preview.loaded = true;
+        match backend.printers() {
+            Ok(printers) => {
+                let selected = printers.iter().find(|p| p.is_default).or_else(|| printers.first()).map(|p| p.name.clone()).unwrap_or_default();
+                app.print_preview.printers = printers;
+                if !selected.is_empty() {
+                    match backend.capabilities(&selected) {
+                        Ok(caps) => app.print_preview.reset_if_printer_changed(&selected, caps),
+                        Err(error) => app.print_preview.error = Some(error),
+                    }
+                }
+            }
+            Err(error) => app.print_preview.error = Some(error),
+        }
+    }
+
+    let native = app.services.native_print.is_some();
+    if native {
+        if app.print_preview.printers.is_empty() {
+            ui.label(tl!("No printers are available."));
+        } else {
+            let previous = app.print_preview.selected_printer.clone();
+            ui.horizontal(|ui| {
+                ui.label(tl!("Printer"));
+                egui::ComboBox::from_id_salt("print_printer")
+                    .selected_text(if previous.is_empty() { tl!("Select printer") } else { &previous })
+                    .show_ui(ui, |ui| {
+                        for printer in &app.print_preview.printers {
+                            let label = if printer.is_default { format!("{} ({})", printer.name, tl!("Default")) } else { printer.name.clone() };
+                            ui.selectable_value(&mut app.print_preview.selected_printer, printer.name.clone(), label);
+                        }
+                    });
+            });
+            if app.print_preview.selected_printer != previous
+                && let Some(backend) = app.services.native_print.as_ref()
+            {
+                match backend.capabilities(&app.print_preview.selected_printer) {
+                    Ok(caps) => app.print_preview.reset_if_printer_changed(&app.print_preview.selected_printer.clone(), caps),
+                    Err(error) => app.print_preview.error = Some(error),
+                }
+            }
+        }
+    } else {
+        ui.label(tl!("The system print dialog is unavailable. You can open a PDF copy to print from another viewer."));
+    }
+
+    ui.horizontal(|ui| {
+        ui.label(tl!("Pages"));
+        ui.add(egui::TextEdit::singleline(&mut app.print_preview.page_range).desired_width(150.0).hint_text(tl!("All pages")));
+        if native {
+            ui.label(tl!("Copies"));
+            ui.add(egui::TextEdit::singleline(&mut app.print_preview.copies).desired_width(48.0));
+            ui.checkbox(&mut app.print_preview.collated, tl!("Collate"));
+        }
+    });
+    if native {
+        ui.horizontal(|ui| {
+            if !app.print_preview.capabilities.duplex.is_empty() {
+                ui.label(tl!("Duplex"));
+                egui::ComboBox::from_id_salt("print_duplex")
+                    .selected_text(match app.print_preview.duplex {
+                        Duplex::Simplex => tl!("One-sided"),
+                        Duplex::LongEdge => tl!("Two-sided, long edge"),
+                        Duplex::ShortEdge => tl!("Two-sided, short edge"),
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut app.print_preview.duplex, Duplex::Simplex, tl!("One-sided"));
+                        if app.print_preview.capabilities.duplex.contains(&Duplex::LongEdge) {
+                            ui.selectable_value(&mut app.print_preview.duplex, Duplex::LongEdge, tl!("Two-sided, long edge"));
+                        }
+                        if app.print_preview.capabilities.duplex.contains(&Duplex::ShortEdge) {
+                            ui.selectable_value(&mut app.print_preview.duplex, Duplex::ShortEdge, tl!("Two-sided, short edge"));
+                        }
+                    });
+            }
+            if !app.print_preview.capabilities.media.is_empty() {
+                ui.label(tl!("Paper size"));
+                egui::ComboBox::from_id_salt("print_media")
+                    .selected_text(if app.print_preview.media.is_empty() { tl!("Printer default") } else { &app.print_preview.media })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut app.print_preview.media, String::new(), tl!("Printer default"));
+                        for media in &app.print_preview.capabilities.media {
+                            ui.selectable_value(&mut app.print_preview.media, media.clone(), media);
+                        }
+                    });
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut app.print_preview.landscape, tl!("Landscape"));
+            ui.checkbox(&mut app.print_preview.fit_to_page, tl!("Fit to page"));
+        });
+    }
+
+    let pages = parse_page_range(&app.print_preview.page_range, page_count);
+    let copies = if native { app.print_preview.copies.trim().parse::<u16>().ok().filter(|n| (1..=999).contains(n)) } else { Some(1) };
+    let selected_pages = match &pages {
+        Ok(pages) => pages.clone(),
+        Err(error) => {
+            ui.colored_label(egui::Color32::from_rgb(180, 48, 48), tl!(error.as_str()));
+            Vec::new()
+        }
+    };
+    if native && !app.print_preview.copies.trim().is_empty() && copies.is_none() {
+        ui.colored_label(egui::Color32::from_rgb(180, 48, 48), tl!("Copies must be between 1 and 999."));
+    }
+
+    if !layout.overflows.is_empty() {
+        let pages_with_warnings: BTreeSet<usize> = layout.overflows.iter().map(|item| item.page).collect();
+        ui.colored_label(
+            egui::Color32::from_rgb(180, 76, 32),
+            crate::i18n::fmt(tl!("Content exceeds page area on {count} page(s)."), &[("count", &pages_with_warnings.len().to_string())]),
+        );
+        for page in pages_with_warnings.iter().take(12) {
+            ui.label(crate::i18n::fmt(tl!("Page {page} has content that may be clipped."), &[("page", &(page + 1).to_string())]));
+        }
+    }
+    if let Some(error) = app.print_preview.error.as_deref() {
+        ui.colored_label(egui::Color32::from_rgb(180, 48, 48), error);
+    }
+    if let Some(message) = app.print_preview.message.as_deref() {
+        ui.label(message);
+    }
+    if let Some(job_id) = app.print_preview.last_job.clone()
+        && ui.button(tl!("Cancel print job")).clicked()
+        && let Some(backend) = app.services.native_print.as_ref()
+    {
+        match backend.cancel(&job_id) {
+            Ok(()) => {
+                app.print_preview.last_job = None;
+                app.print_preview.message = Some(tl!("Print job canceled.").to_string());
+                app.print_preview.error = None;
+            }
+            Err(error) => app.print_preview.error = Some(error),
+        }
+    }
+
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        let selected_native = native && !app.print_preview.selected_printer.is_empty();
+        let can_submit = selected_native || app.services.print.is_some();
+        let enabled = can_submit && !selected_pages.is_empty() && copies.is_some();
+        let button = ui.add_enabled(enabled, egui::Button::new(egui::RichText::new(tl!("Print")).font(medium(14.0))).min_size(vec2(150.0, 34.0)));
+        if button.clicked() {
+            let pdf = wordcraft_pdf::export_layout(
+                &app.session.doc,
+                &layout,
+                &wordcraft_pdf::PdfOptions { pages: Some(selected_pages.clone()), ..Default::default() },
+            );
+            match pdf {
+                Ok(bytes) => {
+                    if native
+                        && !app.print_preview.selected_printer.is_empty()
+                        && let Some(backend) = app.services.native_print.as_ref()
+                    {
+                        let options = NativePrintOptions {
+                            printer: app.print_preview.selected_printer.clone(),
+                            copies: copies.unwrap_or(1),
+                            collated: app.print_preview.collated,
+                            duplex: app.print_preview.duplex,
+                            media: (!app.print_preview.media.is_empty()).then(|| app.print_preview.media.clone()),
+                            landscape: app.print_preview.landscape,
+                            fit_to_page: app.print_preview.fit_to_page,
+                        };
+                        match backend.submit(&bytes, &options) {
+                            Ok(job) => {
+                                app.print_preview.error = None;
+                                app.print_preview.message = Some(job.receipt);
+                                app.print_preview.last_job = job.id;
+                            }
+                            Err(error) => app.print_preview.error = Some(error),
+                        }
+                    } else if let Some(print) = app.services.print.as_ref() {
+                        match print(&bytes) {
+                            Ok(()) => app.print_preview.message = Some(tl!("Print dialog opened.").to_string()),
+                            Err(error) => app.print_preview.error = Some(error),
+                        }
+                    }
+                }
+                Err(error) => app.print_preview.error = Some(error.to_string()),
+            }
+        }
+        ui.label(crate::i18n::fmt(
+            tl!("{selected} of {pages} pages"),
+            &[("selected", &selected_pages.len().to_string()), ("pages", &page_count.to_string())],
+        ));
+    });
+
+    ui.add_space(10.0);
+    ui.label(egui::RichText::new(tl!("Print preview")).font(semibold(15.0)));
+    egui::ScrollArea::horizontal().auto_shrink([false, true]).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            for page_index in &selected_pages {
+                let Some(page) = layout.pages.get(*page_index) else { continue };
+                let key = format!("print:{}:{}:{}", app.session.document_id(), app.session.rev(), page_index);
+                let width = 148.0_f32;
+                let height = width * page.h / page.w.max(1.0);
+                let scale = width / page.w.max(1.0) * ui.ctx().pixels_per_point();
+                let document = &app.session.doc;
+                let texture = app.previews.get_or(ui.ctx(), &key, || {
+                    let image = wordcraft_render::render_page(document, page, scale, &Default::default());
+                    let pixels = image.to_straight();
+                    Some(egui::ColorImage::from_rgba_unmultiplied([image.width as usize, image.height as usize], &pixels))
+                });
+                ui.vertical(|ui| {
+                    ui.label(crate::i18n::fmt(tl!("Page {page}"), &[("page", &(page_index + 1).to_string())]));
+                    if let Some(texture) = texture {
+                        ui.image((texture.id(), vec2(width, height)));
+                    } else {
+                        ui.ctx().request_repaint();
+                        ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
+                    }
+                });
+            }
+        });
+    });
+    ui.add_space(16.0);
+    ui.separator();
+    ui.add_space(12.0);
+    ui.label(tl!("Or save a copy in another format:"));
+    for (label, ext) in [("PDF document (*.pdf)", "pdf"), ("Page image (*.png)", "png")] {
         if ui.add(egui::Button::new(egui::RichText::new(tl!(label)).font(medium(13.5))).min_size(vec2(320.0, 34.0))).clicked() {
             app.export_dialog(ext);
         }

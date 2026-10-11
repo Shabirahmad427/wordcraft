@@ -1337,3 +1337,24 @@
 	Content exceeds page area on {count} page(s).	El contenido supera el área de página en {count} página(s).
 	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	Primer problema: {element} supera su límite {axis} en la página {page}. El contenido se conserva. Haz clic para ir allí.
 	Formatted	Con formato
+	Printer	Impresora
+	Select printer	Seleccionar impresora
+	No printers are available.	No hay impresoras disponibles.
+	Copies	Copias
+	Collate	Intercalar
+	Duplex	Doble cara
+	One-sided	Una cara
+	Two-sided, long edge	Doble cara, borde largo
+	Two-sided, short edge	Doble cara, borde corto
+	Paper size	Tamaño de papel
+	Printer default	Predeterminado de la impresora
+	Fit to page	Ajustar a la página
+	All pages	Todas las páginas
+	Print preview	Vista previa de impresión
+	Print dialog opened.	Se abrió el diálogo de impresión.
+	{selected} of {pages} pages	{selected} de {pages} páginas
+	Copies must be between 1 and 999.	Las copias deben estar entre 1 y 999.
+	The system print dialog is unavailable. You can open a PDF copy to print from another viewer.	El diálogo de impresión del sistema no está disponible. Puedes abrir una copia PDF en otro visor.
+	Page {page} has content that may be clipped.	La página {page} contiene contenido que podría quedar recortado.
+	Cancel print job	Cancelar trabajo de impresión
+	Print job canceled.	Trabajo de impresión cancelado.

@@ -35,6 +35,7 @@ pub mod objects;
 pub mod panes;
 pub mod paste_picture;
 pub mod previews;
+pub mod printing;
 pub mod read_aloud;
 pub mod recovery;
 pub mod ribbon;
@@ -78,6 +79,8 @@ pub struct Services {
     /// download, no intermediate file). Desktop: the PDF opens in the system's viewer (a temporary
     /// file), where the user prints (#15). An error means nothing was opened.
     pub print: Option<Box<dyn Fn(&[u8]) -> Result<(), String>>>,
+    /// Desktop hosts with a direct system spooler. Web keeps using the browser print flow above.
+    pub native_print: Option<Box<dyn printing::NativePrintBackend>>,
     /// Desktop: the picture on the system clipboard, if any — egui's paste only carries text
     /// (#45). Read when Paste finds no text; see [`paste_picture`].
     pub clipboard_picture: Option<Box<dyn Fn() -> Option<paste_picture::ClipboardPicture>>>,
@@ -162,6 +165,8 @@ pub struct WordApp {
     pub dialog: Option<dialogs::Dialog>,
     pub status_msg: Option<(String, f64)>,
     pub previews: previews::Previews,
+    /// Transient page selection, preview and printer settings for File › Print.
+    pub print_preview: printing::PrintPreviewState,
     /// Media key of the picture a pending Change Picture replaces (#147).
     pub change_picture_target: Option<String>,
     /// Web: a recipient list was asked for (Select Recipients › Use an Existing List…), so the
@@ -246,6 +251,7 @@ impl WordApp {
             dialog: None,
             status_msg: None,
             previews: previews::Previews::default(),
+            print_preview: printing::PrintPreviewState::default(),
             integrated_titlebar: false,
             control_rx: None,
             shot_token: 0,
@@ -1650,44 +1656,117 @@ mod tests {
         assert!(a.status_msg.as_ref().is_some_and(|(m, _)| m.contains("blocked by the browser")), "the status bar says why");
     }
 
-    /// The Print page shows the Print button only when the host can print, and the button
-    /// prints through `ui.print`.
+    /// The integrated Print page renders a preview; the host hook receives the selected PDF pages.
     #[test]
-    fn the_print_button_shows_only_with_a_print_hook() {
+    fn print_page_shows_preview_and_submits_selected_document_pdf() {
         use egui_kittest::kittest::Queryable;
-        const BLURB: &str = "Send the document straight to the system print dialog, or save a copy in another format below.";
-        for hook in [false, true] {
-            let printed = std::rc::Rc::new(std::cell::Cell::new(0));
-            let mut a = app();
-            if hook {
-                let seen = printed.clone();
-                a.services.print = Some(Box::new(move |_| {
-                    seen.set(seen.get() + 1);
-                    Ok(())
-                }));
+        let printed = std::rc::Rc::new(std::cell::RefCell::new(Vec::<Vec<u8>>::new()));
+        let seen = printed.clone();
+        let mut a = app();
+        a.session.set_document(wordcraft_doc::Document::from_text(&"Preview page\n".repeat(180)));
+        a.run("text.insert", json!({"text": "Unsaved edit"})).unwrap();
+        let expected_pages = a.session.export_layout().pages.len();
+        let document_before_print = a.session.doc.clone();
+        a.print_preview.page_range = "1,3".into();
+        a.services.print = Some(Box::new(move |bytes| {
+            seen.borrow_mut().push(bytes.to_vec());
+            Ok(())
+        }));
+        a.run("file.print", json!({})).unwrap();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+            |ui, app: &mut WordApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            a,
+        );
+        for _ in 0..4 {
+            h.step();
+        }
+        assert!(h.state().ui.backstage && h.state().ui.backstage_page == "print", "the Print page is open");
+        assert!(h.query_by_label("Print preview").is_some());
+        assert!(h.query_by_label("Pages").is_some());
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Print").click();
+        h.step();
+        assert_eq!(printed.borrow().len(), 1, "the selected document pages were sent once");
+        let pdf = &printed.borrow()[0];
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(expected_pages >= 3, "fixture has at least three pages");
+        assert!(String::from_utf8_lossy(pdf).contains("/Count 2"), "range 1,3 exports exactly two previewed pages");
+        assert_eq!(h.state().session.doc, document_before_print, "printing leaves the document unchanged");
+        assert!(h.state().session.dirty, "printing does not mark an unsaved edit as saved");
+        h.state_mut().run("edit.undo", json!({})).unwrap();
+        assert!(!h.state().session.doc.plain_text(wordcraft_doc::StoryRef::Body).contains("Unsaved edit"));
+    }
+
+    #[test]
+    fn print_preview_passes_copies_duplex_and_cancel_to_the_host_backend() {
+        use crate::printing::{Duplex, NativePrintBackend, NativePrintOptions, PrintJob, Printer, PrinterCapabilities};
+        use egui_kittest::kittest::Queryable;
+
+        #[derive(Clone)]
+        struct MockPrinter {
+            submitted: std::rc::Rc<std::cell::RefCell<Option<(Vec<u8>, NativePrintOptions)>>>,
+            cancelled: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+        }
+        impl NativePrintBackend for MockPrinter {
+            fn printers(&self) -> Result<Vec<Printer>, String> {
+                Ok(vec![Printer { name: "Test Queue".into(), is_default: true }])
             }
-            a.run("file.print", json!({})).unwrap();
-            let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
-                |ui, app: &mut WordApp| {
-                    let ctx = ui.ctx().clone();
-                    app.logic(&ctx);
-                    app.ui(ui);
-                },
-                a,
-            );
-            for _ in 0..4 {
-                h.step();
+            fn capabilities(&self, _: &str) -> Result<PrinterCapabilities, String> {
+                Ok(PrinterCapabilities { media: vec!["A4".into()], duplex: vec![Duplex::LongEdge, Duplex::ShortEdge] })
             }
-            assert!(h.state().ui.backstage && h.state().ui.backstage_page == "print", "the Print page is open");
-            assert_eq!(h.query_by_label(BLURB).is_some(), hook, "hook {hook}: the Print button's blurb");
-            assert!(h.query_by_label("PDF document (*.pdf)").is_some(), "hook {hook}: the page rendered its export choices");
-            if hook {
-                h.get_by_role_and_label(egui::accesskit::Role::Button, "Print").click();
-                h.step();
-                h.step();
-                assert_eq!(printed.get(), 1, "the button printed");
+            fn submit(&self, pdf: &[u8], options: &NativePrintOptions) -> Result<PrintJob, String> {
+                *self.submitted.borrow_mut() = Some((pdf.to_vec(), options.clone()));
+                Ok(PrintJob { id: Some("queue-7".into()), receipt: "Queued".into() })
+            }
+            fn cancel(&self, job_id: &str) -> Result<(), String> {
+                self.cancelled.borrow_mut().push(job_id.to_string());
+                Ok(())
             }
         }
+
+        let submitted = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let cancelled = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut app = app();
+        app.session.set_document(wordcraft_doc::Document::from_text(&"Academic paper\n".repeat(180)));
+        app.print_preview.page_range = "1,3".into();
+        app.print_preview.copies = "2".into();
+        app.print_preview.collated = true;
+        app.print_preview.landscape = true;
+        app.print_preview.fit_to_page = true;
+        app.services.native_print = Some(Box::new(MockPrinter { submitted: submitted.clone(), cancelled: cancelled.clone() }));
+        app.run("file.print", json!({})).unwrap();
+
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+            |ui, app: &mut WordApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app,
+        );
+        for _ in 0..4 {
+            harness.step();
+        }
+        harness.state_mut().print_preview.duplex = Duplex::LongEdge;
+        harness.get_by_role_and_label(egui::accesskit::Role::Button, "Print").click();
+        harness.step();
+        harness.step();
+        let Some((pdf, options)) = submitted.borrow().clone() else { panic!("the native print backend received no PDF") };
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(String::from_utf8_lossy(&pdf).contains("/Count 2"));
+        assert_eq!(options.printer, "Test Queue");
+        assert_eq!(options.copies, 2);
+        assert!(options.collated && options.landscape && options.fit_to_page);
+        assert_eq!(options.duplex, Duplex::LongEdge);
+        assert_eq!(options.media, None, "the printer's default media is retained until the user picks a size");
+        assert_eq!(harness.state().print_preview.last_job.as_deref(), Some("queue-7"));
+
+        harness.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel print job").click();
+        harness.step();
+        assert_eq!(&*cancelled.borrow(), &["queue-7"]);
     }
 
     /// A prompt about document A outlived an agent replacing A with B, and Don't Save then ran
