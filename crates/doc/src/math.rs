@@ -31,6 +31,14 @@ pub struct Math {
     /// Shown as its linear-format text (Equation › Convert › Linear) instead of built up.
     #[serde(default, skip_serializing_if = "is_default")]
     pub linear: bool,
+    /// The imported OMML contains constructs the editable tree cannot represent. The source XML
+    /// remains available for unchanged round-trips; editing is disabled to avoid dropping them.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unsupported: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
 }
 
 fn is_default<T: Default + PartialEq>(v: &T) -> bool {

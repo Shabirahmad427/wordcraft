@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (integrated upstream main through `e4b7d15`, including source version 0.5.0; retained fork recovery, package-preservation and pagination changes) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (unsupported OMML equations now retain source XML and reject unsafe edits) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and
 agent control. This page is the summary; the assessment is
@@ -142,6 +142,7 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 - Phase 4C step 1: layout reports horizontal/vertical content-boundary overflow and text-box clipping by page, element and severity. The desktop status bar keeps a localized warning visible, identifies the first affected element and jumps to its page. Oversized objects remain intact; no automatic resize or move occurs. See [pagination audit](docs/pagination.md).
 
 - M6: Mendeley tab imports RIS exports, searches references, inserts citations/bibliographies and refreshes them; source libraries survive DOCX saves. Cloud sign-in and Mendeley Cite field editing remain future work.
+- Phase 6A: equation import marks unmodeled OMML and blocks edits that would discard it; supported equation structures remain editable. See [equation compatibility](docs/equation-compatibility.md); Microsoft Word comparison remains unavailable.
 
 ## Phase 2 — professional document recovery (2026-10-10)
 

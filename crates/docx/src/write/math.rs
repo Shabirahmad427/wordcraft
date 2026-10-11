@@ -444,3 +444,17 @@ fn run(w: &mut W, r: &MRun) {
     w.leaf("m:t", &[("xml:space", "preserve")], &r.text);
     w.close("m:r");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_source_omml_is_written_unchanged() {
+        let source = r#"<m:oMath><m:futureStructure><m:r><m:t>kept</m:t></m:r></m:futureStructure></m:oMath>"#;
+        let math = Math { omml: source.into(), unsupported: true, ..Default::default() };
+        let mut writer = W::new();
+        write_equation(&mut writer, "", false, &math);
+        assert!(writer.s.ends_with(source));
+    }
+}

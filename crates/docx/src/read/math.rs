@@ -9,7 +9,9 @@ use crate::xml::El;
 
 /// An `m:oMath` element as an equation (structure plus its source XML).
 pub fn read_omath(e: &El, jc: MathJc) -> Math {
-    Math { nodes: merge_runs(arg(e, 0)), omml: e.to_xml(), jc, linear: false }
+    let mut unsupported = false;
+    let nodes = merge_runs(arg(e, 0, &mut unsupported));
+    Math { nodes, omml: e.to_xml(), jc, linear: false, unsupported }
 }
 
 /// `m:oMathParaPr/m:jc`.
@@ -70,32 +72,33 @@ fn val<'a>(pr: Option<&'a El>, name: &str) -> Option<&'a str> {
 }
 
 /// The argument held by child `name` of `e`.
-fn sub_arg(e: &El, name: &str, depth: usize) -> Arg {
-    e.child(name).map(|c| arg(c, depth + 1)).unwrap_or_default()
+fn sub_arg(e: &El, name: &str, depth: usize, unsupported: &mut bool) -> Arg {
+    e.child(name).map(|c| arg(c, depth + 1, unsupported)).unwrap_or_default()
 }
 
 /// Read the math content of an element (`m:oMath`, `m:e`, `m:num`…).
-fn arg(e: &El, depth: usize) -> Arg {
+fn arg(e: &El, depth: usize, unsupported: &mut bool) -> Arg {
     let mut out = Vec::new();
     if depth > MAX_DEPTH {
         return out;
     }
     for k in e.els() {
-        node(k, depth, &mut out);
+        node(k, depth, &mut out, unsupported);
     }
     out
 }
 
-fn node(k: &El, depth: usize, out: &mut Arg) {
+fn node(k: &El, depth: usize, out: &mut Arg, unsupported: &mut bool) {
     let d = depth + 1;
     match k.name.as_str() {
         "m:r" => {
-            if let Some(r) = run(k) {
+            if let Some(r) = run(k, unsupported) {
                 out.push(MNode::Run(r));
             }
         }
         // Word puts ordinary runs in math zones for normal text in some files.
         "w:r" => {
+            check_run_children(k, unsupported, &["w:rPr", "w:t", "w:tab", "w:br", "w:cr"]);
             let text = run_text(k);
             if !text.is_empty() {
                 let mut r = MRun { text, nor: true, sty: Some(MSty::Plain), ..Default::default() };
@@ -111,19 +114,39 @@ fn node(k: &El, depth: usize, out: &mut Arg) {
                 Some("noBar") => FracKind::NoBar,
                 _ => FracKind::Bar,
             };
-            out.push(MNode::Frac { kind, num: sub_arg(k, "m:num", d), den: sub_arg(k, "m:den", d) });
+            out.push(MNode::Frac { kind, num: sub_arg(k, "m:num", d, unsupported), den: sub_arg(k, "m:den", d, unsupported) });
         }
-        "m:sSup" => out.push(MNode::Script { kind: ScriptKind::Sup, base: sub_arg(k, "m:e", d), sub: Vec::new(), sup: sub_arg(k, "m:sup", d) }),
-        "m:sSub" => out.push(MNode::Script { kind: ScriptKind::Sub, base: sub_arg(k, "m:e", d), sub: sub_arg(k, "m:sub", d), sup: Vec::new() }),
-        "m:sSubSup" => {
-            out.push(MNode::Script { kind: ScriptKind::SubSup, base: sub_arg(k, "m:e", d), sub: sub_arg(k, "m:sub", d), sup: sub_arg(k, "m:sup", d) })
-        }
-        "m:sPre" => {
-            out.push(MNode::Script { kind: ScriptKind::Pre, base: sub_arg(k, "m:e", d), sub: sub_arg(k, "m:sub", d), sup: sub_arg(k, "m:sup", d) })
-        }
+        "m:sSup" => out.push(MNode::Script {
+            kind: ScriptKind::Sup,
+            base: sub_arg(k, "m:e", d, unsupported),
+            sub: Vec::new(),
+            sup: sub_arg(k, "m:sup", d, unsupported),
+        }),
+        "m:sSub" => out.push(MNode::Script {
+            kind: ScriptKind::Sub,
+            base: sub_arg(k, "m:e", d, unsupported),
+            sub: sub_arg(k, "m:sub", d, unsupported),
+            sup: Vec::new(),
+        }),
+        "m:sSubSup" => out.push(MNode::Script {
+            kind: ScriptKind::SubSup,
+            base: sub_arg(k, "m:e", d, unsupported),
+            sub: sub_arg(k, "m:sub", d, unsupported),
+            sup: sub_arg(k, "m:sup", d, unsupported),
+        }),
+        "m:sPre" => out.push(MNode::Script {
+            kind: ScriptKind::Pre,
+            base: sub_arg(k, "m:e", d, unsupported),
+            sub: sub_arg(k, "m:sub", d, unsupported),
+            sup: sub_arg(k, "m:sup", d, unsupported),
+        }),
         "m:rad" => {
             let pr = k.child("m:radPr");
-            out.push(MNode::Rad { deg: sub_arg(k, "m:deg", d), deg_hide: prop(pr, "m:degHide", false), e: sub_arg(k, "m:e", d) });
+            out.push(MNode::Rad {
+                deg: sub_arg(k, "m:deg", d, unsupported),
+                deg_hide: prop(pr, "m:degHide", false),
+                e: sub_arg(k, "m:e", d, unsupported),
+            });
         }
         "m:nary" => {
             let pr = k.child("m:naryPr");
@@ -139,9 +162,9 @@ fn node(k: &El, depth: usize, out: &mut Arg) {
                 grow: prop(pr, "m:grow", false),
                 sub_hide: prop(pr, "m:subHide", false),
                 sup_hide: prop(pr, "m:supHide", false),
-                sub: sub_arg(k, "m:sub", d),
-                sup: sub_arg(k, "m:sup", d),
-                e: sub_arg(k, "m:e", d),
+                sub: sub_arg(k, "m:sub", d, unsupported),
+                sup: sub_arg(k, "m:sup", d, unsupported),
+                e: sub_arg(k, "m:e", d, unsupported),
             });
         }
         "m:d" => {
@@ -149,7 +172,7 @@ fn node(k: &El, depth: usize, out: &mut Arg) {
             let beg = chr(pr, "m:begChr").unwrap_or(Some('('));
             let end = chr(pr, "m:endChr").unwrap_or(Some(')'));
             let sep = chr(pr, "m:sepChr").unwrap_or(Some('|'));
-            let elems: Vec<Arg> = k.children("m:e").map(|e| arg(e, d)).collect();
+            let elems: Vec<Arg> = k.children("m:e").map(|e| arg(e, d, unsupported)).collect();
             out.push(MNode::Delim {
                 beg,
                 end,
@@ -159,14 +182,14 @@ fn node(k: &El, depth: usize, out: &mut Arg) {
                 elems: if elems.is_empty() { vec![Vec::new()] } else { elems },
             });
         }
-        "m:func" => out.push(MNode::Func { name: sub_arg(k, "m:fName", d), e: sub_arg(k, "m:e", d) }),
-        "m:limLow" => out.push(MNode::Lim { upper: false, e: sub_arg(k, "m:e", d), lim: sub_arg(k, "m:lim", d) }),
-        "m:limUpp" => out.push(MNode::Lim { upper: true, e: sub_arg(k, "m:e", d), lim: sub_arg(k, "m:lim", d) }),
+        "m:func" => out.push(MNode::Func { name: sub_arg(k, "m:fName", d, unsupported), e: sub_arg(k, "m:e", d, unsupported) }),
+        "m:limLow" => out.push(MNode::Lim { upper: false, e: sub_arg(k, "m:e", d, unsupported), lim: sub_arg(k, "m:lim", d, unsupported) }),
+        "m:limUpp" => out.push(MNode::Lim { upper: true, e: sub_arg(k, "m:e", d, unsupported), lim: sub_arg(k, "m:lim", d, unsupported) }),
         "m:acc" => {
             let c = chr(k.child("m:accPr"), "m:chr").map(|c| c.unwrap_or('\u{302}')).unwrap_or('\u{302}');
-            out.push(MNode::Acc { chr: c, e: sub_arg(k, "m:e", d) });
+            out.push(MNode::Acc { chr: c, e: sub_arg(k, "m:e", d, unsupported) });
         }
-        "m:bar" => out.push(MNode::Bar { top: val(k.child("m:barPr"), "m:pos") == Some("top"), e: sub_arg(k, "m:e", d) }),
+        "m:bar" => out.push(MNode::Bar { top: val(k.child("m:barPr"), "m:pos") == Some("top"), e: sub_arg(k, "m:e", d, unsupported) }),
         "m:borderBox" => {
             let pr = k.child("m:borderBoxPr");
             out.push(MNode::BorderBox {
@@ -177,16 +200,16 @@ fn node(k: &El, depth: usize, out: &mut Arg) {
                     prop(pr, "m:strikeBLTR", false),
                     prop(pr, "m:strikeTLBR", false),
                 ],
-                e: sub_arg(k, "m:e", d),
+                e: sub_arg(k, "m:e", d, unsupported),
             });
         }
-        "m:box" => out.push(MNode::Boxed { e: sub_arg(k, "m:e", d) }),
+        "m:box" => out.push(MNode::Boxed { e: sub_arg(k, "m:e", d, unsupported) }),
         "m:groupChr" => {
             let pr = k.child("m:groupChrPr");
             let c = chr(pr, "m:chr").map(|c| c.unwrap_or('\u{23DF}')).unwrap_or('\u{23DF}');
-            out.push(MNode::GroupChr { chr: c, top: val(pr, "m:pos") == Some("top"), e: sub_arg(k, "m:e", d) });
+            out.push(MNode::GroupChr { chr: c, top: val(pr, "m:pos") == Some("top"), e: sub_arg(k, "m:e", d, unsupported) });
         }
-        "m:eqArr" => out.push(MNode::EqArr { rows: k.children("m:e").map(|e| arg(e, d)).collect() }),
+        "m:eqArr" => out.push(MNode::EqArr { rows: k.children("m:e").map(|e| arg(e, d, unsupported)).collect() }),
         "m:m" => {
             let mut col_jc = Vec::new();
             if let Some(mcs) = k.child("m:mPr").and_then(|p| p.child("m:mcs")) {
@@ -205,7 +228,7 @@ fn node(k: &El, depth: usize, out: &mut Arg) {
                     }
                 }
             }
-            let rows = k.children("m:mr").take(1000).map(|r| r.children("m:e").take(64).map(|e| arg(e, d)).collect()).collect();
+            let rows = k.children("m:mr").take(1000).map(|r| r.children("m:e").take(64).map(|e| arg(e, d, unsupported)).collect()).collect();
             out.push(MNode::Matrix { rows, col_jc });
         }
         "m:phant" => {
@@ -215,25 +238,25 @@ fn node(k: &El, depth: usize, out: &mut Arg) {
                 zero_wid: prop(pr, "m:zeroWid", false),
                 zero_asc: prop(pr, "m:zeroAsc", false),
                 zero_desc: prop(pr, "m:zeroDesc", false),
-                e: sub_arg(k, "m:e", d),
+                e: sub_arg(k, "m:e", d, unsupported),
             });
         }
         // Tracked insertions show; deletions don't.
         "w:ins" | "w:moveTo" | "w:smartTag" | "w:customXml" | "m:oMath" => {
             if depth <= MAX_DEPTH {
                 for c in k.els() {
-                    node(c, d, out);
+                    node(c, d, out, unsupported);
                 }
             }
         }
         "w:sdt" => {
             if let Some(c) = k.child("w:sdtContent") {
                 for c in c.els() {
-                    node(c, d, out);
+                    node(c, d, out, unsupported);
                 }
             }
         }
-        _ => {}
+        _ => *unsupported = true,
     }
 }
 
@@ -250,7 +273,8 @@ fn run_text(r: &El) -> String {
     s
 }
 
-fn run(r: &El) -> Option<MRun> {
+fn run(r: &El, unsupported: &mut bool) -> Option<MRun> {
+    check_run_children(r, unsupported, &["m:rPr", "m:t"]);
     let text = run_text(r);
     if text.is_empty() {
         return None;
@@ -281,6 +305,12 @@ fn run(r: &El) -> Option<MRun> {
     }
     wrpr(r.child("w:rPr"), &mut out);
     Some(out)
+}
+
+fn check_run_children(r: &El, unsupported: &mut bool, known: &[&str]) {
+    if r.els().any(|child| !known.contains(&child.name.as_str())) {
+        *unsupported = true;
+    }
 }
 
 /// The run formatting a math run takes from `w:rPr`: size, colour, normal-text font and weight.
@@ -351,5 +381,14 @@ mod tests {
         assert_eq!((*beg, *end, *sep, elems.len()), (Some('['), None, Some('|'), 2));
         assert!(matches!(m.nodes[2], MNode::Nary { chr: '∫', .. }));
         assert!(matches!(&m.nodes[3], MNode::Matrix { rows, .. } if rows.len() == 1 && rows[0].len() == 2));
+    }
+
+    #[test]
+    fn flags_unmodeled_math_and_retains_source_xml() {
+        let e = omath(r#"<m:r><m:t>x</m:t></m:r><m:futureStructure><m:r><m:t>secret</m:t></m:r></m:futureStructure>"#);
+        let m = read_omath(&e, MathJc::CenterGroup);
+        assert!(m.unsupported);
+        assert_eq!(wordcraft_doc::math::to_linear(&m.nodes), "x");
+        assert!(m.omml.contains("futureStructure"));
     }
 }

@@ -107,6 +107,9 @@ fn with_eq<R>(s: &mut Session, at: &Pos, f: impl FnOnce(&mut Math, &mut bool) ->
     let Some(InlineObject::Equation { linear, display, math }) = para.object_at_mut(at.off) else {
         return Err(CmdError::Failed("no equation there".into()));
     };
+    if math.unsupported {
+        return Err(CmdError::Failed("this equation contains unsupported OMML; editing is disabled to preserve its original content".into()));
+    }
     if math.nodes.is_empty() && !linear.is_empty() && !math.linear {
         math.nodes = parse_linear(linear);
     }
@@ -190,11 +193,10 @@ fn edit(s: &mut Session, v: &Value) -> CmdResult {
     let at = equation_at_caret(s).ok_or_else(|| CmdError::Disabled("no equation at the caret".into()))?;
     let nodes = match s.doc.para_at(&at).and_then(|p| p.object_at(at.off)) {
         Some(InlineObject::Equation { math, linear, .. }) => {
-            if math.nodes.is_empty() && !math.linear {
-                parse_linear(linear)
-            } else {
-                math.nodes.clone()
+            if math.unsupported {
+                return Err(CmdError::Failed("this equation contains unsupported OMML; editing is disabled to preserve its original content".into()));
             }
+            if math.nodes.is_empty() && !math.linear { parse_linear(linear) } else { math.nodes.clone() }
         }
         _ => return Err(CmdError::Failed("no equation there".into())),
     };
@@ -725,5 +727,26 @@ mod tests {
             let mut s = session();
             s.run("insert.equation", &json!({"builtin": b.0, "edit": false})).unwrap();
         }
+    }
+
+    #[test]
+    fn unsupported_imported_equation_rejects_mutation_without_clearing_source() {
+        let mut s = session();
+        s.run("insert.equation", &json!({"linear": "x", "edit": false})).unwrap();
+        let at = s.sel.focus.clone();
+        let para = s.doc.para_mut(at.story, &at.path).unwrap();
+        let Some(InlineObject::Equation { math, .. }) = para.object_at_mut(0) else { panic!("equation expected") };
+        math.unsupported = true;
+        math.omml = "<m:oMath><m:futureStructure/></m:oMath>".into();
+        s.sel = Selection::caret(Pos { off: 0, ..at });
+
+        let result = s.run("equation.set", &json!({"linear": "y"}));
+        assert!(result.is_err());
+        let Some(InlineObject::Equation { math, linear, .. }) = s.doc.para_at(&s.sel.focus).and_then(|p| p.object_at(0)) else {
+            panic!("equation expected")
+        };
+        assert_eq!(linear, "x");
+        assert!(math.unsupported);
+        assert!(math.omml.contains("futureStructure"));
     }
 }

@@ -1,0 +1,9 @@
+# Equation compatibility
+
+WordCraft stores editable equations as a structured math tree and reads/writes Office Math Markup Language (OMML). The model and layout currently cover text and math styles, fractions, scripts, radicals, n-ary operators, delimiters, functions, limits, accents, bars, boxes, phantom nodes, aligned rows, matrices, display alignment and long display-equation wrapping. The Equation editor supports inline/display equations, structure insertion, symbols, UnicodeMath-like input, LaTeX-like input, linear/professional conversion, automatic display numbering and keyboard navigation.
+
+On DOCX import, WordCraft retains each equation's original `m:oMath` XML. If the reader encounters an OMML element it does not model, it marks that equation as unsupported. The original XML remains available for DOCX output, while editing commands fail with a preservation message instead of clearing the source XML and silently dropping the structure. Supported constructs remain editable and are serialized from the current math tree after edits.
+
+This guard detects unknown element names encountered in equation content and run children. It does not certify preservation of arbitrary extension attributes, unknown properties inside recognized property containers, all revision semantics, or every OMML version. Equation numbering is currently a document-order display-equation feature, not a complete Word sequence-field/cross-reference workflow. Unsupported LaTeX commands may remain literal text; the parser is a convenient input format, not a complete TeX implementation. Equations that exceed the tested layout model and independent Word-rendered comparison remain open work.
+
+Tests cover structured equation parsing/editing, representative OMML read/write, unknown-node protection, display numbering and long display-equation wrapping. These are internal regression tests; no Microsoft Word reference output was used for this work.

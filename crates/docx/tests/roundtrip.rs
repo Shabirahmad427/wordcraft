@@ -1340,6 +1340,48 @@ fn equation_manual_breaks_round_trip() {
     assert_eq!(r.settings.math, None);
 }
 
+#[test]
+fn scientific_equation_structures_and_number_marks_round_trip() {
+    use wordcraft_doc::math::MNode;
+    use wordcraft_doc::math_latex::parse_latex;
+    let equations = [r"\frac{-b\pm\sqrt{b^2-4ac}}{2a}=x#", r"\sum_{i=1}^{n}\begin{bmatrix}x_i & y_i\\u_i & v_i\end{bmatrix}=0#"];
+    let blocks = equations
+        .iter()
+        .map(|latex| {
+            let nodes = parse_latex(latex);
+            let linear = wordcraft_doc::math::to_linear(&nodes);
+            let mut p = Paragraph::new();
+            p.insert_object(
+                0,
+                InlineObject::Equation { linear, display: true, math: wordcraft_doc::math::Math { nodes, ..Default::default() } },
+                &CharProps::default(),
+            )
+            .unwrap();
+            p
+        })
+        .collect();
+    let roundtripped = rt(&doc_with(blocks));
+    let found: Vec<_> = paras(&roundtripped)
+        .iter()
+        .flat_map(|p| p.objects.iter())
+        .filter_map(|o| match o {
+            InlineObject::Equation { math, display: true, .. } => Some(math.nodes.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(found.len(), 2);
+    assert!(matches!(found[0].first(), Some(MNode::EqArr { rows }) if matches!(rows.first().and_then(|r| r.first()), Some(MNode::Frac { .. }))));
+    assert!(
+        matches!(found[0].first(), Some(MNode::EqArr { rows }) if rows.first().is_some_and(|r| r.iter().any(|n| matches!(n, MNode::Delim { beg: Some('('), .. }))))
+    );
+    assert!(
+        matches!(found[1].first(), Some(MNode::EqArr { rows }) if matches!(rows.first().and_then(|r| r.first()), Some(MNode::Nary { chr: '∑', .. })))
+    );
+    assert!(
+        matches!(found[1].first(), Some(MNode::EqArr { rows }) if rows.first().is_some_and(|r| r.iter().any(|n| matches!(n, MNode::Delim { beg: Some('('), .. }))))
+    );
+}
+
 /// #332: rotation (`a:xfrm/@rot`, 60000ths of a degree) and flips of pictures, shapes, text boxes
 /// and groups survive save and load; the effect extent written covers the rotated bounds, and
 /// reading takes that overhang back out of the effects room.

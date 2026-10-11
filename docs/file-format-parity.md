@@ -63,7 +63,7 @@ Measured by grepping `crates/docx/src/read` and `src/write` for the OOXML elemen
 | Charts (`c:chart`), SmartArt (`dgm`) | ✅ | ✅ | Drawn from the chart's cached data and SmartArt's stored drawing (#292); not editable. Saved back as read, with every part they reach (chart, embedded workbook, colours and style; diagram data, layout, quick style, colours and drawing) and their content types; a moved or resized one keeps its new frame, and a pasted copy gets its own parts (#319) |
 | OLE objects (`w:object`: embedded or linked files, ActiveX) | 🟡 | ✅ | Shown as their picture (VML or DrawingML); saved back whole with the embedding and picture parts, at the size, rotation and flips set in WordCraft (#319, #332). Can't be opened or edited |
 | Word ink (`w14:contentPart`, InkML), 3D models | ❌ | ❌ | Dropped on read, not preserved on save |
-| Equations (OMML `m:oMath`) | ✅ | ✅ | #191; manual breaks (`m:brk`) and the settings' `m:mathPr` wrapping options (#326) |
+| Equations (OMML `m:oMath`) | ✅ | ✅ | Structured editor and OMML retention; manual breaks and `m:mathPr` wrapping options (#326). Unknown math elements now block mutation to protect source XML. See [equation compatibility](equation-compatibility.md). |
 | Themes, font table, settings, compatibility mode | ✅ | ✅ | Embedded fonts (`w:embedRegular`) not read |
 | Custom XML parts, document properties, bibliography sources | 🟡 | 🟡 | Custom properties round-trip; bibliography sources pending (#169) |
 | Ruby, `w:eastAsianLayout`, `w:fitText`, document grid (`w:docGrid`) | ❌ | ❌ | East Asian layout |
@@ -88,6 +88,7 @@ Measured by grepping `crates/docx/src/read` and `src/write` for the OOXML elemen
 | 2026-10-10 | trivial | Charts, SmartArt and OLE objects written back on save with their parts (#319); chart/SmartArt reading (#292) recorded |
 | 2026-10-10 | trivial | DrawingML rotation and flips read and written (#332) |
 | 2026-10-10 | trivial | Equation breaks and `m:mathPr` wrapping options round-trip (#326) |
+| 2026-10-10 | minor | Unknown OMML elements flag equation as unsupported; unsafe editing is rejected while original math XML is retained |
 | 2026-10-10 | trivial | Custom table styles round-trip (#256 merged) |
 | 2026-10-10 | major | First version: Word's full format list, read/write status, DOCX element coverage from the source, fidelity and hours |
 | 2026-10-10 | trivial | Freeform shapes and ink as DrawingML custom geometry, read and written (#307) |
