@@ -1,6 +1,6 @@
 # WordCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** trivial (M7: formatting revisions landed, #41; previously trivial: M5: Draw Table and Eraser landed, #303; previously minor: beta distance restated: ~15 points, ~150–230 h; previously: alpha gate checked: six core workflows pass; previously major: milestones moved here from ROADMAP.md; Current focus set from the re-measured gaps) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** trivial (Draw: Lasso Select, Add Pen, Ink to Shape and Ink Replay landed, #395; previously trivial: M7: formatting revisions landed, #41; previously trivial: M5: Draw Table and Eraser landed, #303; previously minor: beta distance restated: ~15 points, ~150–230 h; previously: alpha gate checked: six core workflows pass; previously major: milestones moved here from ROADMAP.md; Current focus set from the re-measured gaps) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 Forward-looking plan. The summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is
 [`gaps.md`](gaps.md); the numbers are in [`target-app-parity.md`](target-app-parity.md). Hours are
@@ -47,7 +47,7 @@ partial rows are fidelity gaps (beta work), not broken workflows. WordCraft stay
 | M0 | Skeleton and vertical slice (model, layout, render, engine, Word-style UI, CLI, MCP, web) | done | — |
 | M1 | DOCX I/O | done (first version); real-world corpus not started; charts/SmartArt/OLE dropped | 45–75 h |
 | M2 | Home tab | done except Paste Special, Clipboard pane, Style Inspector, Manage Styles, Asian typography (PRs open for four) | 5–10 h |
-| M3 | Insert tab | mostly done; equations done (#191); charts, SmartArt, icons, 3D, screenshot, online media missing | 50–80 h |
+| M3 | Insert tab | mostly done; equations done (#191), icons done (#309); charts, SmartArt, 3D, screenshot, online media missing | 50–80 h |
 | M4 | Layout and Design tabs | done except column balancing, group | 6–10 h |
 | M5 | Tables | done (row splitting, floating tables, style formatting); custom table styles (#256); Draw Table and Eraser (#303) | 6–10 h |
 | M6 | References | first version done (TOC fields, cross-references, Zotero); footnote continuation, 8 more bibliography styles missing | 15–25 h |
@@ -78,3 +78,4 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 | 2026-10-10 | minor | Alpha gate table added (core-workflow gate from the progress-docs standard): all six workflows pass, stage stays alpha |
 | 2026-10-10 | major | Created: milestones moved from ROADMAP.md with remaining hours; Current focus from gaps.md; M15–M16 added |
 | 2026-10-10 | trivial | M11: ink pens and eraser landed (#307) |
+| 2026-10-11 | trivial | M11: lasso, Add Pen, Ink to Shape and Ink Replay landed (#395) |

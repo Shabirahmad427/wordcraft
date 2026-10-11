@@ -65,7 +65,7 @@ owner actions (push to `github.com/storytold/wordcraft` and enable the release s
 
 | Area | Status | Parity |
 |---|---|---|
-| Ribbon/menu catalog coverage | **402 / 434 (92.6%)** | measured (`cargo xtask parity` → [`docs/parity-checklist.md`](docs/parity-checklist.md)) |
+| Ribbon/menu catalog coverage | **458 / 475 (96.4%)** | measured (`cargo xtask parity` → [`docs/parity-checklist.md`](docs/parity-checklist.md)) |
 | **Feature breadth** (weighted, incl. dialog options, styles, languages beyond the ribbon) | **~80%** | estimated |
 | **Ready for real work** (full target) | **~60%** (55–63%) | estimated, additive weighted sum over the dimensions |
 | **Mainstream practitioner** | **~55%** | estimated: weekly-work depth × discounts for interaction (×0.93), stability (×0.90), file exchange (×0.90) |

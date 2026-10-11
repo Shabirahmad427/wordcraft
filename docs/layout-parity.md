@@ -26,7 +26,7 @@ font can't match Word's metrics.
 | Line spacing (single, 1.5, double, at least, exactly, multiple), spacing before/after, contextual spacing | 🟡 | Word puts multiple-spacing extra below the text and collapses spacing differently (#135, #108 open) | 3–5 |
 | Widow/orphan control, keep with next, keep lines together, page break before | ✅ | `lib.rs` keep_next/keep_lines | — |
 | Tabs (left, center, right, decimal, bar), leaders | 🟡 | Bar tabs untested | 1–2 |
-| Hyphenation (automatic, 0.25" zone, soft hyphens, consecutive limit) | 🟡 | English patterns only; other languages hyphenate wrongly or not at all | in localization |
+| Hyphenation (automatic, zone from the document, words in capitals, soft hyphens, consecutive limit, Manual Hyphenation, #407) | 🟡 | English patterns only; other languages hyphenate wrongly or not at all | in localization |
 | Drop caps | ✅ | 2026-10-06 | — |
 | Columns, column breaks, separators | 🟡 | Basic flow, configurable equal/unequal widths and `NextColumn` are supported. At continuous section/document endings, complete text paragraphs balance across 2+ columns if every shaped line fits its destination. Notes, tables, objects, partial paragraphs, width rebreaking and multi-page balancing report a safe fallback. Undo/recovery/DOCX/raster/PDF coverage is internal only; Word comparison outstanding | 4–6 |
 | Section breaks (next page, next column, continuous, even, odd), different first page, odd/even headers | 🟡 | Internal tests cover column movement, rollover and page-number restart; complex geometry changes on one physical page and Word reference comparison remain outstanding | 1–2 |
@@ -45,10 +45,10 @@ font can't match Word's metrics.
 | Line numbers (restart per page/section, count by) | ✅ | | — |
 | Vertical page alignment | ✅ | | — |
 | Gutter, mirror margins, book fold, 2 pages per sheet | 🟡 | gutter and mirror margins; book fold missing | 2–3 |
-| Document grid (`w:docGrid`, lines per page, characters per line) | ❌ | East Asian documents paginate differently without it | 4–6 |
-| Vertical text (`tbRl`) in sections and text boxes; cell text direction | 🟡 | cell text direction landed (#245); page-level and text-box vertical text missing | 8–12 |
-| Ruby / phonetic guide, enclose characters, combined characters | ❌ | | 4–6 |
-| Bidirectional paragraphs, mixed-direction lines | 🟡 | #207; RTL sections and tables (`w:bidiVisual`) missing | 4–6 |
+| Document grid (`w:docGrid`, lines per page, characters per line) | 🟡 | #391: line grid snaps line heights to whole pitches (text centred in them; `w:snapToGrid` off opts a paragraph out); character grid puts East Asian characters on the character pitch (`linesAndChars`) or all text (`snapToChars`), Latin text proportional; View › Gridlines draws it. Not yet: run-level `w:snapToGrid`, grid in headers/footers, paragraph spacing in grid lines, Word's exact glyph placement in a cell | 1–2 |
+| Vertical text (`tbRl`) in sections and text boxes; cell text direction | 🟡 | cell text direction landed (#245); text-box text direction (rotate 90°, 270°, stacked) landed (#369); page-level vertical text and East Asian upright vertical glyphs missing | 8–12 |
+| Ruby / phonetic guide, enclose characters, combined characters | 🟡 | ruby (Phonetic Guide) landed (#288): ruby text over its base by alignment, line grows to fit, in PDF; enclose and combined characters missing; ruby not yet compared with Word page by page | 2–4 |
+| Bidirectional paragraphs, mixed-direction lines; RTL tables and sections | 🟡 | #207; RTL tables (#362): grid columns from the right edge, start alignment and indent from the right margin, cell margins and left/right borders mirrored, merged and turned cells and nested tables included; RTL sections (#362): newspaper columns right to left with the line between mirrored. Right-hand page gutter (`w:rtlGutter`) missing | 1 |
 | Equations: display layout, numbering, wrapping long display equations | ✅ | #191; long display equations break at top-level operators (`m:brkBin`, `m:brkBinSub`), manual breaks and `m:alnAt`, continuation lines indented by `m:wrapIndent` or set right (`m:wrapRight`) (#326) | — |
 | Hidden text excluded from breaking and hyphenation | ✅ | #173 | — |
 | Fields: PAGE, NUMPAGES, SECTIONPAGES, TOC page numbers | ✅ | #52 | — |
@@ -78,6 +78,7 @@ font can't match Word's metrics.
 | 2026-10-10 | trivial | Long footnotes continue onto the next page with a continuation separator (#352) |
 | 2026-10-10 | trivial | Layout reports vertical body overflow pages and the UI keeps a warning visible; horizontal overflow and text-box clipping remain undetected |
 | 2026-10-10 | trivial | Rotated and flipped objects laid out and drawn (#332) |
+| 2026-10-11 | trivial | Footnotes below text, endnotes at the end of each section, note numbering restarted per section or page (#385) |
 | 2026-10-10 | trivial | Long display equations wrap across lines (#326) |
 | 2026-10-10 | minor | Equation layout and numbering coverage documented with explicit limits in [equation compatibility](equation-compatibility.md) |
 | 2026-10-10 | trivial | AutoFit Contents measures the text (#44) |
