@@ -18,6 +18,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use wordcraft_ui_egui::printing::{Duplex, NativePrintBackend, NativePrintOptions, PrintJob, Printer, PrinterCapabilities};
+#[cfg(target_os = "windows")]
+use wordcraft_ui_egui::printing::{Duplex, NativePrintBackend, NativePrintOptions, PrintJob, Printer, PrinterCapabilities};
 
 /// Temporary print files start with this and end with `.pdf`.
 const PREFIX: &str = "wordcraft-print-";
@@ -70,6 +72,7 @@ impl NativePrintBackend for CupsBackend {
     }
 
     fn submit(&self, pdf: &[u8], options: &NativePrintOptions) -> Result<PrintJob, String> {
+        wordcraft_ui_egui::printing::validate_options(options)?;
         if !self.printers()?.iter().any(|p| p.name == options.printer) {
             return Err("The selected printer is no longer available.".into());
         }
@@ -102,6 +105,140 @@ impl NativePrintBackend for CupsBackend {
         let output = std::process::Command::new("cancel").arg(job_id).output().map_err(|e| format!("couldn't cancel print job: {e}"))?;
         if output.status.success() { Ok(()) } else { Err(command_error("cancel", &output.stderr)) }
     }
+}
+
+/// Windows printer discovery, PrintTicket configuration and PDF submission through WinRT's
+/// Windows.Data.Pdf renderer and the system XPS print pipeline. The WordCraft Print page supplies
+/// the printer-selection and options dialog.
+#[cfg(target_os = "windows")]
+#[derive(Default)]
+pub struct WindowsPrintBackend;
+
+#[cfg(target_os = "windows")]
+impl NativePrintBackend for WindowsPrintBackend {
+    fn printers(&self) -> Result<Vec<Printer>, String> {
+        use winprint::printer::PrinterDevice;
+
+        let devices = PrinterDevice::all().map_err(|error| format!("Windows printer discovery failed: {error}"))?;
+        const PRINTER_ATTRIBUTE_DEFAULT: u32 = 0x0000_0004;
+        Ok(devices
+            .into_iter()
+            .map(|device| Printer { name: device.name().to_string(), is_default: device.os_attributes() & PRINTER_ATTRIBUTE_DEFAULT != 0 })
+            .collect())
+    }
+
+    fn capabilities(&self, printer: &str) -> Result<PrinterCapabilities, String> {
+        use winprint::ticket::{FeatureOptionPack, FeatureOptionPackWithPredefined, PredefinedDuplexType, PrintCapabilities};
+
+        let device = windows_device(printer)?;
+        let caps = PrintCapabilities::fetch(&device).map_err(|error| format!("Could not read printer capabilities: {error}"))?;
+        let mut capabilities = PrinterCapabilities::default();
+        for media in caps.page_media_sizes() {
+            let size = media.size();
+            let label = wordcraft_ui_egui::printing::media_label(media.display_name(), size.width_in_micron(), size.height_in_micron());
+            if !label.is_empty() {
+                capabilities.media.push(label);
+            }
+        }
+        capabilities.media.sort();
+        capabilities.media.dedup();
+        for duplex in caps.duplexes() {
+            match duplex.as_predefined_name() {
+                Some(PredefinedDuplexType::TwoSidedLongEdge) => capabilities.duplex.push(Duplex::LongEdge),
+                Some(PredefinedDuplexType::TwoSidedShortEdge) => capabilities.duplex.push(Duplex::ShortEdge),
+                _ => {}
+            }
+        }
+        capabilities.duplex.sort_by_key(|duplex| match duplex {
+            Duplex::Simplex => 0,
+            Duplex::LongEdge => 1,
+            Duplex::ShortEdge => 2,
+        });
+        capabilities.duplex.dedup();
+        Ok(capabilities)
+    }
+
+    fn submit(&self, pdf: &[u8], options: &NativePrintOptions) -> Result<PrintJob, String> {
+        use winprint::{
+            printer::{FilePrinter, WinPdfPrinter},
+            ticket::{
+                Copies, FeatureOptionPack, FeatureOptionPackWithPredefined, PredefinedDuplexType, PredefinedPageOrientation, PrintCapabilities,
+                PrintTicket, PrintTicketBuilder,
+            },
+        };
+
+        wordcraft_ui_egui::printing::validate_options(options)?;
+        let device = windows_device(&options.printer)?;
+        let caps = PrintCapabilities::fetch(&device).map_err(|error| format!("Could not read printer capabilities: {error}"))?;
+        let mut ticket = PrintTicketBuilder::new(&device).map_err(|error| format!("Could not prepare printer settings: {error}"))?;
+        ticket.merge(Copies(options.copies)).map_err(|error| format!("The printer rejected the copy count: {error}"))?;
+
+        let collation = if options.collated { "Collated" } else { "Uncollated" };
+        let collate_ticket = PrintTicket::from_xml(format!(
+            r#"<psf:PrintTicket xmlns:psf="http://schemas.microsoft.com/windows/2003/08/printing/printschemaframework" xmlns:psk="http://schemas.microsoft.com/windows/2003/08/printing/printschemakeywords" version="1"><psf:Feature name="psk:JobCollateAllDocuments"><psf:Option name="psk:{collation}"/></psf:Feature></psf:PrintTicket>"#
+        ));
+        ticket.merge(collate_ticket).map_err(|error| format!("The printer does not accept the requested collation setting: {error}"))?;
+
+        if let Some(media_name) = options.media.as_deref().filter(|media| !media.is_empty()) {
+            let media = caps
+                .page_media_sizes()
+                .find(|media| {
+                    let size = media.size();
+                    wordcraft_ui_egui::printing::media_label(media.display_name(), size.width_in_micron(), size.height_in_micron()) == media_name
+                })
+                .ok_or_else(|| "The selected paper size is no longer available.".to_string())?;
+            ticket.merge(media).map_err(|error| format!("The printer rejected the selected paper size: {error}"))?;
+        }
+        match options.duplex {
+            Duplex::Simplex => {
+                if let Some(simplex) = caps.duplexes().find(|duplex| duplex.as_predefined_name() == Some(PredefinedDuplexType::OneSided)) {
+                    ticket.merge(simplex).map_err(|error| format!("The printer rejected one-sided printing: {error}"))?;
+                }
+            }
+            Duplex::LongEdge | Duplex::ShortEdge => {
+                let requested =
+                    if options.duplex == Duplex::LongEdge { PredefinedDuplexType::TwoSidedLongEdge } else { PredefinedDuplexType::TwoSidedShortEdge };
+                let duplex = caps
+                    .duplexes()
+                    .find(|duplex| duplex.as_predefined_name() == Some(requested))
+                    .ok_or_else(|| "The selected duplex mode is no longer available.".to_string())?;
+                ticket.merge(duplex).map_err(|error| format!("The printer rejected the selected duplex mode: {error}"))?;
+            }
+        }
+        if options.landscape {
+            let orientation = caps
+                .page_orientations()
+                .find(|orientation| orientation.as_predefined_name() == Some(PredefinedPageOrientation::Landscape))
+                .ok_or_else(|| "This printer does not advertise landscape orientation.".to_string())?;
+            ticket.merge(orientation).map_err(|error| format!("The printer rejected landscape orientation: {error}"))?;
+        }
+        if options.fit_to_page {
+            let scale_ticket = PrintTicket::from_xml(
+                r#"<psf:PrintTicket xmlns:psf="http://schemas.microsoft.com/windows/2003/08/printing/printschemaframework" xmlns:psk="http://schemas.microsoft.com/windows/2003/08/printing/printschemakeywords" version="1"><psf:Feature name="psk:PageScaling"><psf:Option name="psk:FitApplicationMediaSizeToPageImageableSize"/></psf:Feature></psf:PrintTicket>"#,
+            );
+            ticket.merge(scale_ticket).map_err(|error| format!("The printer does not accept fit-to-page scaling: {error}"))?;
+        }
+
+        let path = write_temp(&std::env::temp_dir(), pdf).map_err(|error| format!("Could not prepare the print job: {error}"))?;
+        let result =
+            WinPdfPrinter::new(device).print(&path, ticket.build().map_err(|error| format!("Could not finalize printer settings: {error}"))?);
+        let _ = std::fs::remove_file(&path);
+        result.map_err(|error| format!("Windows could not submit the print job: {error}"))?;
+        Ok(PrintJob { id: None, receipt: "Print job submitted to Windows. Use the system print queue for job status or cancellation.".into() })
+    }
+
+    fn cancel(&self, _job_id: &str) -> Result<(), String> {
+        Err("Windows did not provide a cancellable job handle; use the system print queue to cancel this job.".into())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_device(printer: &str) -> Result<winprint::printer::PrinterDevice, String> {
+    winprint::printer::PrinterDevice::all()
+        .map_err(|error| format!("Windows printer discovery failed: {error}"))?
+        .into_iter()
+        .find(|device| device.name() == printer)
+        .ok_or_else(|| "The selected printer is no longer available.".into())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

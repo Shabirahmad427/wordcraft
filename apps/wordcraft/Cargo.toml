@@ -32,6 +32,11 @@ winresource = "0.1"
 # workspace forbids) behind a safe API. Pinned exactly: review the diff before bumping.
 fmv-macos-events = "=0.1.0"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows' PrintTicket/PrintCapabilities, XPS print pipeline and system PDF renderer. Keep its
+# optional PDFium feature disabled: printing uses Windows.Data.Pdf instead of a bundled engine.
+winprint = { version = "0.2.1", default-features = false }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rfd = { workspace = true }
 # Waits for an `rfd::AsyncFileDialog` on a background thread (the dialogs don't block the UI, #94);

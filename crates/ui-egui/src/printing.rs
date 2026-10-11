@@ -38,11 +38,33 @@ pub struct PrintJob {
 }
 
 /// Implemented by each desktop host. Calls are passed as data, never interpolated into a shell.
-pub trait NativePrintBackend {
+pub trait PrintBackend {
     fn printers(&self) -> Result<Vec<Printer>, String>;
     fn capabilities(&self, printer: &str) -> Result<PrinterCapabilities, String>;
     fn submit(&self, pdf: &[u8], options: &NativePrintOptions) -> Result<PrintJob, String>;
     fn cancel(&self, job_id: &str) -> Result<(), String>;
+}
+
+/// Compatibility name for the existing desktop service field.
+pub use PrintBackend as NativePrintBackend;
+
+/// Validate settings shared across platform backends before touching a printer or spooler.
+pub fn validate_options(options: &NativePrintOptions) -> Result<(), String> {
+    if options.printer.trim().is_empty() {
+        return Err("Select a printer before printing.".into());
+    }
+    if !(1..=999).contains(&options.copies) {
+        return Err("Copies must be between 1 and 999.".into());
+    }
+    Ok(())
+}
+
+/// Return a usable name for a discovered media option, including drivers that omit display names.
+pub fn media_label(display_name: Option<&str>, width_microns: u32, height_microns: u32) -> String {
+    display_name
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{} × {} mm", width_microns / 1000, height_microns / 1000))
 }
 
 pub struct PrintPreviewState {
@@ -160,5 +182,24 @@ mod tests {
         state.reset_if_printer_changed("printer", PrinterCapabilities { media: vec!["A4".into()], duplex: vec![Duplex::Simplex] });
         assert_eq!(state.duplex, Duplex::Simplex);
         assert!(state.media.is_empty(), "the new printer's default media remains selected");
+    }
+
+    #[test]
+    fn shared_print_options_reject_missing_printers_and_bad_copy_counts() {
+        let mut options = NativePrintOptions { copies: 1, ..Default::default() };
+        assert!(validate_options(&options).is_err());
+        options.printer = "queue".into();
+        assert!(validate_options(&options).is_ok());
+        options.copies = 0;
+        assert!(validate_options(&options).is_err());
+        options.copies = 1000;
+        assert!(validate_options(&options).is_err());
+    }
+
+    #[test]
+    fn media_without_a_driver_label_still_has_a_stable_size_label() {
+        assert_eq!(media_label(Some("Letter"), 215_900, 279_400), "Letter");
+        assert_eq!(media_label(None, 210_000, 297_000), "210 × 297 mm");
+        assert_eq!(media_label(Some(" "), 0, 0), "0 × 0 mm");
     }
 }

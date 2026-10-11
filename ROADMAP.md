@@ -28,7 +28,7 @@ from a signed download, without losing work.
 | **DOCX fidelity against a corpus of real-world files** (open, render, round-trip, fix) | Synthetic preservation regressions started; independent real-world corpus verification still missing |
 | Long footnotes that continue onto later pages | landed (40% page-area cap; continuation pages keep remaining lines visible). Multicolumn pagination now reserves note space page-wide and reflows earlier columns. Equivalent in-memory and DOCX-reopened notes match pixels when the in-memory story includes its OOXML self-reference mark. Word behavior, page-specific note styles and custom continuation separators remain unverified |
 | Balanced multicolumn layout | safe final-page paragraph balancing landed; complex-content and multi-page balancing remain open |
-| Print preview and native printing | first version: shared-layout preview and CUPS queues on Linux; macOS code path unverified, Windows still opens PDF in its viewer |
+| Print preview and desktop printing | shared-layout preview; Linux/macOS use CUPS, Windows PrintTicket/Windows.Data.Pdf adapter compile-checks; no physical printer verified, Windows app-level cancellation unavailable |
 | Signed builds for macOS, Windows, Linux, FreeBSD and web | pipeline written; **needs the GitHub remote and release secrets from the owner** |
 | Real app icon / mascot art | placeholder; **needs owner art** |
 
@@ -225,3 +225,11 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 - Linux desktop integrates CUPS queues, copies/collation, discovered media and duplex modes, orientation/scaling requests, and cancellation for queued jobs. Errors and absent queues leave the PDF viewer fallback available. The web retains browser printing.
 - macOS is wired to the CUPS command interface but was not built or tested on macOS; Windows keeps the existing PDF-viewer flow without WordCraft printer controls. No physical printer or Microsoft Word comparison was available.
 - Focused tests cover page ranges, multipage selected-PDF preview, native option/cancel handoff and CUPS parsing/argument construction. All six `cargo xtask ci` gates pass; the workspace reports **1,141 passed, 0 failed, 1 ignored** across 49 suites. Linux GUI and CLI release builds pass. No physical printer, macOS build or Windows printer integration was available for verification.
+
+## Cross-platform print adapters (based on `40a85a6`, 2026-10-10)
+
+- The platform-independent print backend contract now drives Linux/macOS CUPS and a Windows PrintTicket/Windows.Data.Pdf adapter. The WordCraft Print page provides printer selection and driver settings while PDF generation remains shared with preview.
+- Windows supports driver-advertised media and duplex plus validated copies, collation, orientation and fit-to-page settings. Its adapter compile-check passed for `x86_64-pc-windows-gnu`; macOS CUPS compile-check passed for `aarch64-apple-darwin`.
+- Windows submission is synchronous and its wrapper exposes no cancellable job ID; cancellation is available through the system print queue. The macOS path uses CUPS, not AppKit `NSPrintPanel`. No native platform runtime or physical printer was available, so behavior remains unverified on actual devices.
+- Linux/macOS CUPS and Windows driver-specific options may differ. No independent Word print comparison was performed.
+- Final validation: all six `cargo xtask ci` gates passed; workspace tests report **1,143 passed, 0 failed, 1 ignored across 49 suites**. Linux GUI/CLI release build passed. Windows and macOS release-mode `cargo check` passed for the available GNU and Apple Silicon targets; cross-target binaries were not linked or run.
