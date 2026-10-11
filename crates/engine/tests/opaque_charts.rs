@@ -34,6 +34,17 @@ fn editable_chart_fixture_with_direction(direction: &str) -> Vec<u8> {
     files.insert("word/embeddings/data.xlsx".into(), archive(&book));
     archive(&files)
 }
+
+fn editable_line_chart_fixture() -> Vec<u8> {
+    let mut files = unpack(&editable_chart_fixture());
+    let chart = String::from_utf8(files["word/charts/chart1.xml"].clone())
+        .unwrap()
+        .replace("<c:barChart>", "<c:lineChart>")
+        .replace("</c:barChart>", "</c:lineChart>")
+        .replace("<c:barDir val=\"col\"/>", "");
+    files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+    archive(&files)
+}
 fn has_chart(doc: &Document) -> bool {
     doc.body
         .iter()
@@ -281,6 +292,76 @@ fn horizontal_bar_chart_edit_survives_render_undo_recovery_and_docx_reopen() {
     assert_eq!(snapshot.chart_kind, "bar");
     assert_eq!(snapshot.series[0].categories, ["North", "South"]);
     assert_eq!(snapshot.series[0].values, [120.0, 250.0]);
+    assert_eq!(std::fs::read(source_path).unwrap(), original, "source DOCX remains unchanged");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn line_chart_edit_survives_render_undo_recovery_and_docx_reopen() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-line-chart-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source_path = directory.join("line.docx");
+    let saved_path = directory.join("line-edited.docx");
+    let original = editable_line_chart_fixture();
+    std::fs::write(&source_path, &original).unwrap();
+
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source_path})).unwrap();
+    let document_id = session.document_id();
+    let before = session.layout();
+    let before_raster = wordcraft_render::render_page(&session.doc, &before.pages[0], 1.0, &Default::default()).to_straight();
+    let inspected = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(inspected["chartKind"], "line");
+
+    session
+        .run(
+            "chart.editData",
+            &json!({
+                "documentId": document_id,
+                "chartPart": "word/charts/chart1.xml",
+                "series": [{"name": "Line measurements", "categories": ["North", "South"], "values": [130.0, 260.0]}]
+            }),
+        )
+        .unwrap();
+    let edited_package = wordcraft_docx::write(&session.doc).unwrap();
+    let edited_parts = unpack(&edited_package);
+    let source_parts = unpack(&original);
+    for (part, bytes) in &source_parts {
+        if !matches!(part.as_str(), "word/charts/chart1.xml" | "word/embeddings/data.xlsx") {
+            assert_eq!(edited_parts.get(part), Some(bytes), "unrelated DOCX part changed: {part}");
+        }
+    }
+    let chart_xml = String::from_utf8(edited_parts["word/charts/chart1.xml"].clone()).unwrap();
+    assert!(chart_xml.contains("<c:lineChart>"));
+    assert!(chart_xml.contains("Line measurements"));
+    let xlsx = unpack(&edited_parts["word/embeddings/data.xlsx"]);
+    let sheet = String::from_utf8(xlsx["xl/worksheets/sheet1.xml"].clone()).unwrap();
+    assert!(sheet.contains("North"));
+    assert!(sheet.contains(">130</v>"));
+
+    let after = session.layout();
+    let after_raster = wordcraft_render::render_page(&session.doc, &after.pages[0], 1.0, &Default::default()).to_straight();
+    assert_ne!(before_raster, after_raster, "cache edits refresh line chart rendering");
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(
+        wordcraft_docx::inspect_chart_data(&wordcraft_docx::write(&session.doc).unwrap(), "word/charts/chart1.xml").unwrap().series[0].values,
+        [42.0, 84.0]
+    );
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), edited_package);
+
+    let recovery_store = Store::new(directory.join("recovery")).unwrap();
+    let recovery_id = recovery_store.save(&unique_id(), document_id, &Snapshot::capture(&session)).unwrap();
+    let mut recovered = Session::new(Document::new());
+    recovery_store.load(&recovery_id).unwrap().restore(&mut recovered);
+    assert_eq!(wordcraft_docx::write(&recovered.doc).unwrap(), edited_package);
+    recovered.run("file.save", &json!({"path": saved_path})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": directory.join("line-edited.docx")})).unwrap();
+    let snapshot = wordcraft_docx::inspect_chart_data(&std::fs::read(directory.join("line-edited.docx")).unwrap(), "word/charts/chart1.xml").unwrap();
+    assert_eq!(snapshot.chart_kind, "line");
+    assert_eq!(snapshot.series[0].categories, ["North", "South"]);
+    assert_eq!(snapshot.series[0].values, [130.0, 260.0]);
     assert_eq!(std::fs::read(source_path).unwrap(), original, "source DOCX remains unchanged");
     std::fs::remove_dir_all(directory).unwrap();
 }
