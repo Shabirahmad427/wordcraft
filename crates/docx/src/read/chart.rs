@@ -131,6 +131,18 @@ struct Axis {
     fmt: Option<String>,
 }
 
+#[derive(Clone)]
+struct AxisTitle {
+    text: String,
+    position: Pos,
+    size: f32,
+    color: Rgb,
+    bold: bool,
+    font: Option<String>,
+    rotation: f32,
+    align: TextAlign,
+}
+
 struct Series {
     name: String,
     color: Option<Rgb>,
@@ -165,6 +177,8 @@ struct Chart {
     series: Vec<Series>,
     accents: Vec<Rgb>,
     title: Option<String>,
+    horizontal_axis_title: Option<AxisTitle>,
+    vertical_axis_title: Option<AxisTitle>,
     legend: Option<Pos>,
     /// Category axis (scatter: the x axis).
     cat: Axis,
@@ -213,7 +227,10 @@ impl Chart {
         if grouping == Grouping::Percent {
             to_percent(&mut series, n);
         }
+        let text_size = text_size(space);
         let (cat, val) = chart_axes(plot, scatter);
+        let (horizontal_axis_title, vertical_axis_title) =
+            if matches!(kind, Kind::Pie | Kind::Doughnut) { (None, None) } else { axis_titles(plot, ty, theme, text_size) };
         let val_fmt = if grouping == Grouping::Percent {
             "0%".to_string()
         } else {
@@ -232,12 +249,14 @@ impl Chart {
             n,
             cats,
             title: title_of(chart, &series),
+            horizontal_axis_title,
+            vertical_axis_title,
             series,
             accents: (4..10).map(|i| slot(theme, i)).collect(),
             legend: legend_pos(chart),
             cat,
             val,
-            text_size: text_size(space),
+            text_size,
             val_fmt,
             date1904,
             plot_border: plot.child("c:spPr").and_then(|p| p.child("a:ln")).and_then(|l| fill_colour(l, theme)),
@@ -319,6 +338,107 @@ fn chart_axes(plot: &El, scatter: bool) -> (Axis, Axis) {
     };
     let cat_el = plot.els().find(|e| matches!(e.name.as_str(), "c:catAx" | "c:dateAx"));
     (axis(if scatter { x_el } else { cat_el }), axis(val_el))
+}
+
+/// Axis titles are matched only when the selected chart type declares two unique axes and both
+/// references resolve exactly once. Combined/secondary-axis charts keep their text in OOXML but
+/// fall back to the renderer's existing layout instead of guessing which title belongs where.
+fn axis_titles(plot: &El, chart_type: &El, theme: &[Rgb], default_size: f32) -> (Option<AxisTitle>, Option<AxisTitle>) {
+    let ids: Vec<&str> = chart_type.children("c:axId").filter_map(|e| e.attr("val")).collect();
+    if ids.len() != 2 || ids.first() == ids.get(1) {
+        return (None, None);
+    }
+    let axis_elements: Vec<&El> = plot
+        .els()
+        .filter(|e| matches!(e.name.as_str(), "c:catAx" | "c:dateAx" | "c:valAx"))
+        .filter(|axis| axis.child("c:axId").and_then(|e| e.attr("val")).is_some_and(|id| ids.contains(&id)))
+        .collect();
+    if axis_elements.len() != 2
+        || ids.iter().any(|id| axis_elements.iter().filter(|axis| axis.child("c:axId").and_then(|e| e.attr("val")) == Some(*id)).count() != 1)
+    {
+        return (None, None);
+    }
+    let mut horizontal = None;
+    let mut vertical = None;
+    for axis in axis_elements {
+        let Some(position) = axis.child("c:axPos").and_then(|e| e.attr("val")) else { return (None, None) };
+        let Some(position) = (match position {
+            "b" => Some(Pos::Bottom),
+            "t" => Some(Pos::Top),
+            "l" => Some(Pos::Left),
+            "r" => Some(Pos::Right),
+            _ => None,
+        }) else {
+            return (None, None);
+        };
+        let titles: Vec<_> = axis.children("c:title").collect();
+        if titles.is_empty() {
+            continue;
+        }
+        if titles.len() != 1 {
+            return (None, None);
+        }
+        let Some(title) = axis_title(titles[0], position, theme, default_size) else { continue };
+        if matches!(position, Pos::Bottom | Pos::Top) {
+            if horizontal.replace(title).is_some() {
+                return (None, None);
+            }
+        } else if vertical.replace(title).is_some() {
+            return (None, None);
+        }
+    }
+    (horizontal, vertical)
+}
+
+/// The readable subset of a title's DrawingML text style. Rich title text remains losslessly in
+/// the package; rendering flattens it to one line and falls back to chart defaults for mixed runs.
+fn axis_title(title: &El, position: Pos, theme: &[Rgb], default_size: f32) -> Option<AxisTitle> {
+    let text = title_text(title)?;
+    let rich = title.child("c:tx").and_then(|tx| tx.child("c:rich"));
+    let paragraphs: Vec<_> = rich.into_iter().flat_map(|r| r.children("a:p")).collect();
+    let runs: Vec<_> = paragraphs.iter().flat_map(|p| p.children("a:r")).collect();
+    let simple_run = (paragraphs.len() == 1 && runs.len() == 1).then(|| runs.first().copied()).flatten();
+    let tx_pr = title.child("c:txPr");
+    let run_pr = simple_run.and_then(|run| run.child("a:rPr"));
+    let default_pr = rich.and_then(|r| r.find("a:defRPr")).or_else(|| tx_pr.and_then(|p| p.find("a:defRPr")));
+    let size = run_pr
+        .and_then(|p| p.attr("sz"))
+        .or_else(|| default_pr.and_then(|p| p.attr("sz")))
+        .and_then(int)
+        .map(|n| (n as f32 / 100.0).clamp(6.0, 24.0))
+        .unwrap_or(default_size.clamp(6.0, 24.0));
+    let color = run_pr.and_then(|p| fill_colour(p, theme)).or_else(|| default_pr.and_then(|p| fill_colour(p, theme))).unwrap_or(TEXT);
+    let bold = run_pr.and_then(|p| p.attr("b")).or_else(|| default_pr.and_then(|p| p.attr("b"))).is_some_and(truthy);
+    let font = run_pr
+        .and_then(|p| p.child("a:latin"))
+        .or_else(|| default_pr.and_then(|p| p.child("a:latin")))
+        .and_then(|f| f.attr("typeface"))
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .map(str::to_string);
+    let align = paragraphs.first().and_then(|p| p.child("a:pPr")).and_then(|p| p.attr("algn")).map_or(TextAlign::Center, |v| match v {
+        "l" | "just" | "dist" => TextAlign::Left,
+        "r" => TextAlign::Right,
+        _ => TextAlign::Center,
+    });
+    let vertical_axis = matches!(position, Pos::Left | Pos::Right);
+    let default_rotation = if vertical_axis { 270.0 } else { 0.0 };
+    let rotation = tx_pr
+        .and_then(|p| p.find("a:bodyPr"))
+        .and_then(|p| p.attr("rot"))
+        .and_then(|v| v.parse::<f32>().ok())
+        .filter(|v| v.is_finite() && v.abs() <= 21_600_000.0)
+        .map(|v| v / 60_000.0)
+        .unwrap_or(default_rotation);
+    // Arbitrary angles are supported by the draw transform, but reserve space based on an
+    // axis-aligned title. Keep 0/quarter turns and use a conventional axis orientation otherwise.
+    let rotation = if [0.0, 90.0, 180.0, 270.0].iter().any(|a| (rotation.rem_euclid(360.0) - a).abs() < 0.1) { rotation } else { default_rotation };
+    let rotation = if matches!(position, Pos::Top | Pos::Bottom) && ![0.0, 180.0].iter().any(|a| (rotation.rem_euclid(360.0) - a).abs() < 0.1) {
+        default_rotation
+    } else {
+        rotation
+    };
+    Some(AxisTitle { text, position, size, color, bold, font, rotation, align })
 }
 
 /// The chart's title. An empty `c:title` shows the series name (Word's automatic title of a
@@ -939,7 +1059,20 @@ fn widest(items: &[String], size: f32) -> f32 {
 }
 
 fn text(out: &mut Vec<GraphicItem>, rect: Rect, s: &str, size: f32, align: TextAlign, bold: bool) {
-    out.push(GraphicItem::Text { rect: rect.arr(), text: s.to_string(), size, color: TEXT, bold, align, font: None });
+    out.push(GraphicItem::Text { rect: rect.arr(), text: s.to_string(), size, color: TEXT, rotation: 0.0, bold, align, font: None });
+}
+
+fn styled_text(out: &mut Vec<GraphicItem>, rect: Rect, s: &str, style: &AxisTitle, rotation: f32) {
+    out.push(GraphicItem::Text {
+        rect: rect.arr(),
+        text: s.to_string(),
+        size: style.size,
+        color: style.color,
+        rotation,
+        bold: style.bold,
+        align: style.align,
+        font: style.font.clone(),
+    });
 }
 
 /// Text centred on `cx` with its top at `y`.
@@ -1182,8 +1315,15 @@ impl Axes {
 /// The room around the plot for axis labels, and the category labels as they'll be drawn.
 struct Margins {
     left: f32,
+    right: f32,
     top: f32,
     bottom: f32,
+    label_left: f32,
+    label_bottom: f32,
+    title_left: f32,
+    title_right: f32,
+    title_top: f32,
+    title_bottom: f32,
     /// Category labels in lines (none for scatter charts or a deleted category axis).
     wrapped: Vec<Vec<String>>,
     /// Every `skip`-th category label is shown under a column chart.
@@ -1197,16 +1337,22 @@ fn axis_margins(c: &Chart, ax: &Axes, area: Rect) -> Margins {
     let lh = fs * LINE;
     let scatter = c.kind == Kind::Scatter;
     let (cat_on, val_on) = (!c.cat.deleted, !c.val.deleted);
-    let left = if c.horizontal {
+    let mut label_left = if c.horizontal {
         if cat_on { widest(&c.cats, fs).min(area.w * 0.4) + GAP } else { 0.0 }
     } else if val_on {
         ax.vticks.iter().map(|(_, s)| text_w(s, fs)).fold(0.0, f32::max) + GAP
     } else {
         0.0
     };
-    let band_w = (area.w - left).max(1.0) / c.n as f32;
+    label_left = label_left.min(area.w * 0.4);
+    let title_left = c.vertical_axis_title.as_ref().filter(|t| t.position == Pos::Left).map_or(0.0, |t| vertical_title_band(t, area));
+    let title_right = c.vertical_axis_title.as_ref().filter(|t| t.position == Pos::Right).map_or(0.0, |t| vertical_title_band(t, area));
+    let label_top = if !c.horizontal && val_on { lh / 2.0 } else { 0.0 };
+    let title_top = c.horizontal_axis_title.as_ref().filter(|t| t.position == Pos::Top).map_or(0.0, |t| horizontal_title_band(t, area));
+    let title_bottom = c.horizontal_axis_title.as_ref().filter(|t| t.position == Pos::Bottom).map_or(0.0, |t| horizontal_title_band(t, area));
+    let band_w = (area.w - label_left - title_left - title_right).max(1.0) / c.n as f32;
     let wrapped: Vec<Vec<String>> = if cat_on && !scatter {
-        let width = if c.horizontal { left - GAP } else { band_w };
+        let width = if c.horizontal { label_left - GAP } else { band_w };
         c.cats.iter().map(|s| wrap(s, width, fs)).collect()
     } else {
         Vec::new()
@@ -1214,15 +1360,35 @@ fn axis_margins(c: &Chart, ax: &Axes, area: Rect) -> Margins {
     let widest_line = wrapped.iter().flatten().map(|s| text_w(s, fs)).fold(0.0, f32::max);
     let skip = ((widest_line / band_w).ceil() as usize).max(1);
     let label_lines = wrapped.iter().map(Vec::len).max().unwrap_or(1) as f32;
-    let bottom = if cat_on && !c.horizontal {
+    let label_bottom = (if cat_on && !c.horizontal {
         if scatter { lh + GAP } else { label_lines * lh + GAP }
     } else if c.horizontal && val_on {
         lh + GAP
     } else {
         0.0
-    };
-    let top = if !c.horizontal && val_on { lh / 2.0 } else { 0.0 };
-    Margins { left, top, bottom, wrapped, skip }
+    })
+    .min(area.h * 0.4);
+    let label_top = label_top.min(area.h * 0.2);
+    let title_top = title_top.min(area.h * 0.2);
+    let title_bottom = title_bottom.min(area.h * 0.2);
+    let title_left = title_left.min(area.w * 0.22);
+    let title_right = title_right.min(area.w * 0.22);
+    let left = label_left + title_left;
+    let right = title_right;
+    let top = label_top + title_top;
+    let bottom = label_bottom + title_bottom;
+    Margins { left, right, top, bottom, label_left, label_bottom, title_left, title_right, title_top, title_bottom, wrapped, skip }
+}
+
+fn vertical_title_band(title: &AxisTitle, area: Rect) -> f32 {
+    let lh = title.size * LINE;
+    let rotated = (title.rotation.rem_euclid(180.0) - 90.0).abs() < 0.1;
+    let width = if rotated { lh + GAP } else { text_w(&title.text, title.size) + GAP };
+    width.min(area.w * 0.22)
+}
+
+fn horizontal_title_band(title: &AxisTitle, area: Rect) -> f32 {
+    (title.size * LINE + GAP).min(area.h * 0.2)
 }
 
 /// A bar, column, line, area or scatter chart in `area`: gridlines, series, axes, then labels.
@@ -1232,7 +1398,7 @@ fn cartesian(out: &mut Vec<GraphicItem>, c: &Chart, area: Rect) {
     }
     let ax = Axes::of(c);
     let m = axis_margins(c, &ax, area);
-    let plot = Rect { x: area.x + m.left, y: area.y + m.top, w: area.w - m.left, h: area.h - m.top - m.bottom };
+    let plot = Rect { x: area.x + m.left, y: area.y + m.top, w: area.w - m.left - m.right, h: area.h - m.top - m.bottom };
     if plot.w < 1.0 || plot.h < 1.0 {
         return;
     }
@@ -1249,10 +1415,33 @@ fn cartesian(out: &mut Vec<GraphicItem>, c: &Chart, area: Rect) {
     }
     draw_axes(out, c, &g);
     if !c.val.deleted {
-        draw_value_labels(out, c, &g, &ax.vticks, Rect { w: m.left, ..area });
+        draw_value_labels(out, c, &g, &ax.vticks, Rect { x: area.x + m.title_left, w: m.label_left, ..area });
     }
     if !c.cat.deleted {
-        draw_category_labels(out, c, &g, &ax.xticks, &m, area);
+        draw_category_labels(out, c, &g, &ax.xticks, &m, Rect { x: area.x + m.title_left, y: area.y + m.title_top, ..area });
+    }
+    draw_axis_titles(out, c, &m, area, plot);
+}
+
+fn draw_axis_titles(out: &mut Vec<GraphicItem>, c: &Chart, m: &Margins, area: Rect, plot: Rect) {
+    if let Some(title) = &c.horizontal_axis_title {
+        let y = if title.position == Pos::Top {
+            area.y + (m.title_top - title.size * LINE) / 2.0
+        } else {
+            plot.bottom() + m.label_bottom + (m.title_bottom - title.size * LINE) / 2.0
+        };
+        let text = clip_text(&title.text, plot.w, title.size);
+        styled_text(out, Rect { x: plot.x, y, w: plot.w, h: title.size * LINE }, &text, title, title.rotation);
+    }
+    if let Some(title) = &c.vertical_axis_title {
+        let band = if title.position == Pos::Left { m.title_left } else { m.title_right };
+        let center_x = if title.position == Pos::Left { area.x + band / 2.0 } else { area.right() - band / 2.0 };
+        let center_y = plot.y + plot.h / 2.0;
+        let rotated = (title.rotation.rem_euclid(180.0) - 90.0).abs() < 0.1;
+        let (width, rotation) = if rotated { (plot.h, title.rotation) } else { (band.max(1.0), 0.0) };
+        let text = clip_text(&title.text, width, title.size);
+        let rect = Rect { x: center_x - width / 2.0, y: center_y - title.size * LINE / 2.0, w: width, h: title.size * LINE };
+        styled_text(out, rect, &text, title, rotation);
     }
 }
 
@@ -1309,7 +1498,7 @@ fn draw_category_labels(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, xticks
         for (i, lines) in m.wrapped.iter().enumerate() {
             let top = g.band_start(i) + g.band() / 2.0 - lines.len() as f32 * lh / 2.0;
             for (k, s) in lines.iter().enumerate() {
-                text(out, Rect { x: area.x, y: top + k as f32 * lh, w: m.left - GAP, h: lh }, s, fs, TextAlign::Right, false);
+                text(out, Rect { x: area.x, y: top + k as f32 * lh, w: m.label_left - GAP, h: lh }, s, fs, TextAlign::Right, false);
             }
         }
     } else {
@@ -1605,6 +1794,112 @@ mod tests {
         assert_eq!(bars[0].0, Rgb(0xFF, 0, 0));
         assert_eq!(bars[3].0, Rgb(0, 0xFF, 0));
         assert!(items.iter().any(|it| matches!(it, GraphicItem::Text { text, .. } if text == "Q2")));
+    }
+
+    fn cartesian_with_axis_titles(kind: &str, position: &str, legend: Option<&str>) -> String {
+        let chart = match kind {
+            "bar" => r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>"#,
+            "horizontalBar" => r#"<c:barChart><c:barDir val="bar"/><c:grouping val="clustered"/>"#,
+            "line" => r#"<c:lineChart><c:grouping val="standard"/>"#,
+            "area" => r#"<c:areaChart><c:grouping val="standard"/>"#,
+            "scatter" => r#"<c:scatterChart><c:scatterStyle val="line"/>"#,
+            _ => "",
+        };
+        let series = if kind == "scatter" {
+            r#"<c:ser><c:idx val="0"/><c:yVal><c:numRef><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>2</c:v></c:pt><c:pt idx="1"><c:v>4</c:v></c:pt></c:numCache></c:numRef></c:yVal><c:xVal><c:numRef><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>3</c:v></c:pt></c:numCache></c:numRef></c:xVal></c:ser>"#
+        } else {
+            r#"<c:ser><c:tx><c:v>Series</c:v></c:tx><c:cat><c:strLit><c:ptCount val="2"/><c:pt idx="0"><c:v>Q1</c:v></c:pt><c:pt idx="1"><c:v>Q2</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>2</c:v></c:pt><c:pt idx="1"><c:v>4</c:v></c:pt></c:numLit></c:val></c:ser>"#
+        };
+        let mut plot = format!(
+            r#"{chart}{series}<c:axId val="1"/><c:axId val="2"/></{}><c:catAx><c:axId val="1"/><c:axPos val="{cat_pos}"/></c:catAx><c:valAx><c:axId val="2"/><c:axPos val="{val_pos}"/></c:valAx>"#,
+            if kind == "bar" || kind == "horizontalBar" {
+                "barChart"
+            } else if kind == "line" {
+                "lineChart"
+            } else if kind == "area" {
+                "areaChart"
+            } else {
+                "scatterChart"
+            },
+            cat_pos = if kind == "horizontalBar" { "l" } else { "b" },
+            val_pos = if kind == "horizontalBar" { "b" } else { "l" },
+        );
+        let cat_title = r#"<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="ctr"><a:defRPr sz="1100"/></a:pPr><a:r><a:rPr b="1"><a:solidFill><a:srgbClr val="008000"/></a:solidFill><a:latin typeface="Serif"/></a:rPr><a:t>Category</a:t></a:r></a:p></c:rich></c:tx></c:title>"#;
+        let value_title = r#"<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr/><a:t>Value axis title that is intentionally longer than the chart area</a:t></a:r></a:p></c:rich></c:tx><c:txPr><a:bodyPr rot="-5400000"/><a:lstStyle/></c:txPr></c:title>"#;
+        let (horizontal, vertical) = if kind == "horizontalBar" { (value_title, cat_title) } else { (cat_title, value_title) };
+        plot = plot.replace(&format!(r#"<c:axPos val="{position}"/>"#), &format!(r#"<c:axPos val="{position}"/>{horizontal}"#));
+        let other_pos = if position == "b" { "l" } else { "b" };
+        plot = plot.replace(&format!(r#"<c:axPos val="{other_pos}"/>"#), &format!(r#"<c:axPos val="{other_pos}"/>{vertical}"#));
+        if let Some(legend) = legend {
+            plot.push_str(&format!(r#"<c:legend><c:legendPos val="{legend}"/></c:legend>"#));
+        }
+        plot
+    }
+
+    #[test]
+    fn axis_titles_render_with_style_and_axis_position_for_cartesian_families() {
+        for kind in ["bar", "horizontalBar", "line", "area", "scatter"] {
+            let plot = cartesian_with_axis_titles(kind, "b", Some("t"));
+            let items = chart_items(&space(&plot), &theme(), 320.0, 220.0);
+            let category = items.iter().find_map(|item| match item {
+                GraphicItem::Text { text, rotation, size, color, bold, font, .. } if text == "Category" => {
+                    Some((*rotation, *size, *color, *bold, font.as_deref()))
+                }
+                _ => None,
+            });
+            let value = items.iter().find_map(|item| match item {
+                GraphicItem::Text { text, rotation, .. } if text.starts_with("Value axis title") => Some(*rotation),
+                _ => None,
+            });
+            let category = category.expect("category-axis title");
+            assert_eq!(category.1, 11.0);
+            assert_eq!(category.2, Rgb(0, 128, 0));
+            assert!(category.3);
+            assert_eq!(category.4, Some("Serif"));
+            assert_eq!(category.0.rem_euclid(360.0), if kind == "horizontalBar" { 270.0 } else { 0.0 });
+            assert_eq!(
+                value.map(|rotation| rotation.rem_euclid(360.0)),
+                Some(if kind == "horizontalBar" { 0.0 } else { 270.0 }),
+                "axis title orientation for {kind}"
+            );
+        }
+        let mut top_title = cartesian_with_axis_titles("bar", "b", None);
+        top_title = top_title.replace(r#"<c:axPos val="b"/>"#, r#"<c:axPos val="t"/>"#);
+        let top_items = chart_items(&space(&top_title), &theme(), 320.0, 220.0);
+        assert!(
+            top_items.iter().any(|item| matches!(item, GraphicItem::Text { text, .. } if text == "Category")),
+            "top-position horizontal axis title"
+        );
+
+        let pie = format!(
+            r#"<c:pieChart><c:ser><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numLit></c:val></c:ser></c:pieChart><c:catAx><c:axId val="1"/><c:axPos val="b"/>{}</c:catAx><c:valAx><c:axId val="2"/><c:axPos val="l"/>{}</c:valAx>"#,
+            r#"<c:title><c:tx><c:rich><a:p><a:r><a:t>Not for pie</a:t></a:r></a:p></c:rich></c:tx></c:title>"#,
+            r#"<c:title><c:tx><c:rich><a:p><a:r><a:t>Also not for pie</a:t></a:r></a:p></c:rich></c:tx></c:title>"#,
+        );
+        let pie_items = chart_items(&space(&pie), &theme(), 320.0, 220.0);
+        assert!(!pie_items.iter().any(|item| matches!(item, GraphicItem::Text { text, .. } if text.contains("not for pie"))));
+    }
+
+    #[test]
+    fn long_axis_titles_fit_small_charts_and_leave_room_for_each_legend_position() {
+        for legend in ["l", "r", "t", "b"] {
+            let plot = cartesian_with_axis_titles("bar", "b", Some(legend));
+            let items = chart_items(&space(&plot), &theme(), 150.0, 96.0);
+            let title = items
+                .iter()
+                .find_map(|item| match item {
+                    GraphicItem::Text { text, rect, rotation, size, .. } if text.starts_with("Value ax") => Some((text, *rect, *rotation, *size)),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("axis title missing for legend {legend}: {items:?}"));
+            assert!(title.0.ends_with('…'), "small chart title should be clipped explicitly: {title:?}");
+            let [x, y, w, h] = title.1;
+            let bounds = if (title.2.rem_euclid(180.0) - 90.0).abs() < 0.1 { [x + (w - h) / 2.0, y + (h - w) / 2.0, h, w] } else { [x, y, w, h] };
+            assert!(
+                bounds[0] >= -1.0 && bounds[1] >= -1.0 && bounds[0] + bounds[2] <= 151.0 && bounds[1] + bounds[3] <= 97.0,
+                "title clipped: {title:?} => {bounds:?}"
+            );
+        }
     }
 
     #[test]

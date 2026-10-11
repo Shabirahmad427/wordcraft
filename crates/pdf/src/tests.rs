@@ -601,6 +601,7 @@ fn inline_chart_is_a_figure_with_its_text_inside_it() {
         text: "Q1".into(),
         size: 10.0,
         color: Rgb::BLACK,
+        rotation: 0.0,
         bold: false,
         align: TextAlign::Center,
         font: None,
@@ -612,6 +613,32 @@ fn inline_chart_is_a_figure_with_its_text_inside_it() {
     let raw = |tagged| String::from_utf8_lossy(&export(&d, &PdfOptions { tagged, compress: false, ..Default::default() }).unwrap()).into_owned();
     assert!(raw(true).contains("/Figure"), "tagged chart is a figure");
     assert!(!raw(false).contains("/Figure"));
+}
+
+#[test]
+fn rotated_chart_axis_title_remains_text_in_pdf_export() {
+    use wordcraft_doc::graphic::{Graphic, GraphicItem, GraphicKind, TextAlign};
+    use wordcraft_doc::props::Rgb;
+    let graphic = Graphic {
+        kind: GraphicKind::Chart,
+        items: vec![GraphicItem::Text {
+            rect: [48.0, 20.0, 120.0, 14.0],
+            text: "Vertical axis".into(),
+            size: 10.0,
+            color: Rgb::BLACK,
+            rotation: 270.0,
+            bold: false,
+            align: TextAlign::Center,
+            font: None,
+        }],
+        ..Default::default()
+    };
+    let mut document = Document::from_text("Chart");
+    let object = InlineObject::Graphic { w: 216.0, h: 144.0, alt: "Axis title test".into(), float: Default::default(), graphic: Arc::new(graphic) };
+    document.insert_object(&wordcraft_doc::Pos::body(0, 0), object, &Default::default()).unwrap();
+    let pdf = export(&document, &PdfOptions::default()).unwrap();
+    let text = squash(&extract_text(&pdf).concat());
+    assert!(text.contains("Vertical axis"), "rotated chart title should remain selectable PDF text: {text:?}");
 }
 
 #[test]

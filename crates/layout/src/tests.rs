@@ -3024,6 +3024,7 @@ fn graphic_items_draw_inside_the_object() {
             text: "Q1".into(),
             size: 10.0,
             color: Rgb::BLACK,
+            rotation: 0.0,
             bold: false,
             align: TextAlign::Center,
             font: None,
@@ -3045,6 +3046,38 @@ fn graphic_items_draw_inside_the_object() {
 }
 
 #[test]
+fn rotated_graphic_text_uses_shared_raster_and_pdf_draw_transform() {
+    use wordcraft_doc::graphic::{Graphic, GraphicItem, GraphicKind, TextAlign};
+    use wordcraft_doc::props::Rgb;
+    let graphic = Graphic {
+        kind: GraphicKind::Chart,
+        items: vec![GraphicItem::Text {
+            rect: [70.0, 20.0, 100.0, 14.0],
+            text: "Vertical axis".into(),
+            size: 10.0,
+            color: Rgb::BLACK,
+            rotation: 270.0,
+            bold: false,
+            align: TextAlign::Center,
+            font: None,
+        }],
+        ..Default::default()
+    };
+    let mut document = Document::from_text("Axis title");
+    let object = InlineObject::Graphic { w: 240.0, h: 120.0, alt: String::new(), float: Default::default(), graphic: Arc::new(graphic) };
+    document.insert_object(&Pos::body(0, 0), object, &Default::default()).unwrap();
+    let draws = display::page_display(&document, &lay(&document).pages[0], &Default::default());
+    let figure = draws.iter().find_map(|draw| if let display::Draw::Figure { draws, .. } = draw { Some(draws) } else { None }).expect("figure");
+    let rotated = figure.iter().find_map(|draw| match draw {
+        display::Draw::Rotated { cx, cy, spin, items } => Some((*cx, *cy, *spin, items)),
+        _ => None,
+    });
+    let (cx, cy, spin, items) = rotated.expect("rotated chart text is retained in display list");
+    assert_eq!((spin.deg, cx.is_finite(), cy.is_finite()), (270.0, true, true));
+    assert!(items.iter().any(|draw| matches!(draw, display::Draw::Glyphs { text, .. } if text == "Vertical axis")));
+}
+
+#[test]
 fn graphic_text_in_a_degenerate_rectangle_is_not_drawn() {
     use wordcraft_doc::graphic::{Graphic, GraphicItem, GraphicKind, TextAlign};
     use wordcraft_doc::props::Rgb;
@@ -3053,6 +3086,7 @@ fn graphic_text_in_a_degenerate_rectangle_is_not_drawn() {
         text: "Q1".into(),
         size,
         color: Rgb::BLACK,
+        rotation: 0.0,
         bold: false,
         align: TextAlign::Center,
         font: None,

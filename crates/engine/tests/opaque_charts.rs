@@ -384,6 +384,54 @@ fn chart_and_axis_title_command_preserves_formatting_workbook_and_undo_state() {
 }
 
 #[test]
+fn axis_title_only_edit_refreshes_preview_and_undo_redo_without_workbook_writes() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-axis-title-render-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.docx");
+    let destination = directory.join("roundtrip.docx");
+    std::fs::write(&source, editable_chart_fixture_with_titles()).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source})).unwrap();
+    let document_id = session.document_id();
+    let snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    let before = wordcraft_docx::write(&session.doc).unwrap();
+    let before_parts = unpack(&before);
+    let before_layout = session.layout();
+    let before_pixels = wordcraft_render::render_page(&session.doc, &before_layout.pages[0], 1.0, &Default::default()).to_straight();
+    session
+        .run(
+            "chart.editData",
+            &json!({
+                "documentId": document_id,
+                "chartPart": "word/charts/chart1.xml",
+                "expected": snapshot,
+                "horizontalAxisTitle": "Time after treatment",
+                "series": [{}]
+            }),
+        )
+        .unwrap();
+    let edited = wordcraft_docx::write(&session.doc).unwrap();
+    let edited_parts = unpack(&edited);
+    assert_eq!(edited_parts["word/embeddings/data.xlsx"], before_parts["word/embeddings/data.xlsx"]);
+    let after_layout = session.layout();
+    let after_pixels = wordcraft_render::render_page(&session.doc, &after_layout.pages[0], 1.0, &Default::default()).to_straight();
+    assert_ne!(before_pixels, after_pixels, "axis-title edits appear in preview immediately");
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), before);
+    let undo_layout = session.layout();
+    assert_eq!(wordcraft_render::render_page(&session.doc, &undo_layout.pages[0], 1.0, &Default::default()).to_straight(), before_pixels);
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), edited);
+    session.run("file.save", &json!({"path": destination})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": destination})).unwrap();
+    let reopened_snapshot =
+        reopened.run("chart.inspectData", &json!({"documentId": reopened.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(reopened_snapshot["horizontalAxisTitle"], "Time after treatment");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn horizontal_bar_chart_edit_survives_render_undo_recovery_and_docx_reopen() {
     let directory = std::env::temp_dir().join(format!("wordcraft-horizontal-chart-{}", unique_id()));
     std::fs::create_dir_all(&directory).unwrap();

@@ -991,7 +991,22 @@ fn graphic_draws(doc: &Document, g: &Graphic, rect: Rect, alpha: f32) -> Vec<Dra
                 let segs = page_segs(segs, |x, y| (rect.x + x * sx, rect.y + y * sy));
                 out.push(Draw::Path { segs, fill: *fill, stroke: *stroke, stroke_width: stroke_width * k })
             }
-            GraphicItem::Text { rect: r, .. } => out.extend(text_glyphs(doc, inside(r), it, alpha, k)),
+            GraphicItem::Text { rect: r, rotation, .. } => {
+                let text = text_glyphs(doc, inside(r), it, alpha, k);
+                if let Some(text) = text {
+                    if rotation.is_finite() && rotation.rem_euclid(360.0).abs() > 0.01 {
+                        let rect = inside(r);
+                        out.push(Draw::Rotated {
+                            cx: rect.x + rect.w / 2.0,
+                            cy: rect.y + rect.h / 2.0,
+                            spin: Spin::new(*rotation, false, false),
+                            items: vec![text],
+                        });
+                    } else {
+                        out.push(text);
+                    }
+                }
+            }
             GraphicItem::Image { rect: r, media } => out.push(Draw::Image { rect: inside(r), media: media.clone(), crop: [0.0; 4], alpha }),
         }
     }
@@ -1105,7 +1120,7 @@ pub fn seg_path(segs: &[PathSeg]) -> BezPath {
 /// nothing to draw, or the item's rectangle or size isn't a finite number (a degenerate scale:
 /// `r` itself is always finite, as [`Rect::new`] makes it).
 fn text_glyphs(doc: &Document, r: Rect, it: &GraphicItem, alpha: f32, k: f32) -> Option<Draw> {
-    let GraphicItem::Text { rect, text, size, color, bold, align, font } = it else { return None };
+    let GraphicItem::Text { rect, text, size, color, bold, align, font, .. } = it else { return None };
     let size = *size * k;
     if !rect.iter().chain([&size]).all(|v| v.is_finite()) {
         return None;

@@ -96,6 +96,9 @@ pub enum GraphicItem {
         text: String,
         size: f32,
         color: Rgb,
+        /// Clockwise rotation in degrees, about the centre of `rect`.
+        #[serde(default)]
+        rotation: f32,
         #[serde(default)]
         bold: bool,
         #[serde(default)]
