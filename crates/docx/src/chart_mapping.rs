@@ -140,13 +140,15 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
         .els()
         .filter(|e| matches!(e.name.as_str(), "c:barChart" | "c:lineChart" | "c:areaChart" | "c:pieChart" | "c:doughnutChart" | "c:scatterChart"))
         .collect();
-    if kinds.len() != 1 || !matches!(kinds[0].name.as_str(), "c:barChart" | "c:lineChart" | "c:areaChart") {
-        return Err(unsupported("only a single bar, column, line, or area chart is supported"));
+    if kinds.len() != 1 || !matches!(kinds[0].name.as_str(), "c:barChart" | "c:lineChart" | "c:areaChart" | "c:pieChart" | "c:doughnutChart") {
+        return Err(unsupported("chart family is outside the supported bar, column, line, area, pie, and doughnut subset"));
     }
     let kind = kinds[0];
     let chart_kind = match kind.name.as_str() {
         "c:lineChart" => "line",
         "c:areaChart" => "area",
+        "c:pieChart" => "pie",
+        "c:doughnutChart" => "doughnut",
         "c:barChart" => match kind.child("c:barDir").and_then(|e| e.attr("val")) {
             Some("col") => "column",
             Some("bar") => "bar",
@@ -155,11 +157,14 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
         _ => return Err(unsupported("chart family is unsupported")),
     };
     if contains_local(kind, "extLst", 0) {
-        return Err(unsupported("bar, column, line, and area charts with extensions are unsupported"));
+        return Err(unsupported("supported chart types with extension markup are read-only"));
     }
     let series: Vec<_> = kind.children("c:ser").collect();
     if series.is_empty() || series.len() > MAX_SERIES {
         return Err(unsupported("chart has no series or exceeds the series limit"));
+    }
+    if matches!(chart_kind, "pie" | "doughnut") && series.len() != 1 {
+        return Err(unsupported("editable pie and doughnut charts must contain exactly one series"));
     }
     let xlsx = Package::open(workbook).map_err(|_| unsupported("embedded workbook package is malformed or unsafe"))?;
     if xlsx.entries().any(|(part, _)| {
@@ -921,9 +926,12 @@ fn update_chart_caches(chart: &[u8], changes: &ChartDataChanges) -> Result<Vec<u
     if nodes.is_empty() {
         return Err(transaction_error("chart XML has no root"));
     }
-    let chart_kinds: Vec<_> = ["barChart", "lineChart", "areaChart"].into_iter().flat_map(|name| descendants(&nodes, 0, CHART_NS, name)).collect();
+    let chart_kinds: Vec<_> = ["barChart", "lineChart", "areaChart", "pieChart", "doughnutChart"]
+        .into_iter()
+        .flat_map(|name| descendants(&nodes, 0, CHART_NS, name))
+        .collect();
     if chart_kinds.len() != 1 {
-        return Err(transaction_error("chart no longer has one supported bar/column/line/area cache"));
+        return Err(transaction_error("chart no longer has one supported cache structure"));
     }
     let chart_series = child_indices(&nodes, *chart_kinds.first().ok_or_else(|| transaction_error("chart plot area is missing"))?, CHART_NS, "ser");
     if chart_series.len() != changes.series.len() {
@@ -1466,6 +1474,52 @@ mod tests {
         let workbook = Package::open(output.get("word/embeddings/book.xlsx").unwrap()).unwrap();
         let sheet = workbook.get("xl/worksheets/sheet1.xml").unwrap();
         assert!(sheet.windows(b">16</v>".len()).any(|window| window == b">16</v>"));
+    }
+
+    #[test]
+    fn maps_single_series_pie_and_doughnut_charts_and_rejects_multiple_series() {
+        for (local, label) in [("pieChart", "pie"), ("doughnutChart", "doughnut")] {
+            let xml = String::from_utf8(chart(false))
+                .unwrap()
+                .replace("<c:barChart>", &format!("<c:{local}>"))
+                .replace("</c:barChart>", &format!("</c:{local}>"))
+                .replace("<c:barDir val=\"col\"/>", "");
+            let mapping = mapped(map_chart(xml.as_bytes(), &rels(false), "word/embeddings/book.xlsx", &workbook(false, false, false)));
+            assert_eq!(mapping.chart_kind, label);
+
+            let base = docx_fixture(false, false, false, false);
+            let mut parts =
+                Package::open(&base).unwrap().entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+            parts.insert("word/charts/chart1.xml".into(), xml.into_bytes());
+            let package = zip(&parts);
+            let plan = prepare_chart_edit(&package, "word/charts/chart1.xml").unwrap();
+            let updated = apply_chart_edit(
+                &package,
+                &plan,
+                &ChartDataChanges {
+                    series: vec![SeriesChanges {
+                        name: Some("Revised series".into()),
+                        categories: Some(vec!["Cyan".into(), "Magenta".into(), "Yellow".into()]),
+                        values: Some(vec![17.0, 27.0, 37.0]),
+                    }],
+                },
+            )
+            .unwrap();
+            let snapshot = inspect_chart_data(&updated, "word/charts/chart1.xml").unwrap();
+            assert_eq!(snapshot.chart_kind, label);
+            assert_eq!(snapshot.series[0].categories, ["Cyan", "Magenta", "Yellow"]);
+            assert_eq!(snapshot.series[0].values, [17.0, 27.0, 37.0]);
+        }
+
+        let multiple_series = String::from_utf8(chart(true))
+            .unwrap()
+            .replace("<c:barChart>", "<c:pieChart>")
+            .replace("</c:barChart>", "</c:pieChart>")
+            .replace("<c:barDir val=\"col\"/>", "");
+        assert!(matches!(
+            map_chart(multiple_series.as_bytes(), &rels(false), "word/embeddings/book.xlsx", &workbook(false, false, false)),
+            Classification::Unsupported(reason) if reason.contains("exactly one series")
+        ));
     }
 
     #[test]
