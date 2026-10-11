@@ -41,10 +41,17 @@ fn academic_document() -> (Document, u32) {
     .unwrap();
     doc.insert_object(&Pos::body(0, 8), InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() }, &Default::default())
         .unwrap();
-    let math_nodes = parse_linear("E=mc^2");
+    let math_nodes = parse_linear("E=mc^2#");
     doc.insert_object(
         &Pos::body(1, "Results and measurements".len()),
-        InlineObject::Equation { linear: "E=mc^2".into(), display: true, math: Math { nodes: math_nodes, ..Default::default() } },
+        InlineObject::Equation { linear: "E=mc^2#".into(), display: true, math: Math { nodes: math_nodes, ..Default::default() } },
+        &Default::default(),
+    )
+    .unwrap();
+    let second = parse_linear("a+b=#");
+    doc.insert_object(
+        &Pos::body(1, "Results and measurements".len() + wordcraft_engine::doc::para::OBJ.len_utf8()),
+        InlineObject::Equation { linear: "a+b=#".into(), display: true, math: Math { nodes: second, ..Default::default() } },
         &Default::default(),
     )
     .unwrap();
@@ -102,7 +109,16 @@ fn has_test_equation(doc: &Document) -> bool {
         .iter()
         .filter_map(|b| b.as_para())
         .flat_map(|p| p.objects.iter())
-        .any(|o| matches!(o, InlineObject::Equation { linear, display: true, math, .. } if linear == "E=mc^2" && !math.unsupported))
+        .any(|o| matches!(o, InlineObject::Equation { linear, display: true, math, .. } if linear.contains("E=mc^2") && !math.unsupported && matches!(math.nodes.as_slice(), [wordcraft_engine::doc::math::MNode::EqArr { rows }] if rows.iter().any(|r| wordcraft_engine::doc::math::has_number_mark(r)))))
+}
+
+fn test_equation_count(doc: &Document) -> usize {
+    doc.body
+        .iter()
+        .filter_map(|b| b.as_para())
+        .flat_map(|p| p.objects.iter())
+        .filter(|o| matches!(o, InlineObject::Equation { display: true, .. }))
+        .count()
 }
 
 #[test]
@@ -130,6 +146,7 @@ fn academic_sections_roundtrip_undo_and_recovery_keep_pagination_and_pixels() {
     let mut restored = Session::new(Document::new());
     store.load(&id).unwrap().restore(&mut restored);
     assert!(has_test_equation(&restored.doc), "recovery lost the numbered equation");
+    assert_eq!(test_equation_count(&restored.doc), 2);
     let output = directory.join("academic.docx");
     restored.run("file.save", &json!({"path":output})).unwrap();
     let pdf = directory.join("academic.pdf");
@@ -138,6 +155,7 @@ fn academic_sections_roundtrip_undo_and_recovery_keep_pagination_and_pixels() {
     let mut reopened = Session::new(Document::new());
     reopened.run("file.open", &json!({"path":output})).unwrap();
     assert!(has_test_equation(&reopened.doc), "DOCX reopening lost the numbered equation");
+    assert_eq!(test_equation_count(&reopened.doc), 2);
     let after = reopened.layout();
     assert_eq!(before.pages.len(), after.pages.len());
     assert_complete(&reopened.doc, &after);
@@ -147,7 +165,23 @@ fn academic_sections_roundtrip_undo_and_recovery_keep_pagination_and_pixels() {
         let original = wordcraft_render::render_page(&session.doc, a, 1.0, &options);
         assert!(
             original.to_straight() == wordcraft_render::render_page(&reopened.doc, b, 1.0, &options).to_straight(),
-            "pixels changed on page {index}"
+            "pixels changed on page {index}: before {:?}; after {:?}",
+            session
+                .doc
+                .body
+                .iter()
+                .filter_map(|x| x.as_para())
+                .flat_map(|p| p.objects.iter())
+                .filter(|o| matches!(o, InlineObject::Equation { .. }))
+                .collect::<Vec<_>>(),
+            reopened
+                .doc
+                .body
+                .iter()
+                .filter_map(|x| x.as_para())
+                .flat_map(|p| p.objects.iter())
+                .filter(|o| matches!(o, InlineObject::Equation { .. }))
+                .collect::<Vec<_>>()
         );
         if let Ok(path) = std::env::var("WORDCRAFT_LAYOUT_CORPUS_DIR") {
             std::fs::create_dir_all(&path).unwrap();

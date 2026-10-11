@@ -14,6 +14,29 @@ pub fn read_omath(e: &El, jc: MathJc) -> Math {
     Math { nodes, omml: e.to_xml(), jc, linear: false, unsupported }
 }
 
+/// WordCraft writes automatic `#` numbers as explicit parenthesized numbers because OMML has no
+/// automatic sequence field. Recover only the document-order number we expect in the main body;
+/// this restores the editable marker and the numbered-row layout after our own DOCX round-trip.
+pub fn restore_auto_number_marks(math: &mut Math, counter: &mut u32) {
+    let [MNode::EqArr { rows }] = math.nodes.as_mut_slice() else { return };
+    for row in rows {
+        if wordcraft_doc::math::has_number_mark(row) {
+            *counter = counter.saturating_add(1);
+            continue;
+        }
+        let Some(MNode::Delim { beg: Some('('), end: Some(')'), elems, .. }) = row.last() else { continue };
+        let Some([MNode::Run(number)]) = elems.first().map(Vec::as_slice) else { continue };
+        let Ok(value) = number.text.parse::<u32>() else { continue };
+        let expected = counter.saturating_add(1);
+        if value != expected || row.len() < 2 {
+            continue;
+        }
+        row.pop();
+        row.push(MNode::Run(MRun::new("#")));
+        *counter = value;
+    }
+}
+
 /// `m:oMathParaPr/m:jc`.
 pub fn para_jc(para: &El) -> MathJc {
     match para.child("m:oMathParaPr").and_then(|p| p.child("m:jc")).and_then(|j| j.attr("m:val")) {
@@ -390,5 +413,29 @@ mod tests {
         assert!(m.unsupported);
         assert_eq!(wordcraft_doc::math::to_linear(&m.nodes), "x");
         assert!(m.omml.contains("futureStructure"));
+    }
+
+    #[test]
+    fn restores_only_the_expected_materialized_display_number() {
+        let mut math = Math {
+            nodes: vec![MNode::EqArr {
+                rows: vec![vec![
+                    MNode::Run(MRun::new("x=")),
+                    MNode::Delim {
+                        beg: Some('('),
+                        end: Some(')'),
+                        sep: None,
+                        grow: true,
+                        shp_match: false,
+                        elems: vec![vec![MNode::Run(MRun::new("1"))]],
+                    },
+                ]],
+            }],
+            ..Default::default()
+        };
+        let mut count = 0;
+        restore_auto_number_marks(&mut math, &mut count);
+        assert_eq!(count, 1);
+        assert!(matches!(&math.nodes[0], MNode::EqArr { rows } if wordcraft_doc::math::has_number_mark(&rows[0])));
     }
 }

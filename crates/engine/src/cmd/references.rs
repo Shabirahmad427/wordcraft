@@ -297,9 +297,8 @@ pub fn update_fields(s: &mut Session) -> Result<(), CmdError> {
                 "REF" | "PAGEREF" => {
                     let target = instr.split_whitespace().nth(1).unwrap_or("");
                     let r = if name == "REF" { bookmark_text(&s.doc, target) } else { pages.get(target).map(u32::to_string) };
-                    if let Some(r) = r {
-                        updates.push((k, r));
-                    }
+                    // Never leave a cached display value that points to a deleted bookmark.
+                    updates.push((k, r.unwrap_or_default()));
                 }
                 "TITLE" => updates.push((k, s.doc.core.title.clone())),
                 "AUTHOR" => updates.push((k, s.doc.core.creator.clone())),

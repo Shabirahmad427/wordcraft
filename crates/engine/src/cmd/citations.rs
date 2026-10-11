@@ -76,7 +76,7 @@ pub fn specs() -> Vec<CommandSpec> {
             sel_result(s)
         }),
         CommandSpec::new("insert.crossReference", "Cross-reference", "Insert › Links", cross_ref)
-            .params(r#"{"to": "heading|bookmark|figure|table", "target": string (text / name / number), "show"?: "text|page|number|aboveBelow"} or {} to list targets"#),
+            .params(r#"{"to": "heading|bookmark|figure|table|equation", "target": string (text / name / number), "show"?: "text|page|number|aboveBelow"} or {} to list targets"#),
         CommandSpec::new("references.noteOptions", "Footnote and Endnote", "References › Footnotes", |s, v| {
             if let Some(f) = p::str(v, "footnoteFormat") {
                 s.doc.settings.footnote_format = wordcraft_doc::section::NumFormat::from_ooxml(f);
@@ -682,5 +682,46 @@ mod tests {
         // The field sits after the bookmark, so it doesn't mark itself.
         let name = s.doc.bookmarks()[0].0.clone();
         assert_eq!(crate::cmd::references::bookmark_text(&s.doc, &name).as_deref(), Some("Kilns"));
+    }
+
+    #[test]
+    fn equation_caption_cross_reference_tracks_renumbering_and_clears_broken_target() {
+        let mut s = Session::new(wordcraft_doc::Document::from_text("Discussion"));
+        s.run("caret.docEnd", &json!({})).unwrap();
+        s.run("references.caption", &json!({"label": "Equation", "text": "Energy balance"})).unwrap();
+        let listed = s.run("insert.crossReference", &json!({"to": "equation"})).unwrap();
+        let target = listed.as_array().and_then(|a| a.first()).and_then(Value::as_str).unwrap();
+        s.run("caret.docEnd", &json!({})).unwrap();
+        s.run("text.newParagraph", &json!({})).unwrap();
+        s.run("text.insert", &json!({"text": "See "})).unwrap();
+        s.run("insert.crossReference", &json!({"to": "equation", "target": target, "show": "number"})).unwrap();
+        let (instr, result) = fields(&s).into_iter().find(|(i, _)| i.starts_with("REF _Ref")).unwrap();
+        assert_eq!(result, "Equation 1");
+
+        let mut earlier = Paragraph::new();
+        earlier
+            .insert_object(
+                0,
+                InlineObject::Field { instr: "SEQ Equation \\* ARABIC".into(), result: "0".into(), locked: false },
+                &CharProps::default(),
+            )
+            .unwrap();
+        s.doc.insert_block(StoryRef::Body, &Path::top(0), Block::Para(earlier)).unwrap();
+        s.run("references.updateFields", &json!({})).unwrap();
+        assert!(fields(&s).iter().any(|(i, r)| i == &instr && r == "Equation 2"), "{:?}", fields(&s));
+
+        let caption = s
+            .doc
+            .para_paths(StoryRef::Body)
+            .into_iter()
+            .find(|path| {
+                s.doc
+                    .para(StoryRef::Body, path)
+                    .is_some_and(|p| p.props.style.as_deref() == Some("Caption") && p.plain_text().starts_with("Equation"))
+            })
+            .unwrap();
+        s.doc.remove_block(StoryRef::Body, &caption).unwrap();
+        s.run("references.updateFields", &json!({})).unwrap();
+        assert!(fields(&s).iter().any(|(i, r)| i == &instr && r.is_empty()), "broken equation reference kept a stale result: {:?}", fields(&s));
     }
 }

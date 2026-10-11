@@ -54,6 +54,8 @@ pub(crate) struct Reader<'p> {
     pub comment_map: HashMap<String, u32>,
     pub comments_ended: HashSet<u32>,
     pub bookmarks: HashMap<String, String>,
+    /// Automatic display-equation number expected while reading the main body.
+    pub equation_number: u32,
     /// Chart and diagram parts by path, parsed once.
     graphic_parts: HashMap<String, Option<Arc<El>>>,
     /// Built chart and diagram models, reused by part and size.
@@ -113,6 +115,7 @@ fn read_impl(bytes: &[u8], preserve: bool) -> Result<Document, DocxError> {
         comment_map: HashMap::new(),
         comments_ended: HashSet::new(),
         bookmarks: HashMap::new(),
+        equation_number: 0,
         graphic_parts: HashMap::new(),
         graphics: HashMap::new(),
         graphic_budget: MAX_GRAPHIC_WORK,
@@ -162,6 +165,7 @@ fn read_impl(bytes: &[u8], preserve: bool) -> Result<Document, DocxError> {
     }
     if let Some(body) = root.child("w:body") {
         let mut sc = StoryCtx::default();
+        sc.main_document = true;
         let mut blocks = Blocks::new();
         r.read_blocks(&mut sc, body, &rels, &mut blocks, 0);
         r.flush_pending(&mut sc, &mut blocks);

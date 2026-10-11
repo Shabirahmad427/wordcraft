@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (unsupported OMML equations now retain source XML and reject unsafe edits) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (numbered-equation DOCX layout round-trip and equation-caption reference refresh) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and
 agent control. This page is the summary; the assessment is
@@ -143,6 +143,8 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 
 - M6: Mendeley tab imports RIS exports, searches references, inserts citations/bibliographies and refreshes them; source libraries survive DOCX saves. Cloud sign-in and Mendeley Cite field editing remain future work.
 - Phase 6A: equation import marks unmodeled OMML and blocks edits that would discard it; supported equation structures remain editable. See [equation compatibility](docs/equation-compatibility.md); Microsoft Word comparison remains unavailable.
+- Phase 6A.2: automatic equation numbers no longer leak the `#` marker into DOCX output; expected sequence numbers restore editable marks and right-aligned layout on reopen. Equation-caption cross-references update through `SEQ`/`REF` fields, and broken references clear stale cached results. OMML-number references, stable equation IDs and section-based numbering remain gaps.
+- Phase 6A.2: automatic equation numbers no longer leak the `#` marker into DOCX output; expected sequence numbers restore editable marks and right-aligned layout on reopen. Equation-caption cross-references update through `SEQ`/`REF` fields, and broken references clear stale cached results. OMML-number references, stable equation IDs and section-based numbering remain gaps.
 
 ## Phase 2 — professional document recovery (2026-10-10)
 

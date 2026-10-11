@@ -74,6 +74,17 @@ pub fn resolve_numbers(math: &Math, display: bool, counter: &mut u32) -> Option<
             }
         }
         if empty {
+            // `#` is WordCraft's input marker, not printable equation content. The explicit
+            // number below carries its value in OOXML; the reader restores the marker by
+            // recognizing this document-order number on import.
+            for node in row.iter_mut() {
+                if let MNode::Run(run) = node
+                    && let Some(mark) = run.text.find('#')
+                {
+                    run.text.truncate(mark);
+                }
+            }
+            row.retain(|node| !matches!(node, MNode::Run(run) if run.text.is_empty()));
             let n = vec![MNode::Run(MRun::new(counter.to_string()))];
             row.push(MNode::Delim { beg: Some('('), end: Some(')'), sep: None, grow: true, shp_match: false, elems: vec![n] });
             changed = true;
@@ -456,5 +467,17 @@ mod tests {
         let mut writer = W::new();
         write_equation(&mut writer, "", false, &math);
         assert!(writer.s.ends_with(source));
+    }
+
+    #[test]
+    fn automatic_equation_number_is_materialized_without_printing_its_marker() {
+        let math = Math { nodes: parse_linear("x=#"), ..Default::default() };
+        let mut counter = 0;
+        let numbered = resolve_numbers(&math, true, &mut counter).expect("automatic number");
+        assert_eq!(counter, 1);
+        assert!(!wordcraft_doc::math::to_linear(&numbered.nodes).contains('#'));
+        assert!(
+            matches!(numbered.nodes.as_slice(), [MNode::EqArr { rows }] if rows.first().is_some_and(|r| r.iter().any(|n| matches!(n, MNode::Delim { elems, .. } if elems.iter().flatten().any(|n| matches!(n, MNode::Run(run) if run.text == "1"))))))
+        );
     }
 }

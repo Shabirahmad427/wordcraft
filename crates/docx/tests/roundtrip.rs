@@ -1371,15 +1371,11 @@ fn scientific_equation_structures_and_number_marks_round_trip() {
         .collect();
     assert_eq!(found.len(), 2);
     assert!(matches!(found[0].first(), Some(MNode::EqArr { rows }) if matches!(rows.first().and_then(|r| r.first()), Some(MNode::Frac { .. }))));
-    assert!(
-        matches!(found[0].first(), Some(MNode::EqArr { rows }) if rows.first().is_some_and(|r| r.iter().any(|n| matches!(n, MNode::Delim { beg: Some('('), .. }))))
-    );
+    assert!(matches!(found[0].first(), Some(MNode::EqArr { rows }) if rows.first().is_some_and(|r| wordcraft_doc::math::has_number_mark(r))));
     assert!(
         matches!(found[1].first(), Some(MNode::EqArr { rows }) if matches!(rows.first().and_then(|r| r.first()), Some(MNode::Nary { chr: '∑', .. })))
     );
-    assert!(
-        matches!(found[1].first(), Some(MNode::EqArr { rows }) if rows.first().is_some_and(|r| r.iter().any(|n| matches!(n, MNode::Delim { beg: Some('('), .. }))))
-    );
+    assert!(matches!(found[1].first(), Some(MNode::EqArr { rows }) if rows.first().is_some_and(|r| wordcraft_doc::math::has_number_mark(r))));
 }
 
 /// #332: rotation (`a:xfrm/@rot`, 60000ths of a degree) and flips of pictures, shapes, text boxes

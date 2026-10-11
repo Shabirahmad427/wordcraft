@@ -75,6 +75,8 @@ fn sink(sc: &mut StoryCtx) -> Option<&mut FieldState> {
 #[derive(Default)]
 pub struct StoryCtx {
     fields: Vec<FieldState>,
+    /// The main body only: equation-number reconstruction is document ordered, not story local.
+    pub main_document: bool,
     ignored_begins: usize,
     pending: Vec<InlineObject>,
     /// Text-box nesting depth.
@@ -373,7 +375,10 @@ impl Reader<'_> {
                 let props = self.run_props_none(ctx);
                 let jc = super::math::para_jc(k);
                 for m in k.children("m:oMath") {
-                    let math = super::math::read_omath(m, jc);
+                    let mut math = super::math::read_omath(m, jc);
+                    if sc.main_document {
+                        super::math::restore_auto_number_marks(&mut math, &mut self.equation_number);
+                    }
                     let linear = wordcraft_doc::math::to_linear(&math.nodes);
                     self.emit_obj(sc, pb, InlineObject::Equation { linear, display: true, math }, &props);
                 }
