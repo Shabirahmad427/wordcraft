@@ -6408,6 +6408,7 @@ dependencies = [
  "log",
  "proptest",
  "quick-xml",
+ "serde_json",
  "wordcraft-doc",
  "wordcraft-geom",
  "zip",

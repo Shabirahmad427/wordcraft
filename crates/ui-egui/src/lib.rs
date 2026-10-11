@@ -1108,6 +1108,7 @@ fn input_dialog(id: &str, params: &Value) -> Option<&'static str> {
     let has = |k: &str| params.get(k).is_some_and(|v| !v.is_null());
     let rule = params.get("rule").and_then(Value::as_str).map(str::to_ascii_uppercase);
     match id {
+        "references.sources" if params.as_object().is_none_or(|params| params.is_empty()) => Some("sources"),
         "mailings.rules" if !has("field") => match rule.as_deref() {
             None | Some("IF") => Some("ruleIf"),
             Some("SKIPIF") => Some("ruleSkipIf"),

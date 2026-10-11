@@ -275,6 +275,13 @@ pub struct Source {
     pub volume: String,
     pub pages: String,
     pub url: String,
+    /// Digital Object Identifier, stored without inventing a resolver URL.
+    pub doi: String,
+    pub isbn: String,
+    pub issue: String,
+    pub edition: String,
+    /// Additional format-specific source fields retained during import/export.
+    pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
 /// A custom document property (File › Info › Properties › Custom). Citation managers keep

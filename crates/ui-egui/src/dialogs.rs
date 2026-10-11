@@ -25,6 +25,9 @@ pub enum Dialog {
         query: String,
         error: String,
     },
+    Sources {
+        form: Box<SourcesForm>,
+    },
     Recipients {
         csv: String,
         error: String,
@@ -623,11 +626,28 @@ pub(crate) fn color_menu(ui: &mut Ui, theme: &[wordcraft_doc::Rgb], value: &mut 
     });
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SourcesForm {
+    query: String,
+    editing: String,
+    tag: String,
+    author: String,
+    title: String,
+    year: String,
+    publisher: String,
+    journal: String,
+    doi: String,
+    format: String,
+    exchange: String,
+    error: String,
+}
+
 impl Dialog {
     pub fn name(&self) -> &'static str {
         match self {
             Dialog::Recovery { .. } => "recovery",
             Dialog::Mendeley { .. } => "mendeley",
+            Dialog::Sources { .. } => "sources",
             Dialog::Recipients { .. } => "recipients",
             Dialog::Font { .. } => "font",
             Dialog::Paragraph { .. } => "paragraph",
@@ -698,6 +718,7 @@ impl Dialog {
                 Dialog::Recovery { state }
             }
             "mendeley" => Dialog::Mendeley { ris: String::new(), query: String::new(), error: String::new() },
+            "sources" => Dialog::Sources { form: Box::new(SourcesForm { format: "bibtex".into(), ..Default::default() }) },
             "recipients" => Dialog::Recipients { csv: String::new(), error: String::new() },
             "font" => Dialog::Font {
                 font: s("font"),
@@ -926,6 +947,7 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context) {
     let title = match &d {
         Dialog::Recovery { .. } => "Recover Unsaved Documents",
         Dialog::Mendeley { .. } => "Mendeley Library",
+        Dialog::Sources { .. } => "Citation Sources",
         Dialog::Recipients { .. } => "Select Recipients",
         Dialog::Font { .. } => "Font",
         Dialog::Paragraph { .. } => "Paragraph",
@@ -1001,6 +1023,173 @@ pub(crate) fn buttons(ui: &mut Ui, ok: &str) -> (bool, bool) {
 }
 
 /// Returns true to close.
+fn citation_sources(app: &mut WordApp, ui: &mut Ui, form: &mut SourcesForm) -> bool {
+    ui.label("Search, insert, and edit sources attached to this document.");
+    ui.horizontal(|ui| {
+        ui.label("Search");
+        ui.text_edit_singleline(&mut form.query);
+    });
+    let needle = form.query.to_lowercase();
+    let matches: Vec<_> = app
+        .session
+        .doc
+        .sources
+        .iter()
+        .filter(|source| format!("{} {} {} {} {}", source.title, source.author, source.year, source.tag, source.doi).to_lowercase().contains(&needle))
+        .take(100)
+        .cloned()
+        .collect();
+    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+        for source in matches {
+            ui.horizontal(|ui| {
+                ui.label(format!("{} ({}) — {}", source.author, source.year, source.title));
+                if ui.small_button("Insert").clicked()
+                    && let Err(error) = app.run("references.citation", json!({"tag": source.tag}))
+                {
+                    form.error = error;
+                }
+                if ui.small_button("Edit").clicked() {
+                    form.editing = source.tag.clone();
+                    form.tag = source.tag.clone();
+                    form.author = source.author.clone();
+                    form.title = source.title.clone();
+                    form.year = source.year.clone();
+                    form.publisher = source.publisher.clone();
+                    form.journal = source.journal.clone();
+                    form.doi = source.doi.clone();
+                }
+                if ui.small_button("Remove").clicked()
+                    && let Err(error) = app.run("references.sources", json!({"remove": source.tag}))
+                {
+                    form.error = error;
+                }
+            });
+        }
+    });
+
+    ui.separator();
+    ui.label(if form.editing.is_empty() { "Add source" } else { "Edit source" });
+    egui::Grid::new("citation_source_fields").num_columns(2).show(ui, |ui| {
+        ui.label("Citation key / ID");
+        ui.text_edit_singleline(&mut form.tag);
+        ui.end_row();
+        ui.label("Title");
+        ui.text_edit_singleline(&mut form.title);
+        ui.end_row();
+        ui.label("Author(s)");
+        ui.text_edit_singleline(&mut form.author);
+        ui.end_row();
+        ui.label("Year");
+        ui.text_edit_singleline(&mut form.year);
+        ui.end_row();
+        ui.label("DOI");
+        ui.text_edit_singleline(&mut form.doi);
+        ui.end_row();
+        ui.label("Journal");
+        ui.text_edit_singleline(&mut form.journal);
+        ui.end_row();
+        ui.label("Publisher");
+        ui.text_edit_singleline(&mut form.publisher);
+        ui.end_row();
+    });
+    ui.horizontal(|ui| {
+        if ui.button("Save Source").clicked() {
+            if form.title.trim().is_empty() {
+                form.error = "A source needs a title.".into();
+            } else {
+                let mut source = app.session.doc.sources.iter().find(|source| source.tag == form.editing).cloned().unwrap_or_default();
+                source.tag = form.tag.trim().to_string();
+                source.title = form.title.trim().to_string();
+                source.author = form.author.trim().to_string();
+                source.year = form.year.trim().to_string();
+                source.doi = form.doi.trim().to_string();
+                source.journal = form.journal.trim().to_string();
+                source.publisher = form.publisher.trim().to_string();
+                match app.run("references.sources", json!({"add": source})) {
+                    Ok(_) => {
+                        form.error.clear();
+                        form.editing.clear();
+                        form.tag.clear();
+                        form.author.clear();
+                        form.title.clear();
+                        form.year.clear();
+                        form.publisher.clear();
+                        form.journal.clear();
+                        form.doi.clear();
+                    }
+                    Err(error) => form.error = error,
+                }
+            }
+        }
+        if ui.button("New").clicked() {
+            form.editing.clear();
+            form.tag.clear();
+            form.author.clear();
+            form.title.clear();
+            form.year.clear();
+            form.publisher.clear();
+            form.journal.clear();
+            form.doi.clear();
+            form.error.clear();
+        }
+    });
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label("Interchange format");
+        egui::ComboBox::from_id_salt("citation_source_format").selected_text(&form.format).show_ui(ui, |ui| {
+            ui.selectable_value(&mut form.format, "bibtex".into(), "BibTeX");
+            ui.selectable_value(&mut form.format, "csl-json".into(), "CSL JSON");
+        });
+        if ui.button("Import from text").clicked() {
+            match app.run("references.importSources", json!({"format": form.format, "data": form.exchange})) {
+                Ok(result) => {
+                    form.error = format!("Imported {} sources ({} new, {} updated).", result["total"], result["added"], result["updated"]);
+                    form.exchange.clear();
+                }
+                Err(error) => form.error = error,
+            }
+        }
+        if ui.button("Export").clicked() {
+            match app.run("references.exportSources", json!({"format": form.format})) {
+                Ok(result) => form.exchange = result["data"].as_str().unwrap_or("").to_string(),
+                Err(error) => form.error = error,
+            }
+        }
+        if ui.button("Copy export").clicked() && !form.exchange.is_empty() {
+            ui.ctx().copy_text(form.exchange.clone());
+        }
+    });
+    ui.add(egui::TextEdit::multiline(&mut form.exchange).desired_rows(5).desired_width(540.0).char_limit(8 * 1024 * 1024));
+    ui.label("Import pasted BibTeX or CSL JSON; export is copied from this text area.");
+
+    ui.separator();
+    ui.label("Citation style");
+    ui.horizontal(|ui| {
+        for style in wordcraft_engine::cmd::citations::STYLES {
+            if ui.selectable_label(app.session.bib_style == style, style).clicked()
+                && let Err(error) = app.run("references.citationStyle", json!({"style": style}))
+            {
+                form.error = error;
+            }
+        }
+        if ui.button("Insert Bibliography").clicked()
+            && let Err(error) = app.run("references.bibliography", json!({}))
+        {
+            form.error = error;
+        }
+        if ui.button("Refresh Fields").clicked()
+            && let Err(error) = app.run("references.updateCitations", json!({}))
+        {
+            form.error = error;
+        }
+    });
+    if !form.error.is_empty() {
+        ui.colored_label(Tokens::get(ui.ctx()).red, &form.error);
+    }
+    ui.button("Close").clicked() || ui.input(|input| input.key_pressed(egui::Key::Escape))
+}
+
 fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     match d {
         Dialog::Recovery { state } => crate::recovery::show(app, ui, state),
@@ -1074,6 +1263,7 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             });
             ui.button("Close").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape))
         }
+        Dialog::Sources { form } => citation_sources(app, ui, form),
         Dialog::Recipients { csv, error } => {
             ui.label(tl!("Paste CSV data with field names in the first row."));
             ui.add(egui::TextEdit::multiline(csv).desired_rows(10).desired_width(480.0).char_limit(1_000_000));

@@ -15,6 +15,11 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("references.sources", "Manage Sources", "References › Citations & Bibliography", sources)
             .params(r#"{"add"?: Source, "remove"?: tag} → list"#),
+        CommandSpec::new("references.importSources", "Import Bibliography Sources", "References › Citations & Bibliography", import_sources)
+            .params(r#"{"format":"bibtex|csl-json", "data"?: text, "path"?: file path}; imports/merges sources by citation key or CSL id"#),
+        CommandSpec::new("references.exportSources", "Export Bibliography Sources", "References › Citations & Bibliography", export_sources)
+            .params(r#"{"format":"bibtex|csl-json"} → {data, count}"#)
+            .pure(),
         CommandSpec::new("references.citation", "Insert Citation", "References › Citations & Bibliography", citation).params(r#"{"tag"?: string, "source"?: Source (added if new), "pages"?: string}"#),
         CommandSpec::new("references.updateCitations", "Update Citations and Bibliography", "References › Citations & Bibliography", |s, _| {
             update_citations(s)?;
@@ -161,14 +166,21 @@ pub fn entry(src: &Source, style: &str, n: usize) -> String {
     let journal = if src.journal.is_empty() {
         String::new()
     } else {
-        format!(
-            "{}{}{}",
-            src.journal,
-            if src.volume.is_empty() { String::new() } else { format!(", {}", src.volume) },
-            if src.pages.is_empty() { String::new() } else { format!(", {}", src.pages) }
-        )
+        let volume = match (src.volume.is_empty(), src.issue.is_empty()) {
+            (false, false) => format!(", {}({})", src.volume, src.issue),
+            (false, true) => format!(", {}", src.volume),
+            (true, false) => format!(", ({})", src.issue),
+            (true, true) => String::new(),
+        };
+        format!("{}{}{}", src.journal, volume, if src.pages.is_empty() { String::new() } else { format!(", {}", src.pages) })
     };
-    let url = if src.url.is_empty() { String::new() } else { format!(" {}", src.url) };
+    let url = if !src.url.is_empty() {
+        format!(" {}", src.url)
+    } else if !src.doi.is_empty() {
+        format!(" https://doi.org/{}", src.doi)
+    } else {
+        String::new()
+    };
     match style {
         "MLA" => {
             let names = match au.len() {
@@ -256,6 +268,79 @@ fn has_native_citation(s: &Session, tag: &str) -> bool {
             _ => false,
         })
     })
+}
+
+fn import_sources(s: &mut Session, v: &Value) -> CmdResult {
+    let format = citation_format(p::req_str(v, "format")?)?;
+    let text = if let Some(data) = p::str(v, "data") {
+        data.to_string()
+    } else if let Some(path) = p::str(v, "path") {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let bytes = std::fs::read(path).map_err(|error| CmdError::Failed(format!("{path}: {error}")))?;
+            if bytes.len() > wordcraft_formats::citations::MAX_BYTES {
+                return Err(CmdError::Params("bibliography import exceeds 8 MiB".into()));
+            }
+            String::from_utf8(bytes).map_err(|_| CmdError::Params("bibliography import must be UTF-8".into()))?
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            return Err(CmdError::Params("give bibliography `data` in the browser".into()));
+        }
+    } else {
+        return Err(CmdError::Params("give bibliography `data` or a local `path`".into()));
+    };
+    if text.len() > wordcraft_formats::citations::MAX_BYTES {
+        return Err(CmdError::Params("bibliography import exceeds 8 MiB".into()));
+    }
+    let incoming = match format {
+        CitationFormat::Bibtex => wordcraft_formats::citations::import_bibtex(&text),
+        CitationFormat::CslJson => wordcraft_formats::citations::import_csl_json(&text),
+    }
+    .map_err(CmdError::Params)?;
+    let mut merged = s.doc.sources.clone();
+    let mut added = 0usize;
+    let mut updated = 0usize;
+    for source in incoming {
+        if let Some(current) = merged.iter_mut().find(|current| current.tag == source.tag) {
+            *current = source;
+            updated += 1;
+        } else {
+            merged.push(source);
+            added += 1;
+        }
+    }
+    if merged.len() > wordcraft_formats::citations::MAX_SOURCES {
+        return Err(CmdError::Params("source library exceeds 10000 entries".into()));
+    }
+    s.doc.sources = merged;
+    update_citations(s)?;
+    Ok(json!({"added": added, "updated": updated, "total": s.doc.sources.len()}))
+}
+
+fn export_sources(s: &mut Session, v: &Value) -> CmdResult {
+    let format = citation_format(p::req_str(v, "format")?)?;
+    let data = match format {
+        CitationFormat::Bibtex => wordcraft_formats::citations::export_bibtex(&s.doc.sources),
+        CitationFormat::CslJson => wordcraft_formats::citations::export_csl_json(&s.doc.sources),
+    }
+    .map_err(CmdError::Failed)?;
+    Ok(json!({"data": data, "count": s.doc.sources.len()}))
+}
+
+#[derive(Clone, Copy)]
+enum CitationFormat {
+    Bibtex,
+    CslJson,
+}
+
+fn citation_format(format: &str) -> Result<CitationFormat, CmdError> {
+    match format.to_ascii_lowercase().as_str() {
+        "bibtex" | "bib" => Ok(CitationFormat::Bibtex),
+        "csl-json" | "csl_json" | "json" => Ok(CitationFormat::CslJson),
+        _ => Err(CmdError::Params("format must be `bibtex` or `csl-json`".into())),
+    }
 }
 
 fn citation(s: &mut Session, v: &Value) -> CmdResult {
@@ -639,6 +724,31 @@ mod tests {
         assert!(t.contains("(Rivera and Chen)"), "{t}");
         s.run("references.citationStyle", &json!({"style": "IEEE"})).unwrap();
         assert!(s.doc.plain_text(StoryRef::Body).contains("[1]"));
+    }
+
+    #[test]
+    fn bibtex_and_csl_json_commands_import_export_metadata_and_undo() {
+        let mut s = Session::new(wordcraft_doc::Document::new());
+        let bib = "@article{rivera2024, author={Rivera, Alex and 王, 明}, title={文献}, year={2024}, journal={Open Research}, doi={10.1234/example}, issue={2}, keywords={XML, DOCX}, note={retain}}";
+        let result = s.run("references.importSources", &json!({"format": "bibtex", "data": bib})).unwrap();
+        assert_eq!(result["added"], 1);
+        assert_eq!(s.doc.sources[0].doi, "10.1234/example");
+        assert_eq!(s.doc.sources[0].issue, "2");
+        assert_eq!(s.doc.sources[0].metadata.get("note").and_then(serde_json::Value::as_str), Some("retain"));
+        let csl_export = s.run("references.exportSources", &json!({"format": "csl-json"})).unwrap();
+        let csl_roundtrip = wordcraft_formats::citations::import_csl_json(csl_export["data"].as_str().unwrap()).unwrap();
+        assert_eq!(csl_roundtrip[0].title, "文献");
+        assert_eq!(csl_roundtrip[0].doi, "10.1234/example");
+
+        s.run("edit.undo", &json!({})).unwrap();
+        assert!(s.doc.sources.is_empty());
+        let csl = r#"[{"id":"csl1","type":"article-journal","title":"Paper","author":[{"family":"Chen","given":"Mei"}],"issued":{"date-parts":[[2023]]},"DOI":"10.9999/paper","custom":{"checked":true}}]"#;
+        s.run("references.importSources", &json!({"format": "csl-json", "data": csl})).unwrap();
+        let bib_export = s.run("references.exportSources", &json!({"format": "bibtex"})).unwrap();
+        let bib_roundtrip = wordcraft_formats::citations::import_bibtex(bib_export["data"].as_str().unwrap()).unwrap();
+        assert_eq!(bib_roundtrip[0].author, "Chen, Mei");
+        assert_eq!(bib_roundtrip[0].doi, "10.9999/paper");
+        assert_eq!(s.doc.sources[0].metadata.get("custom").and_then(|v| v.get("checked")).and_then(serde_json::Value::as_bool), Some(true));
     }
 
     #[test]

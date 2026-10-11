@@ -1356,3 +1356,5 @@
 	Page {page} has content that may be clipped.	Lehel {page} võib osa sisust kärbitud olla.
 	Cancel print job	Tühista printimistöö
 	Print job canceled.	Printimistöö tühistati.
+	Import Bibliography Sources	Impordi bibliograafiaallikad
+	Export Bibliography Sources	Ekspordi bibliograafiaallikad

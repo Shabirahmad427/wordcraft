@@ -239,8 +239,11 @@ References|Footnotes|Footnote Options|references.noteOptions
 References|Research|Researcher|references.researcher
 References|Citations|Insert Citation|references.citation
 References|Citations|Manage Sources|references.sources
+References|Citations|Import Bibliography Sources|references.importSources
+References|Citations|Export Bibliography Sources|references.exportSources
 References|Citations|Style|references.citationStyle
 References|Citations|Bibliography|references.bibliography
+References|Citations|Update Citations and Bibliography|references.updateCitations
 References|Captions|Insert Caption|references.caption
 References|Captions|Insert Table of Figures|references.tableOfFigures
 References|Captions|Update Table of Figures|references.updateFigures

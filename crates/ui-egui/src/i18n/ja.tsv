@@ -1343,3 +1343,5 @@
 	Page {page} has content that may be clipped.	{page} ページの内容が切り取られる可能性があります。
 	Cancel print job	印刷ジョブをキャンセル
 	Print job canceled.	印刷ジョブをキャンセルしました。
+	Import Bibliography Sources	参考文献ソースをインポート
+	Export Bibliography Sources	参考文献ソースをエクスポート

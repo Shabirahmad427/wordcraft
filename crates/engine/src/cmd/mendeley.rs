@@ -121,10 +121,10 @@ fn parse_ris(text: &str) -> Result<Vec<Source>, String> {
             }
             _ => {
                 let src = record.as_mut().ok_or_else(|| format!("RIS line {}: field outside a record", n + 1))?;
-                if tag == "ID" || tag == "DO" {
-                    if src.tag.is_empty() || tag == "ID" {
-                        src.tag = format!("Mendeley_{:016x}", hash(value.as_bytes()));
-                    }
+                if tag == "ID" {
+                    src.tag = format!("Mendeley_{:016x}", hash(value.as_bytes()));
+                } else if tag == "DO" {
+                    src.doi = value.to_string();
                 } else if tag == "AU" || tag == "A1" {
                     if !src.author.is_empty() {
                         src.author.push_str("; ");
@@ -177,13 +177,14 @@ fn hash(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const RIS: &str = "TY  - JOUR\nID  - abc-123\nAU  - Rivera, Alex\nAU  - Chen, Mei\nTI  - Shared Spaces\nPY  - 2021/01/01\nJO  - Open Research\nVL  - 7\nSP  - 12\nEP  - 19\nER  - \n";
+    const RIS: &str = "TY  - JOUR\nID  - abc-123\nAU  - Rivera, Alex\nAU  - Chen, Mei\nTI  - Shared Spaces\nPY  - 2021/01/01\nJO  - Open Research\nVL  - 7\nSP  - 12\nEP  - 19\nDO  - 10.5555/shared\nER  - \n";
     #[test]
     fn import_cite_save_reopen_refresh_and_undo() {
         let mut s = Session::new(wordcraft_doc::Document::new());
         assert_eq!(s.run("mendeley.import", &json!({"ris": RIS})).unwrap()["added"], 1);
         let src = s.doc.sources[0].clone();
         assert_eq!((&*src.author, &*src.year, &*src.pages), ("Rivera, Alex; Chen, Mei", "2021", "12–19"));
+        assert_eq!(src.doi, "10.5555/shared");
         s.run("references.citation", &json!({"tag": src.tag})).unwrap();
         s.run("references.bibliography", &json!({})).unwrap();
         let bytes = wordcraft_docx::write(&s.doc).unwrap();
