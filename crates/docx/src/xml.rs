@@ -23,6 +23,7 @@ pub const NAMESPACES: &[(&str, &str)] = &[
     ("wp", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"),
     ("a", "http://schemas.openxmlformats.org/drawingml/2006/main"),
     ("c", "http://schemas.openxmlformats.org/drawingml/2006/chart"),
+    ("x", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
     ("pic", "http://schemas.openxmlformats.org/drawingml/2006/picture"),
     ("mc", "http://schemas.openxmlformats.org/markup-compatibility/2006"),
     ("w14", "http://schemas.microsoft.com/office/word/2010/wordml"),

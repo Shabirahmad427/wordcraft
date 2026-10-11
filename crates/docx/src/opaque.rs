@@ -261,6 +261,25 @@ pub(crate) fn warnings(doc: &Document) -> Vec<String> {
     }
     if has_rendered_chart(doc) {
         warnings.push("Charts can be displayed from their cached data, but chart data is read-only. Editing values in the document does not synchronize chart caches or embedded Excel workbooks; DOCX saves preserve the original chart data.".into());
+        for status in crate::chart_mapping::inspect_document(doc) {
+            let message = match status {
+                crate::chart_mapping::Classification::Mappable(mapping) => {
+                    format!("A chart-to-workbook mapping was validated read-only for {} series; editing remains disabled.", mapping.series.len())
+                }
+                crate::chart_mapping::Classification::Unsupported(reason) => {
+                    format!("Chart data mapping is unavailable: {reason}. The chart and workbook remain preserved and read-only.")
+                }
+                crate::chart_mapping::Classification::Ambiguous(reason) => {
+                    format!("Chart data mapping is ambiguous: {reason}. The chart and workbook remain preserved and read-only.")
+                }
+                crate::chart_mapping::Classification::Inconsistent(reason) => {
+                    format!("Chart data is inconsistent: {reason}. The chart and workbook remain preserved and read-only.")
+                }
+            };
+            if !warnings.contains(&message) {
+                warnings.push(message);
+            }
+        }
     }
     warnings
 }

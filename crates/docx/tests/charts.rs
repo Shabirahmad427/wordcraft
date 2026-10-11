@@ -65,6 +65,7 @@ fn rendered_chart_is_disclosed_as_read_only_with_embedded_data_unchanged() {
         .expect("chart object");
     assert!(!chart.items.is_empty(), "the supported cached-data chart is rendered");
     assert!(wordcraft_docx::compatibility_warnings(&document).iter().any(|warning| warning.contains("chart data is read-only")));
+    assert!(wordcraft_docx::compatibility_warnings(&document).iter().any(|warning| warning.contains("Chart data mapping is unavailable")));
 
     let saved = unpack(&wordcraft_docx::write(&document).unwrap());
     let original = unpack(&source);

@@ -7,6 +7,7 @@
 //! error or a best-effort document, never a panic.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod chart_mapping;
 mod crypt;
 mod custom;
 mod custom_xml;
