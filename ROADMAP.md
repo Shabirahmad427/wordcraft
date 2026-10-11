@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (numbered-equation DOCX layout round-trip and equation-caption reference refresh) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (WordCraft citation source refresh and safe missing-source handling) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and
 agent control. This page is the summary; the assessment is
@@ -114,6 +114,7 @@ the two partial ones (real-world .docx, printing) complete, roughly.
 | M14 | 1.0 polish, packaging, signing | pipeline written; waiting on remote and secrets |
 
 ## Recently landed
+- M6: WordCraft-managed citation insertion refreshes existing bibliographies; source replacement refreshes matching citation fields and generated lists; deleting an actively cited source is rejected. The Update Citations and Bibliography command refreshes after manual citation deletion/reordering. Unresolved native tags produce an actionable status while retaining their cached result. Regression coverage confirms an external Zotero ADDIN field and preference property remain unchanged during native style/source refresh. See [citation compatibility](docs/citation-compatibility.md). This is synthetic internal verification only; no Zotero, Mendeley, CSL processor or Microsoft Word application was used.
 - M1: Preserve document-attached custom XML/bibliography data, properties, dependent relationships and content types with bounded graph traversal. Repeated round-trip, hostile-input and multi-page raster/Undo regressions added; independent Word verification remains pending.
 - M5: Drag unmerged column borders and unsplit row borders to resize tables, with one undo step and Escape cancellation (#217, local fix).
 - M7: Accept/Reject resolves tracked paragraph breaks; DOCX preserves their revision tags across saves (#229, local fix).

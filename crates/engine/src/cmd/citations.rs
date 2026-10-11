@@ -16,6 +16,10 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("references.sources", "Manage Sources", "References › Citations & Bibliography", sources)
             .params(r#"{"add"?: Source, "remove"?: tag} → list"#),
         CommandSpec::new("references.citation", "Insert Citation", "References › Citations & Bibliography", citation).params(r#"{"tag"?: string, "source"?: Source (added if new), "pages"?: string}"#),
+        CommandSpec::new("references.updateCitations", "Update Citations and Bibliography", "References › Citations & Bibliography", |s, _| {
+            update_citations(s)?;
+            Ok(json!({"updated": true}))
+        }),
         CommandSpec::new("references.citationStyle", "Style", "References › Citations & Bibliography", |s, v| {
             let st = p::str(v, "style").unwrap_or("APA");
             let st = STYLES.iter().find(|x| x.eq_ignore_ascii_case(st)).ok_or_else(|| CmdError::Params(format!("style must be one of {STYLES:?}")))?;
@@ -208,6 +212,8 @@ pub fn entry(src: &Source, style: &str, n: usize) -> String {
 }
 
 fn sources(s: &mut Session, v: &Value) -> CmdResult {
+    let mut sources = s.doc.sources.clone();
+    let mut changed = false;
     if let Some(a) = v.get("add") {
         let mut src: Source = serde_json::from_value(a.clone()).map_err(|e| CmdError::Params(e.to_string()))?;
         if src.tag.is_empty() {
@@ -220,14 +226,36 @@ fn sources(s: &mut Session, v: &Value) -> CmdResult {
                 .collect();
             src.tag = format!("{base}{}", src.year);
         }
-        s.doc.sources.retain(|x| x.tag != src.tag);
-        s.doc.sources.push(src);
-        s.touch();
+        sources.retain(|x| x.tag != src.tag);
+        sources.push(src);
+        changed = true;
     }
     if let Some(t) = p::str(v, "remove") {
-        s.doc.sources.retain(|x| x.tag != t);
+        if has_native_citation(s, t) {
+            return Err(CmdError::Failed(format!(
+                "source `{t}` is still cited; remove or replace its WordCraft citation before deleting the source"
+            )));
+        }
+        let old_len = sources.len();
+        sources.retain(|x| x.tag != t);
+        changed |= old_len != sources.len();
+    }
+    if changed {
+        s.doc.sources = sources;
+        // Refresh WordCraft-managed fields and generated bibliographies after metadata changes.
+        // ADDIN citation-manager ranges are deliberately not interpreted or rewritten here.
+        update_citations(s)?;
     }
     Ok(serde_json::to_value(&s.doc.sources).unwrap_or(Value::Null))
+}
+
+fn has_native_citation(s: &Session, tag: &str) -> bool {
+    std::iter::once(StoryRef::Body).chain(s.doc.parts.keys().map(|id| StoryRef::Part(*id))).any(|story| {
+        s.doc.para_paths(story).iter().filter_map(|path| s.doc.para(story, path)).flat_map(|para| para.objects.iter()).any(|object| match object {
+            InlineObject::Field { instr, .. } if instr.trim_start().starts_with("CITATION") => instr.split_whitespace().nth(1) == Some(tag),
+            _ => false,
+        })
+    })
 }
 
 fn citation(s: &mut Session, v: &Value) -> CmdResult {
@@ -249,40 +277,58 @@ fn citation(s: &mut Session, v: &Value) -> CmdResult {
     let instr = if pages.is_empty() { format!("CITATION {tag}") } else { format!("CITATION {tag} \\p {pages}") };
     let end = s.doc.insert_object(&at, InlineObject::Field { instr, result: cite(&src, &s.bib_style, n, &pages), locked: false }, &props)?;
     s.sel = Selection::caret(end);
+    update_generated(s)?;
     Ok(json!({"tag": tag}))
 }
 
 /// Refresh CITATION results and generated lists.
 pub fn update_citations(s: &mut Session) -> Result<(), CmdError> {
     let style = s.bib_style.clone();
-    for path in s.doc.para_paths(StoryRef::Body) {
-        let Some(p) = s.doc.para(StoryRef::Body, &path) else { continue };
-        let updates: Vec<(usize, String)> = p
-            .objects
-            .iter()
-            .enumerate()
-            .filter_map(|(k, o)| match o {
-                InlineObject::Field { instr, .. } if instr.trim_start().starts_with("CITATION") => {
-                    let mut it = instr.split_whitespace().skip(1);
-                    let tag = it.next()?.to_string();
-                    let pages = instr.split("\\p").nth(1).map(|x| x.trim().to_string()).unwrap_or_default();
-                    let n = s.doc.sources.iter().position(|x| x.tag == tag)? + 1;
-                    let src = s.doc.sources.get(n - 1)?;
-                    Some((k, cite(src, &style, n, &pages)))
-                }
-                _ => None,
-            })
-            .collect();
-        if updates.is_empty() {
-            continue;
-        }
-        let para = s.doc.para_mut(StoryRef::Body, &path)?;
-        for (k, r) in updates {
-            if let Some(InlineObject::Field { result, .. }) = para.objects.get_mut(k) {
-                *result = r;
+    let mut missing = std::collections::BTreeSet::new();
+    let stories: Vec<_> = std::iter::once(StoryRef::Body).chain(s.doc.parts.keys().map(|id| StoryRef::Part(*id))).collect();
+    for story in stories {
+        for path in s.doc.para_paths(story) {
+            let Some(p) = s.doc.para(story, &path) else { continue };
+            let updates: Vec<(usize, String)> = p
+                .objects
+                .iter()
+                .enumerate()
+                .filter_map(|(k, o)| match o {
+                    InlineObject::Field { instr, .. } if instr.trim_start().starts_with("CITATION") => {
+                        let mut it = instr.split_whitespace().skip(1);
+                        let tag = it.next()?.to_string();
+                        let pages = instr.split("\\p").nth(1).map(|x| x.trim().to_string()).unwrap_or_default();
+                        let Some(n) = s.doc.sources.iter().position(|x| x.tag == tag).map(|i| i + 1) else {
+                            missing.insert(tag);
+                            return None;
+                        };
+                        let src = s.doc.sources.get(n - 1)?;
+                        Some((k, cite(src, &style, n, &pages)))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if updates.is_empty() {
+                continue;
             }
+            let para = s.doc.para_mut(story, &path)?;
+            for (k, r) in updates {
+                if let Some(InlineObject::Field { result, .. }) = para.objects.get_mut(k) {
+                    *result = r;
+                }
+            }
+            para.touch();
         }
-        para.touch();
+    }
+    if missing.is_empty() {
+        if s.status.starts_with("Missing WordCraft citation source") {
+            s.status.clear();
+        }
+    } else {
+        let tags = missing.into_iter().collect::<Vec<_>>().join(", ");
+        s.status = format!(
+            "Missing WordCraft citation source(s): {tags}. Add or re-import them in References › Manage Sources; existing citation text was preserved."
+        );
     }
     update_generated(s)
 }
@@ -593,6 +639,123 @@ mod tests {
         assert!(t.contains("(Rivera and Chen)"), "{t}");
         s.run("references.citationStyle", &json!({"style": "IEEE"})).unwrap();
         assert!(s.doc.plain_text(StoryRef::Body).contains("[1]"));
+    }
+
+    #[test]
+    fn inserting_a_citation_refreshes_an_existing_bibliography() {
+        let mut s = Session::new(wordcraft_doc::Document::new());
+        s.run(
+            "references.sources",
+            &json!({"add": {
+                "tag": "First", "author": "Alpha, A", "title": "First Work", "year": "2020"
+            }}),
+        )
+        .unwrap();
+        s.run("references.citation", &json!({"tag": "First"})).unwrap();
+        s.run("text.newParagraph", &json!({})).unwrap();
+        s.run("references.bibliography", &json!({})).unwrap();
+        s.run(
+            "references.sources",
+            &json!({"add": {
+                "tag": "Second", "author": "Beta, B", "title": "Second Work", "year": "2021"
+            }}),
+        )
+        .unwrap();
+        assert!(!s.doc.plain_text(StoryRef::Body).contains("Second Work"));
+        s.run("caret.docStart", &json!({})).unwrap();
+        s.run("references.citation", &json!({"tag": "Second"})).unwrap();
+        assert!(s.doc.plain_text(StoryRef::Body).contains("Second Work"));
+    }
+
+    #[test]
+    fn source_updates_refresh_native_fields_and_protect_external_manager_fields() {
+        let mut s = Session::new(wordcraft_doc::Document::new());
+        s.run("text.insert", &json!({"text": "Finding "})).unwrap();
+        s.run(
+            "references.citation",
+            &json!({"source": {
+                "tag": "Rivera2021", "author": "Rivera, Alex", "title": "Shared Spaces", "year": "2021"
+            }}),
+        )
+        .unwrap();
+        s.run("text.newParagraph", &json!({})).unwrap();
+        s.run("references.bibliography", &json!({})).unwrap();
+
+        let external_instr = r#"ADDIN ZOTERO_ITEM CSL_CITATION {"citationID":"keep-me","citationItems":[{"id":9}]}"#;
+        let c = CharProps::default();
+        let para = s.doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap();
+        para.insert_object(0, InlineObject::FieldStart { instr: external_instr.into(), locked: true }, &c).unwrap();
+        para.insert_object(wordcraft_doc::para::OBJ.len_utf8(), InlineObject::FieldEnd, &c).unwrap();
+        s.doc.set_custom_prop("ZOTERO_PREF_1", "<data><session id=\"keep\"/></data>");
+        let external_before = s.doc.field_ranges(StoryRef::Body);
+
+        s.run(
+            "references.sources",
+            &json!({"add": {
+                "tag": "Rivera2021", "author": "Rivera, Alex", "title": "Shared Spaces", "year": "2025"
+            }}),
+        )
+        .unwrap();
+        assert!(s.doc.plain_text(StoryRef::Body).contains("(Rivera, 2025)"));
+        assert!(s.doc.plain_text(StoryRef::Body).contains("(2025). Shared Spaces."));
+        let external_after: Vec<_> = s.doc.field_ranges(StoryRef::Body).into_iter().filter(|field| field.instr == external_instr).collect();
+        assert_eq!(external_after, external_before);
+        assert_eq!(s.doc.custom_prop("ZOTERO_PREF_1"), Some("<data><session id=\"keep\"/></data>"));
+
+        let result = s.run("references.sources", &json!({"remove": "Rivera2021"}));
+        assert!(result.is_err());
+        assert_eq!(s.doc.sources.len(), 1);
+        assert!(s.doc.plain_text(StoryRef::Body).contains("(Rivera, 2025)"));
+    }
+
+    #[test]
+    fn missing_native_citation_source_is_reported_without_rewriting_result() {
+        let mut s = Session::new(wordcraft_doc::Document::new());
+        s.run("text.insert", &json!({"text": "Claim "})).unwrap();
+        s.doc
+            .insert_object(
+                &Pos::body(0, 6),
+                InlineObject::Field { instr: "CITATION Missing2020".into(), result: "(Doe, 2020)".into(), locked: false },
+                &CharProps::default(),
+            )
+            .unwrap();
+        s.run("references.citationStyle", &json!({"style": "MLA"})).unwrap();
+        assert!(s.status.contains("Missing2020"), "{}", s.status);
+        assert!(s.status.contains("existing citation text was preserved"));
+        assert!(s.doc.plain_text(StoryRef::Body).contains("(Doe, 2020)"));
+    }
+
+    #[test]
+    fn citations_in_note_stories_refresh_and_keep_their_source_protected() {
+        let mut s = Session::new(wordcraft_doc::Document::new());
+        s.doc.sources.push(Source {
+            tag: "NoteRef".into(),
+            author: "Chen, Mei".into(),
+            title: "Notes on Text".into(),
+            year: "2024".into(),
+            ..Default::default()
+        });
+        let note = s.doc.add_part(wordcraft_doc::PartKind::Footnote, vec![wordcraft_doc::para_block(Paragraph::new())]);
+        s.doc
+            .para_mut(StoryRef::Part(note), &Path::top(0))
+            .unwrap()
+            .insert_object(
+                0,
+                InlineObject::Field { instr: "CITATION NoteRef".into(), result: "old result".into(), locked: false },
+                &CharProps::default(),
+            )
+            .unwrap();
+
+        s.run("references.citationStyle", &json!({"style": "IEEE"})).unwrap();
+        let note_para = s.doc.para(StoryRef::Part(note), &Path::top(0)).unwrap();
+        assert!(
+            note_para
+                .objects
+                .iter()
+                .any(|object| matches!(object, InlineObject::Field { instr, result, .. } if instr == "CITATION NoteRef" && result == "[1]"))
+        );
+        assert!(s.run("references.sources", &json!({"remove": "NoteRef"})).is_err());
+        assert_eq!(s.doc.sources.len(), 1);
     }
 
     #[test]
