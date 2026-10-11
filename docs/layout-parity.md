@@ -39,7 +39,7 @@ font can't match Word's metrics.
 | Floating pictures/shapes placement (relative to page/margin/column/paragraph/line/character) | ✅ | #136 | — |
 | Text wrap: square, top-and-bottom, behind, in front | ✅ | 2026-10-06 | — |
 | Text wrap: tight, through (contour, wrap polygon) | ❌ | laid out as square | 6–10 |
-| Text boxes, overflow, linked text boxes | 🟡 | #46; linked text boxes missing | 3–5 |
+| Text boxes, overflow, linked text boxes | 🟡 | Horizontal text-box boundary overflow and vertical clipping are reported before the fit pass; body, table, cell and object diagnostics are page/element/severity tagged and the UI jumps to the first affected page. No auto-resize/move. Linked text boxes and complex drawing effect bounds remain open (#46) | 3–5 |
 | Rotated objects and text | 🟡 | #332: pictures, shapes, charts and groups drawn turned and flipped about their centre (screen and PDF); square wrap and inline lines keep clear of the rotated bounds; hit testing on the turned shape. Text in a rotated text box stays upright | 2–3 |
 | Page borders (from page edge or text), page colour, watermark | ✅ | | — |
 | Line numbers (restart per page/section, count by) | ✅ | | — |
@@ -72,6 +72,7 @@ font can't match Word's metrics.
 | 2026-10-10 | minor | Multicolumn footnotes reserve note space across the page and reflow earlier columns; equivalent source/DOCX note-marker raster equality and text coverage tested; Word comparison outstanding |
 | 2026-10-10 | minor | Document-end endnotes continue across columns/pages at line boundaries; Undo/redo, recovery, DOCX reopen/raster and PDF regressions added; placement/restart settings remain unmodeled |
 | 2026-10-10 | minor | Complete paragraphs balance on safe final pages across equal/unequal columns; complex pages retain stable flow and report skipped balancing |
+| 2026-10-10 | minor | Horizontal/vertical body, table, cell and object overflow plus text-box clipping are reported; localized UI warning navigates to first affected page; full-page positioned art avoids body-margin false positives |
 | 2026-10-10 | trivial | Long footnotes continue onto the next page with a continuation separator (#352) |
 | 2026-10-10 | trivial | Layout reports vertical body overflow pages and the UI keeps a warning visible; horizontal overflow and text-box clipping remain undetected |
 | 2026-10-10 | trivial | Rotated and flipped objects laid out and drawn (#332) |

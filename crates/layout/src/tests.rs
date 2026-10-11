@@ -47,7 +47,30 @@ fn oversized_inline_content_reports_its_overflow_page_and_keeps_following_text()
     .unwrap();
     let result = lay(&doc);
     assert_eq!(result.overflow_pages, vec![0]);
+    assert!(result.overflows.iter().any(|o| o.element == OverflowElement::Image && o.axis == OverflowAxis::Vertical));
     assert!(result.caret(&Pos::body(1, 0)).is_some());
+
+    let mut off_page = Document::from_text("Off-page floating image");
+    off_page
+        .insert_object(
+            &Pos::body(0, 0),
+            InlineObject::Image {
+                media: "off-page-image".into(),
+                w: 80.0,
+                h: 30.0,
+                alt: String::new(),
+                float: wordcraft_doc::para::Float {
+                    wrap: wordcraft_doc::para::Wrap::BehindText,
+                    h_rel: wordcraft_doc::para::Anchor::Page,
+                    x: 600.0,
+                    ..Default::default()
+                },
+                crop: [0.0; 4],
+            },
+            &Default::default(),
+        )
+        .unwrap();
+    assert!(lay(&off_page).overflows.iter().any(|o| o.element == OverflowElement::Image && o.axis == OverflowAxis::Horizontal));
 }
 
 #[test]
@@ -94,6 +117,93 @@ fn oversized_floating_shape_reports_its_overflow_page() {
     .unwrap();
     let result = lay(&doc);
     assert_eq!(result.overflow_pages, vec![0]);
+}
+
+#[test]
+fn horizontal_text_and_table_overflow_are_classified_without_changing_content() {
+    let mut doc = Document::from_text("One line deliberately starts outside its text area.");
+    doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap().props.indent_left = Some(500.0);
+    let before = doc.body[0].clone();
+    let result = lay(&doc);
+    assert!(
+        result
+            .overflows
+            .iter()
+            .any(|o| { o.element == OverflowElement::BodyText && o.axis == OverflowAxis::Horizontal && o.severity == OverflowSeverity::Warning }),
+        "{:?}",
+        result.overflows
+    );
+    assert!(std::sync::Arc::ptr_eq(&before, &doc.body[0]), "layout must not rewrite body content");
+
+    let mut table_doc = Document::new();
+    let mut table = Table::new(1, 1, 900.0);
+    table.props.fixed = true;
+    table_doc.body.push(std::sync::Arc::new(Block::Table(table)));
+    let table_layout = lay(&table_doc);
+    assert!(table_layout.overflows.iter().any(|o| o.element == OverflowElement::Table && o.axis == OverflowAxis::Horizontal));
+}
+
+#[test]
+fn text_box_horizontal_and_vertical_clipping_are_reported() {
+    let mut doc = Document::from_text("A text box");
+    let text = "overflow ".repeat(180);
+    let id = text_box(&mut doc, 2, &text, 56.0, 30.0, Default::default());
+    doc.para_mut(StoryRef::Part(id), &Path::top(0)).unwrap().props.indent_left = Some(48.0);
+    let result = lay(&doc);
+    assert!(
+        result
+            .overflows
+            .iter()
+            .any(|o| { o.element == OverflowElement::TextBox && o.axis == OverflowAxis::Horizontal && o.severity == OverflowSeverity::Warning })
+    );
+    assert!(
+        result
+            .overflows
+            .iter()
+            .any(|o| { o.element == OverflowElement::TextBox && o.axis == OverflowAxis::Vertical && o.severity == OverflowSeverity::Clipped })
+    );
+}
+
+#[test]
+fn exact_table_cell_content_reports_clipping_and_normal_documents_stay_clear() {
+    let normal = lay(&Document::from_text("An ordinary paragraph fits in the normal content area."));
+    assert!(normal.overflows.is_empty());
+
+    let mut doc = Document::new();
+    let mut table = Table::new(1, 1, 468.0);
+    table.rows[0].props.height = Some(10.0);
+    table.rows[0].props.height_rule = HeightRule::Exact;
+    table.rows[0].cells[0].blocks =
+        vec![wordcraft_doc::para_block(Paragraph::with_text("Cell text that cannot fit in a ten point row", Default::default()))];
+    doc.body.push(std::sync::Arc::new(Block::Table(table)));
+    let result = lay(&doc);
+    assert!(result.overflows.iter().any(|o| o.element == OverflowElement::TableCell && o.axis == OverflowAxis::Vertical));
+}
+
+#[test]
+fn page_positioned_full_bleed_artwork_does_not_report_body_margin_overflow() {
+    let mut doc = Document::from_text("Page artwork");
+    doc.insert_object(
+        &Pos::body(0, 0),
+        InlineObject::Image {
+            media: "full-bleed-test-image".into(),
+            w: 612.0,
+            h: 792.0,
+            alt: "Full page width".into(),
+            float: wordcraft_doc::para::Float {
+                wrap: wordcraft_doc::para::Wrap::BehindText,
+                h_rel: wordcraft_doc::para::Anchor::Page,
+                v_rel: wordcraft_doc::para::Anchor::Page,
+                ..Default::default()
+            },
+            crop: [0.0; 4],
+        },
+        &Default::default(),
+    )
+    .unwrap();
+    let result = lay(&doc);
+    assert!(!result.overflows.iter().any(|o| o.element == OverflowElement::Image));
+    assert!(result.overflow_pages.is_empty(), "artwork covering the physical page is intentional");
 }
 
 #[test]

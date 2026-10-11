@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (page-wide footnote reflow across columns; equivalent DOCX note-marker raster regression fixed; independent Word comparison remains open) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (horizontal/vertical overflow diagnostics for body text, tables, objects and text boxes; independent Word comparison remains open) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and
 agent control. This page is the summary; the assessment is
@@ -27,14 +27,14 @@ from a signed download, without losing work.
 | Autosave and crash recovery | AutoSave plus separate native recovery snapshots, restart restore/discard/text comparison; Linux crash tests pass, Windows/macOS power-loss verification outstanding |
 | **DOCX fidelity against a corpus of real-world files** (open, render, round-trip, fix) | Synthetic preservation regressions started; independent real-world corpus verification still missing |
 | Long footnotes that continue onto later pages | landed (40% page-area cap; continuation pages keep remaining lines visible). Multicolumn pagination now reserves note space page-wide and reflows earlier columns. Equivalent in-memory and DOCX-reopened notes match pixels when the in-memory story includes its OOXML self-reference mark. Word behavior, page-specific note styles and custom continuation separators remain unverified |
-| Balanced multicolumn layout | missing (≈4 h) |
+| Balanced multicolumn layout | safe final-page paragraph balancing landed; complex-content and multi-page balancing remain open |
 | Native printing (today printing goes through PDF) | missing (≈4 h) |
 | Signed builds for macOS, Windows, Linux, FreeBSD and web | pipeline written; **needs the GitHub remote and release secrets from the owner** |
 | Real app icon / mascot art | placeholder; **needs owner art** |
 
 So: alpha is roughly **85% of the way**, with about **20–25 hours** of agent work left, plus two
 owner actions (push to `github.com/storytold/wordcraft` and enable the release secrets, and supply
-the icon art).
+  the icon art).
 
 ## Parity by area
 
@@ -139,7 +139,7 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 
 - M8: Interface theme can follow the operating system, with persisted Light/Dark/System choices (#115, PR #249).
 
-- Phase 4C step 1: layout reports pages where body content extends below its available body rectangle. The desktop status bar keeps a localized warning visible while that layout is active; oversized content remains intact and pagination still advances. Detection currently checks vertical body bounds, not horizontal overflow or text clipped inside text boxes. See [pagination audit](docs/pagination.md).
+- Phase 4C step 1: layout reports horizontal/vertical content-boundary overflow and text-box clipping by page, element and severity. The desktop status bar keeps a localized warning visible, identifies the first affected element and jumps to its page. Oversized objects remain intact; no automatic resize or move occurs. See [pagination audit](docs/pagination.md).
 
 - M6: Mendeley tab imports RIS exports, searches references, inserts citations/bibliographies and refreshes them; source libraries survive DOCX saves. Cloud sign-in and Mendeley Cite field editing remain future work.
 
@@ -203,3 +203,9 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 - At continuous section endings and document end, balance a final page when its body consists of complete top-level paragraphs only. Two/three columns, equal and unequal widths, section spacing, header/footer body geometry and paragraph keep/widow constraints are respected. Paragraph groups are assigned in reading order, and every existing shaped line is checked against its destination width before the page changes.
 - Pages containing notes, tables, floats/objects, partial paragraphs, page-dependent fields, explicit breaks, mixed-section content or insufficient destination width keep their stable original flow. `DocLayout::column_balance_skipped` exposes these pages and the status bar reports the fallback. Notes continue to use their existing page-wide reservations and endnote flow.
 - Added regressions for 2/3 columns, unequal widths, continuous single-column transitions, note/table/shape fallback, and balanced save/reopen with Undo/redo, recovery, exact raster comparison and PDF export. Complex paragraphs that would need width-specific rebreaking and multi-page section balancing remain unsupported. No Microsoft Word reference output was available; this is not Word pagination parity.
+
+## Phase 4C.5 — horizontal overflow and text-box clipping diagnostics (2026-10-10)
+
+- Layout now exposes typed, page-specific horizontal and vertical diagnostics with severity and offending bounds. It checks body paragraphs against the active column, table extents against the body, table-cell text against allocated cell bounds, inline images and floating objects against their intended area, and text-box content before its existing fit pass. Horizontal text-box overflow is a warning; vertical content removed by the fit pass is marked clipped.
+- Page/margin-positioned floating objects are compared with the physical page edge, so artwork intentionally extending into margins or covering the full page is not flagged as body overflow. Off-page objects remain visible as warnings. The UI keeps a localized status warning; its tooltip names the first element and axis, preserves the content assurance and jumps to the affected page.
+- No object is moved, resized or discarded. Text-box clipping remains the existing rendering behavior but is now explicitly reported. Diagnostics are recomputed after edits, Undo/redo, recovery and DOCX reopen; a PDF export and raster self-comparison regression passed. Stroke/shadow extents, note tables, and some deeply nested or unsupported drawing geometry need further audit. No Word reference output was available, and no pagination parity claim is made.

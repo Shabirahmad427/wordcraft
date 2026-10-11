@@ -1168,3 +1168,4 @@
 	Save Original Package	Зберегти оригінальний пакет
 	Page overflow	Переповнення сторінки
 	Content exceeds page area on {count} page(s).	Вміст виходить за межі області на {count} сторінках.
+	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	Перша проблема: {element} виходить за {axis} межу на сторінці {page}. Вміст збережено. Натисніть, щоб перейти туди.

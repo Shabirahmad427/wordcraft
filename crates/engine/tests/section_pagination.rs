@@ -479,3 +479,66 @@ fn balanced_columns_survive_undo_recovery_docx_reopen_and_pdf() {
     assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn overflow_diagnostics_survive_undo_recovery_docx_and_pdf_without_changing_pixels() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-overflow-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut doc = Document::from_text("A deliberately wide table follows.");
+    let mut table = Table::new(1, 1, 900.0);
+    table.props.fixed = true;
+    table.rows[0].cells[0].blocks = vec![wordcraft_engine::doc::para_block(Paragraph::with_text("Preserved cell content", Default::default()))];
+    doc.body.push(std::sync::Arc::new(wordcraft_engine::doc::Block::Table(table)));
+    let mut session = Session::new(doc);
+    let original = session.doc.clone();
+    session.run("text.insert", &json!({"text":"temporary"})).unwrap();
+    session.run("edit.undo", &json!({})).unwrap();
+    session.run("edit.redo", &json!({})).unwrap();
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(session.doc, original);
+
+    let before = session.layout();
+    assert!(
+        before
+            .overflows
+            .iter()
+            .any(|issue| issue.element == wordcraft_layout::OverflowElement::Table && issue.axis == wordcraft_layout::OverflowAxis::Horizontal)
+    );
+    let before_pixels: Vec<_> = before
+        .pages
+        .iter()
+        .map(|page| wordcraft_render::render_page(&session.doc, page, 1.0, &wordcraft_render::RenderOptions::default()).to_straight())
+        .collect();
+
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let id = store.save(&unique_id(), session.document_id(), &Snapshot::capture(&session)).unwrap();
+    let mut restored = Session::new(Document::new());
+    store.load(&id).unwrap().restore(&mut restored);
+    assert!(
+        restored
+            .layout()
+            .overflows
+            .iter()
+            .any(|issue| issue.element == wordcraft_layout::OverflowElement::Table && issue.axis == wordcraft_layout::OverflowAxis::Horizontal)
+    );
+
+    let path = directory.join("overflow.docx");
+    restored.run("file.save", &json!({"path":path})).unwrap();
+    let pdf = directory.join("overflow.pdf");
+    restored.run("file.exportPdf", &json!({"path":pdf})).unwrap();
+    assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path":path})).unwrap();
+    let after = reopened.layout();
+    assert!(
+        after
+            .overflows
+            .iter()
+            .any(|issue| issue.element == wordcraft_layout::OverflowElement::Table && issue.axis == wordcraft_layout::OverflowAxis::Horizontal)
+    );
+    assert_eq!(before_pixels.len(), after.pages.len());
+    for (pixels, page) in before_pixels.iter().zip(&after.pages) {
+        assert_eq!(pixels, &wordcraft_render::render_page(&reopened.doc, page, 1.0, &wordcraft_render::RenderOptions::default()).to_straight());
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}

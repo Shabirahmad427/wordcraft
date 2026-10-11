@@ -1157,3 +1157,4 @@
 	Save Original Package	儲存原始套件
 	Page overflow	頁面溢出
 	Content exceeds page area on {count} page(s).	內容在 {count} 頁超出頁面範圍。
+	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	第一個問題：第 {page} 頁的 {element} 超出{axis}邊界。內容已保留。按一下即可前往該頁。

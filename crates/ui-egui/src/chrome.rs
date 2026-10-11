@@ -240,10 +240,34 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                 if app.session.doc.settings.track_changes {
                     st(ui, tl!("Track Changes: On"));
                 }
-                if !l.overflow_pages.is_empty() {
-                    let count = l.overflow_pages.len().to_string();
-                    st(ui, tl!("Page overflow"))
-                        .on_hover_text(crate::i18n::fmt(tl!("Content exceeds page area on {count} page(s)."), &[("count", &count)]));
+                if !l.overflows.is_empty() || !l.overflow_pages.is_empty() {
+                    let count = if l.overflows.is_empty() { l.overflow_pages.len() } else { l.overflows.len() }.to_string();
+                    let first_page = l.overflows.first().map(|issue| issue.page).or_else(|| l.overflow_pages.first().copied()).unwrap_or(0);
+                    let warning = st(ui, tl!("Page overflow"));
+                    let page = (first_page + 1).to_string();
+                    let detail = if let Some(issue) = l.overflows.first() {
+                        let element = match issue.element {
+                            wordcraft_layout::OverflowElement::BodyText => tl!("Body Text"),
+                            wordcraft_layout::OverflowElement::Table => tl!("Table"),
+                            wordcraft_layout::OverflowElement::TableCell => tl!("Cell"),
+                            wordcraft_layout::OverflowElement::Image => tl!("Picture"),
+                            wordcraft_layout::OverflowElement::FloatingObject => tl!("Object"),
+                            wordcraft_layout::OverflowElement::TextBox => tl!("Text Box"),
+                        };
+                        let axis = match issue.axis {
+                            wordcraft_layout::OverflowAxis::Horizontal => tl!("Horizontal"),
+                            wordcraft_layout::OverflowAxis::Vertical => tl!("Vertical"),
+                        };
+                        crate::i18n::fmt(
+                            tl!("First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there."),
+                            &[("element", element), ("axis", axis), ("page", &page)],
+                        )
+                    } else {
+                        crate::i18n::fmt(tl!("Content exceeds page area on {count} page(s)."), &[("count", &count)])
+                    };
+                    if warning.on_hover_text(detail).clicked() {
+                        let _ = app.run("edit.goto", json!({"page": first_page + 1}));
+                    }
                 }
                 if !l.column_balance_skipped.is_empty() {
                     let count = l.column_balance_skipped.len().to_string();

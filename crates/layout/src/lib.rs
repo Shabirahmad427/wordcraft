@@ -264,14 +264,53 @@ pub struct Page {
     pub first_block: usize,
 }
 
+/// The type of content involved in a layout overflow diagnostic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OverflowElement {
+    BodyText,
+    Table,
+    TableCell,
+    Image,
+    FloatingObject,
+    TextBox,
+}
+
+/// The boundary a placed item crosses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OverflowAxis {
+    Horizontal,
+    Vertical,
+}
+
+/// Clipping is more severe than content merely extending past the normal text area.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OverflowSeverity {
+    Warning,
+    Clipped,
+}
+
+/// A non-mutating report of content that extends beyond its available layout region.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OverflowDiagnostic {
+    /// Zero-based physical page index.
+    pub page: usize,
+    pub element: OverflowElement,
+    pub axis: OverflowAxis,
+    pub severity: OverflowSeverity,
+    /// The item's page-coordinate bounds, useful for navigation and future highlighting.
+    pub bounds: Rect,
+}
+
 /// The whole layout.
 #[derive(Clone, Debug, Default)]
 pub struct DocLayout {
     pub pages: Vec<Page>,
-    /// Zero-based pages where body content extends below the printable body area. Oversized
-    /// indivisible objects and table rows are kept intact for progress, but callers can surface
-    /// this diagnostic rather than silently presenting the layout as ordinary.
+    /// Zero-based pages with vertical overflow or clipping. Oversized indivisible objects and
+    /// table rows are kept intact for progress, but callers can surface this diagnostic.
     pub overflow_pages: Vec<usize>,
+    /// Per-item horizontal/vertical overflow and clipping reports. These are derived from the
+    /// layout only; they do not alter document geometry or the DOCX package.
+    pub overflows: Vec<OverflowDiagnostic>,
     /// Zero-based pages where column balancing was requested at a section/document end but
     /// skipped because the page contained content that cannot yet be safely redistributed.
     pub column_balance_skipped: Vec<usize>,
@@ -353,6 +392,9 @@ struct Ctx<'a> {
     eq_count: u32,
     /// Bounds laying out text boxes inside text boxes, for the whole layout.
     boxes: wordcraft_doc::BoxBudget,
+    /// Text-box content found outside its frame before the fit pass. The anchor keys let
+    /// the final page pass attach each report after tables and floating objects are positioned.
+    box_clips: Vec<(StoryRef, Path, usize, OverflowAxis)>,
 }
 
 impl Ctx<'_> {
@@ -859,6 +901,206 @@ fn v_span(it: &Placed) -> (f32, f32) {
         | Placed::Object { rect, .. } => (rect.y, rect.y + rect.h),
         Placed::Rule { y0, y1, .. } => (y0.min(*y1), y0.max(*y1)),
     }
+}
+
+fn placed_bounds(it: &Placed) -> Option<Rect> {
+    if let Some(r) = it.turned_bounds() {
+        return Some(r);
+    }
+    match it {
+        Placed::Lines { para, l0, l1, x, y, .. } => {
+            para.lines.get(*l0)?;
+            let mut left = f32::INFINITY;
+            let mut right = f32::NEG_INFINITY;
+            for line in para.lines.get(*l0..*l1)? {
+                if line.vis.is_empty() {
+                    for at in &line.xs {
+                        left = left.min(*x + *at);
+                        right = right.max(*x + *at);
+                    }
+                } else {
+                    for cl in &line.vis {
+                        left = left.min(*x + cl.x);
+                        right = right.max(*x + cl.x + cl.w);
+                    }
+                }
+            }
+            let bottom = item_bottom(*y, para, *l0, *l1)?;
+            (left.is_finite() && right.is_finite())
+                .then_some(Rect::new(left, *y, (right - left).max(0.0), (bottom - *y).max(0.0)))
+                .or_else(|| Some(Rect::new(*x, *y, 0.0, (bottom - *y).max(0.0))))
+                .map(|mut r| {
+                    r.y = *y;
+                    r.h = (bottom - *y).max(0.0);
+                    r
+                })
+        }
+        Placed::Image { rect, spin, .. } | Placed::Shape { rect, spin, .. } | Placed::Graphic { rect, spin, .. } => Some(spin.bounds(*rect)),
+        Placed::Object { rect, spin, .. } => Some(spin.bounds(*rect)),
+        Placed::Cell { rect, .. } | Placed::Fill { rect, .. } => Some(*rect),
+        Placed::Rule { x0, y0, x1, y1, .. } => Some(Rect::new(x0.min(*x1), y0.min(*y1), (x1 - x0).abs(), (y1 - y0).abs())),
+    }
+}
+
+fn diagnostic(page: usize, element: OverflowElement, axis: OverflowAxis, severity: OverflowSeverity, bounds: Rect) -> OverflowDiagnostic {
+    OverflowDiagnostic { page, element, axis, severity, bounds }
+}
+
+fn horizontal_outside(bounds: Rect, area: Rect) -> bool {
+    bounds.x < area.x - 0.5 || bounds.right() > area.right() + 0.5
+}
+
+fn vertical_outside(bounds: Rect, area: Rect) -> bool {
+    bounds.y < area.y - 0.5 || bounds.bottom() > area.bottom() + 0.5
+}
+
+fn page_edge_severity(bounds: Rect, page: &Page) -> OverflowSeverity {
+    if horizontal_outside(bounds, Rect::new(0.0, 0.0, page.w, page.h)) || vertical_outside(bounds, Rect::new(0.0, 0.0, page.w, page.h)) {
+        OverflowSeverity::Clipped
+    } else {
+        OverflowSeverity::Warning
+    }
+}
+
+fn paragraph_area(section: Option<&SectionProps>, page: &Page, x: f32) -> Rect {
+    let Some(section) = section else { return page.body };
+    let columns = section.column_boxes();
+    let nearest = columns.iter().min_by(|a, b| (page.body.x + a.0 - x).abs().total_cmp(&(page.body.x + b.0 - x).abs()));
+    nearest.map_or(page.body, |(offset, width)| Rect::new(page.body.x + offset, page.body.y, *width, page.body.h))
+}
+
+fn analyze_overflows(doc: &Document, pages: &[Page], box_clips: &[(StoryRef, Path, usize, OverflowAxis)]) -> Vec<OverflowDiagnostic> {
+    let mut overflows = Vec::new();
+    let sections = doc.sections();
+    for (page_index, page) in pages.iter().enumerate() {
+        let section = sections.get(page.section).map(|(_, section)| *section);
+        let cells: Vec<_> = page
+            .items
+            .iter()
+            .chain(&page.header)
+            .chain(&page.footer)
+            .filter_map(|item| match item {
+                Placed::Cell { rect, table, row, cell, story } => Some((rect, table, *row, *cell, *story)),
+                _ => None,
+            })
+            .collect();
+        for item in page.items.iter().chain(&page.header).chain(&page.footer) {
+            match item {
+                Placed::Lines { story: StoryRef::Body, path, x, .. } if path.0.len() == 1 => {
+                    let Some(bounds) = placed_bounds(item) else { continue };
+                    let area = paragraph_area(section, page, *x);
+                    if horizontal_outside(bounds, area) {
+                        overflows.push(diagnostic(
+                            page_index,
+                            OverflowElement::BodyText,
+                            OverflowAxis::Horizontal,
+                            page_edge_severity(bounds, page),
+                            bounds,
+                        ));
+                    }
+                    if vertical_outside(bounds, page.body) {
+                        overflows.push(diagnostic(
+                            page_index,
+                            OverflowElement::BodyText,
+                            OverflowAxis::Vertical,
+                            page_edge_severity(bounds, page),
+                            bounds,
+                        ));
+                    }
+                }
+                Placed::Lines { story, path, .. } => {
+                    let Some(bounds) = placed_bounds(item) else { continue };
+                    for (cell_bounds, table_path, row, cell, cell_story) in &cells {
+                        let n = table_path.0.len();
+                        if *story == *cell_story
+                            && path.0.starts_with(&table_path.0)
+                            && path.0.get(n) == Some(&(*row as u32))
+                            && path.0.get(n + 1) == Some(&(*cell as u32))
+                        {
+                            if horizontal_outside(bounds, **cell_bounds) {
+                                overflows.push(diagnostic(
+                                    page_index,
+                                    OverflowElement::TableCell,
+                                    OverflowAxis::Horizontal,
+                                    page_edge_severity(bounds, page),
+                                    bounds,
+                                ));
+                            }
+                            if vertical_outside(bounds, **cell_bounds) {
+                                overflows.push(diagnostic(
+                                    page_index,
+                                    OverflowElement::TableCell,
+                                    OverflowAxis::Vertical,
+                                    page_edge_severity(bounds, page),
+                                    bounds,
+                                ));
+                            }
+                        }
+                    }
+                }
+                Placed::Cell { rect, table, story, .. } => {
+                    let floating = doc.table(*story, table).is_some_and(|t| t.props.float.is_some());
+                    let area = if floating || *story != StoryRef::Body { Rect::new(0.0, 0.0, page.w, page.h) } else { page.body };
+                    if horizontal_outside(*rect, area) {
+                        let severity = if floating { OverflowSeverity::Clipped } else { page_edge_severity(*rect, page) };
+                        overflows.push(diagnostic(page_index, OverflowElement::Table, OverflowAxis::Horizontal, severity, *rect));
+                    }
+                    if vertical_outside(*rect, area) {
+                        let severity = if floating { OverflowSeverity::Clipped } else { page_edge_severity(*rect, page) };
+                        overflows.push(diagnostic(page_index, OverflowElement::Table, OverflowAxis::Vertical, severity, *rect));
+                    }
+                }
+                Placed::Object { rect, spin, story: StoryRef::Body, path, off, text_box, wrap, .. } => {
+                    let bounds = spin.bounds(*rect);
+                    let object = doc.para(StoryRef::Body, path).and_then(|p| p.object_at(*off));
+                    let element = if text_box.is_some() {
+                        OverflowElement::TextBox
+                    } else if matches!(object, Some(InlineObject::Image { .. })) {
+                        OverflowElement::Image
+                    } else {
+                        OverflowElement::FloatingObject
+                    };
+                    // A page- or margin-positioned floating object may intentionally cross the
+                    // text margins (including a full-bleed image). Warn only when it crosses the
+                    // physical page edge. Inline objects belong to the text flow and use body bounds.
+                    let area = if *wrap == Wrap::Inline { page.body } else { Rect::new(0.0, 0.0, page.w, page.h) };
+                    if horizontal_outside(bounds, area) {
+                        let severity = if *wrap == Wrap::Inline { page_edge_severity(bounds, page) } else { OverflowSeverity::Clipped };
+                        overflows.push(diagnostic(page_index, element, OverflowAxis::Horizontal, severity, bounds));
+                    }
+                    if vertical_outside(bounds, area) {
+                        let severity = if *wrap == Wrap::Inline { page_edge_severity(bounds, page) } else { OverflowSeverity::Clipped };
+                        overflows.push(diagnostic(page_index, element, OverflowAxis::Vertical, severity, bounds));
+                    }
+                    if text_box.is_some() {
+                        for (_, _, _, axis) in box_clips.iter().filter(|(s, p, o, _)| *s == StoryRef::Body && p == path && *o == *off) {
+                            let severity = if *axis == OverflowAxis::Vertical { OverflowSeverity::Clipped } else { page_edge_severity(bounds, page) };
+                            overflows.push(diagnostic(page_index, OverflowElement::TextBox, *axis, severity, bounds));
+                        }
+                    }
+                }
+                Placed::Object { rect, spin, story, path, off, text_box: Some(_), .. } => {
+                    let bounds = spin.bounds(*rect);
+                    for (_, _, _, axis) in box_clips.iter().filter(|(s, p, o, _)| s == story && p == path && *o == *off) {
+                        let severity = if *axis == OverflowAxis::Vertical { OverflowSeverity::Clipped } else { page_edge_severity(bounds, page) };
+                        overflows.push(diagnostic(page_index, OverflowElement::TextBox, *axis, severity, bounds));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    overflows.sort_by(|a, b| {
+        a.page
+            .cmp(&b.page)
+            .then((a.element as u8).cmp(&(b.element as u8)))
+            .then((a.axis as u8).cmp(&(b.axis as u8)))
+            .then((a.severity as u8).cmp(&(b.severity as u8)))
+            .then_with(|| a.bounds.x.total_cmp(&b.bounds.x))
+            .then_with(|| a.bounds.y.total_cmp(&b.bounds.y))
+    });
+    overflows.dedup_by(|a, b| a.page == b.page && a.element == b.element && a.axis == b.axis && a.severity == b.severity && a.bounds == b.bounds);
+    overflows
 }
 
 impl NoteBox {
@@ -1467,6 +1709,7 @@ fn layout_pass(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions, re
         numbers: HashMap::new(),
         eq_count: 0,
         boxes: wordcraft_doc::BoxBudget::default(),
+        box_clips: Vec::new(),
     };
     let sections = doc.sections();
     let web = opts.view != ViewMode::Print;
@@ -1666,29 +1909,12 @@ fn layout_pass(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions, re
             }
         }
     }
-    let overflow_pages = pages
-        .iter()
-        .enumerate()
-        .filter_map(|(page, pg)| {
-            pg.items
-                .iter()
-                .any(|item| {
-                    let body_content = match item {
-                        Placed::Lines { story, .. }
-                        | Placed::Image { story, .. }
-                        | Placed::Shape { story, .. }
-                        | Placed::Graphic { story, .. }
-                        | Placed::Object { story, .. }
-                        | Placed::Cell { story, .. } => *story == StoryRef::Body,
-                        Placed::Fill { .. } | Placed::Rule { .. } => false,
-                    };
-                    body_content && v_span(item).1 > pg.body.bottom() + 0.5
-                })
-                .then_some(page)
-        })
-        .collect();
+    let overflows = analyze_overflows(doc, &pages, &ctx.box_clips);
+    let mut overflow_pages: Vec<usize> = overflows.iter().filter(|o| o.axis == OverflowAxis::Vertical).map(|o| o.page).collect();
+    overflow_pages.sort_unstable();
+    overflow_pages.dedup();
     let note_heights = pb.page_note_heights.clone();
-    (DocLayout { pages, overflow_pages, column_balance_skipped, index, ms: now_ms() - t0, text_boxes: ctx.boxes.total() }, note_heights)
+    (DocLayout { pages, overflow_pages, overflows, column_balance_skipped, index, ms: now_ms() - t0, text_boxes: ctx.boxes.total() }, note_heights)
 }
 
 fn item_bottom(y: f32, para: &ParaLayout, l0: usize, l1: usize) -> Option<f32> {
@@ -1985,11 +2211,25 @@ fn place_objects(
                     continue;
                 }
                 let blocks = ctx.doc.parts.get(&id).map(|p| p.blocks.clone()).unwrap_or_default();
-                let inner = layout_box(ctx, StoryRef::Part(id), &blocks, &[], (rect.w - 2.0 * BOX_INSET_X).max(12.0), None, depth + 1, None).items;
+                let inner_width = (rect.w - 2.0 * BOX_INSET_X).max(12.0);
+                let inner_height = (rect.h - 2.0 * BOX_INSET_Y).max(0.0);
+                let inner = layout_box(ctx, StoryRef::Part(id), &blocks, &[], inner_width, None, depth + 1, None);
+                let content_bottom = inner
+                    .height
+                    .max(inner.floats_bottom)
+                    .max(inner.items.iter().filter_map(placed_bounds).map(|bounds| bounds.bottom()).fold(0.0, f32::max));
+                let horizontal = inner.items.iter().filter_map(placed_bounds).any(|b| b.x < -0.5 || b.right() > inner_width + 0.5);
+                let vertical = content_bottom > inner_height + 0.5;
+                if horizontal {
+                    ctx.box_clips.push((story, Path(path.to_vec()), c.start, OverflowAxis::Horizontal));
+                }
+                if vertical {
+                    ctx.box_clips.push((story, Path(path.to_vec()), c.start, OverflowAxis::Vertical));
+                }
                 ctx.boxes.leave();
                 let layer = if float.wrap == Wrap::BehindText { &mut behind } else { &mut front };
                 // Text that doesn't fit inside the margins is hidden, as in Word.
-                for mut it in fit_box(inner, rect.h - 2.0 * BOX_INSET_Y) {
+                for mut it in fit_box(inner.items, inner_height) {
                     it.translate(rect.x + BOX_INSET_X, rect.y + BOX_INSET_Y);
                     layer.push(it);
                 }

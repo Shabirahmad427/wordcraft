@@ -1156,3 +1156,4 @@
 	Save Original Package	元のパッケージを保存
 	Page overflow	ページのはみ出し
 	Content exceeds page area on {count} page(s).	{count} ページでコンテンツがページ領域を超えています。
+	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	最初の問題: {element} が {page} ページで {axis} の境界を超えています。内容は保持されています。クリックすると移動します。

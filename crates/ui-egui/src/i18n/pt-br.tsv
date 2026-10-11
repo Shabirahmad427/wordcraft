@@ -1168,3 +1168,4 @@
 	Save Original Package	Salvar pacote original
 	Page overflow	Conteúdo fora da página
 	Content exceeds page area on {count} page(s).	O conteúdo ultrapassa a área da página em {count} página(s).
+	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	Primeiro problema: {element} ultrapassa o limite {axis} na página {page}. O conteúdo foi preservado. Clique para ir até lá.
