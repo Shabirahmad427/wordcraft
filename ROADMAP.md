@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (horizontal/vertical overflow diagnostics for body text, tables, objects and text boxes; independent Word comparison remains open) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (integrated upstream main through `e4b7d15`, including source version 0.5.0; retained fork recovery, package-preservation and pagination changes) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and
 agent control. This page is the summary; the assessment is
@@ -40,14 +40,14 @@ owner actions (push to `github.com/storytold/wordcraft` and enable the release s
 
 | Area | Status | Parity |
 |---|---|---|
-| Ribbon/menu catalog coverage | **390 / 431 (90.5%)** | measured (`cargo xtask parity` → [`docs/parity-checklist.md`](docs/parity-checklist.md)) |
+| Ribbon/menu catalog coverage | **402 / 434 (92.6%)** | measured (`cargo xtask parity` → [`docs/parity-checklist.md`](docs/parity-checklist.md)) |
 | **Feature breadth** (weighted, incl. dialog options, styles, languages beyond the ribbon) | **~80%** | estimated |
 | **Ready for real work** (full target) | **~60%** (55–63%) | estimated, additive weighted sum over the dimensions |
 | **Mainstream practitioner** | **~55%** | estimated: weekly-work depth × discounts for interaction (×0.93), stability (×0.90), file exchange (×0.90) |
 | **Essentials user** | **~63%** | estimated: core-feature depth × discounts for launch (×0.90), discoverability (×0.95), opening received files (×0.92) |
 | Remaining to **beta** | **~150–230 h** of Opus 5.5 agent wall-clock (gaps #1–#7) | estimated |
 | Remaining to **full parity** with Word desktop | **~750–1,250 h** (70–80% parallelizable) | estimated |
-| Commands / tests / code | 431 commands · 852 tests + 10 property blocks · ~88,700 lines of Rust | measured (source) |
+| Commands / tests / code | 433 commands · 855 tests + 10 property blocks · ~88,700 lines of Rust | measured (source) |
 | Releases | v0.4.0 (2026-10-10): signed macOS universal DMG, Windows MSI x64/x86/arm64, Linux AppImage/deb/rpm/Flatpak x86_64 + aarch64, FreeBSD, web | measured |
 
 Hours are calibrated from this repo's PRs (equations #191: ~9.7k lines in ~5 h; `.doc` reader
@@ -209,3 +209,12 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 - Layout now exposes typed, page-specific horizontal and vertical diagnostics with severity and offending bounds. It checks body paragraphs against the active column, table extents against the body, table-cell text against allocated cell bounds, inline images and floating objects against their intended area, and text-box content before its existing fit pass. Horizontal text-box overflow is a warning; vertical content removed by the fit pass is marked clipped.
 - Page/margin-positioned floating objects are compared with the physical page edge, so artwork intentionally extending into margins or covering the full page is not flagged as body overflow. Off-page objects remain visible as warnings. The UI keeps a localized status warning; its tooltip names the first element and axis, preserves the content assurance and jumps to the affected page.
 - No object is moved, resized or discarded. Text-box clipping remains the existing rendering behavior but is now explicitly reported. Diagnostics are recomputed after edits, Undo/redo, recovery and DOCX reopen; a PDF export and raster self-comparison regression passed. Stroke/shadow extents, note tables, and some deeply nested or unsupported drawing geometry need further audit. No Word reference output was available, and no pagination parity claim is made.
+
+## Upstream integration — WordCraft 0.5.0 source (2026-10-10)
+
+- Merged all **15 upstream commits** after shared base `79b6f33`, through `e4b7d15`. This includes formatting revisions; DOCX chart, SmartArt and OLE save support; freeform pen/pencil/highlighter drawing and table drawing; font search; Columns, Symbol, Field, Tabs, Borders and Shading dialogs; Estonian localization; and overflow/crash fixes.
+- Updated `quick-xml` from 0.38 to 0.41 for the upstream namespace-declaration denial-of-service fix. The fork’s preservation scanner now uses 0.41 namespace resolution and normalized attribute decoding. It continues to preserve extension attributes, content controls, custom XML, embedded data and unknown package parts through its guarded-save rules.
+- Upstream main’s manifest and crate metadata say **0.5.0**, but the upstream GitHub Releases page still identifies **v0.4.0** as the latest published release. The merged build is therefore a tested source build, not a claim that upstream has published a 0.5.0 binary release.
+- Merge conflict resolutions retained both sides’ tests and UI translations. DOCX scanner state now carries both package-wide preservation and the upstream embedded-part manifest; layout rendering retains upstream freeform geometry together with the fork’s overflow diagnostics and shape story references.
+- Merge validation: all six `cargo xtask ci` gates passed (fmt, Clippy, workspace tests, assets, layers, WASM); 1,137 tests passed, none failed (one ignored). Linux GUI and CLI release builds passed. A chart recovery regression found during the full suite is fixed by serializing the inert embedded drawing source and relationship references in recovery snapshots. The upstream Estonian catalog was completed for the new command labels.
+- Integration merge: pending commit. Upstream base tip: `e4b7d15`; 15 upstream commits integrated from shared base `79b6f33`. No Microsoft Word reference output was used. Verification is Linux-only; no Windows/macOS native build or print-driver test was run.

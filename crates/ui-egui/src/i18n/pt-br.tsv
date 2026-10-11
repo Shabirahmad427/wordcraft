@@ -121,6 +121,29 @@
 	Border Painter	Pincel de bordas
 	Border\nPainter	Pincel\nde bordas
 	Borders	Bordas
+	Tab stop position:	Posição da tabulação:
+	Default tab stops:	Tabulações padrão:
+	Tab stops to be cleared:	Tabulações a remover:
+	All	Todas
+	Decimal	Decimal
+	Bar	Barra
+	Leader	Preenchimento
+	Set	Definir
+	Page Border	Borda da página
+	Apply to:	Aplicar a:
+	Whole document	Documento inteiro
+	This section	Esta seção
+	Fill	Cor de fundo
+	Setting:	Tipo:
+	3-D	3D
+	Custom	Personalizado
+	Style:	Estilo:
+	Dot dash	Traço e ponto
+	Triple	Tripla
+	Between	Entre parágrafos
+	Borders and Shading	Bordas e sombreamento
+	Tabs…	Tabulações…
+	Borders and Shading…	Bordas e sombreamento…
 	Bottom Border	Borda inferior
 	Bottom Margin	Margem inferior
 	Bottom of Page	Fim da página
@@ -160,6 +183,7 @@
 	Citations & Bibliography	Citações e bibliografia
 	Clear	Limpar
 	Clear All Formatting	Limpar toda a formatação
+	Click a border between two cells to merge them. Esc stops.	Clique em uma borda entre duas células para mesclá-las. Esc encerra.
 	Clipboard	Área de transferência
 	Clipboard Pane	Painel da área de transferência
 	Clipboard Items	Itens da área de transferência
@@ -231,6 +255,8 @@
 	Delete Style	Excluir estilo
 	Delete Table	Excluir tabela
 	Design	Design
+	Drag a rectangle to draw a table, or a line across cells to split them. Esc stops.	Arraste um retângulo para desenhar uma tabela, ou uma linha sobre as células para dividi-las. Esc encerra.
+	Draw Table	Desenhar tabela
 	Edit Comment	Editar comentário
 	Left Margin	Margem esquerda
 	Indents and Spacing	Recuos e espaçamento
@@ -1099,6 +1125,92 @@
 	Leave the equation (Esc)	Sair da equação (Esc)
 	Preview	Visualizar
 	getartcraft.com/apps/wordcraft	getartcraft.com/apps/wordcraft
+	Draw Ink	Desenhar tinta
+	Erase Ink	Apagar tinta
+	Hide Ink	Ocultar tinta
+	Hide\nInk	Ocultar\ntinta
+	Pens	Canetas
+	Thickness	Espessura
+
+# Columns, Symbol and Field dialogs (#321).
+	(All)	(Todos)
+	(none)	(nenhum)
+	(normal text)	(texto normal)
+	1/4 Em Space	Espaço de 1/4 de eme
+	A mail merge field	Um campo de mesclagem
+	A numbered sequence (figures, tables…)	Uma sequência numerada (figuras, tabelas…)
+	A table of contents	Um sumário
+	Categories:	Categorias:
+	Character	Caractere
+	Character code:	Código do caractere:
+	Col #:	Col. nº:
+	Copyright	Copyright
+	Date and Time	Data e hora
+	Date formats:	Formatos de data:
+	Description:	Descrição:
+	Document Information	Informações do documento
+	Double Closing Quote	Aspas duplas de fechamento
+	Double Opening Quote	Aspas duplas de abertura
+	Ellipsis	Reticências
+	Em Dash	Travessão
+	En Dash	Meia-risca
+	Em Space	Espaço eme
+	En Space	Espaço ene
+	Equal column width	Colunas de largura igual
+	Field Codes	Códigos de campo
+	Field code:	Código de campo:
+	Field codes:	Códigos de campo:
+	Field name:	Nome do campo:
+	Field names:	Nomes de campo:
+	Field properties	Propriedades do campo
+	Field…	Campo…
+	Format:	Formato:
+	Hide Codes	Ocultar códigos
+	Index and Tables	Índices e tabelas
+	Line between	Linha entre colunas
+	Links and References	Links e referências
+	Mail Merge	Mala direta
+	More Columns…	Mais colunas…
+	More Symbols…	Mais símbolos…
+	No-Width Non Break	Junção sem largura
+	No-Width Optional Break	Quebra opcional sem largura
+	Paragraph Mark	Marca de parágrafo
+	Pick a field from the list	Escolha um campo
+	Preserve formatting during updates	Preservar a formatação ao atualizar
+	Presets	Predefinições
+	Recently used symbols:	Símbolos usados recentemente:
+	Registered	Registrado
+	Section Mark	Marca de seção
+	Sequence name:	Nome da sequência:
+	Shortcut key:	Tecla de atalho:
+	Single Closing Quote	Aspas simples de fechamento
+	Single Opening Quote	Aspas simples de abertura
+	Spacing:	Espaçamento:
+	Special Characters	Caracteres especiais
+	Subset:	Subconjunto:
+	The time right now	A hora atual
+	When this document was first created	A data em que o documento foi criado
+	When this document was most recently printed	A data em que o documento foi impresso pela última vez
+	When this document was most recently saved	A data em que o documento foi salvo pela última vez
+	The document has no bookmarks yet.	O documento ainda não tem indicadores.
+	Who the document properties name as author	O autor do documento
+	Name of the file this document is saved as	O nome do arquivo do documento
+	Title from the document properties	O título do documento
+	How many pages the whole document has	O número de páginas do documento
+	How many pages this section has	O número de páginas da seção
+	Number of the page the field sits on	O número da página atual
+	Number of the section the field sits in	O número da seção atual
+	How many words the document holds	O número de palavras do documento
+	Page on which a bookmarked passage falls	O número da página de um indicador
+	Copy of the text a bookmark marks	O texto de um indicador
+	This field has no options.	Este campo não tem opções.
+	This font has no characters to show.	Esta fonte não tem caracteres para mostrar.
+	This point forward	Deste ponto em diante
+	The date it is today	A data de hoje
+	Trademark	Marca comercial
+	Type the field's name and its switches, for example PAGE \\* roman.	Digite o nome do campo e suas opções, por exemplo PAGE \\* roman.
+	Width and spacing	Largura e espaçamento
+	from Unicode (hex)	do Unicode (hex)
 	Shape Effects	Efeitos de forma
 	Glow	Brilho
 	Soft Edges	Bordas suaves
@@ -1153,6 +1265,57 @@
 	The password is removed. Save the document to keep the change.	A senha foi removida. Salve o documento para manter a alteração.
 	The passwords don't match.	As senhas não coincidem.
 	Keep the password somewhere safe: without it nobody, WordCraft included, can open the document. Leave both boxes empty to remove the password.	Guarde a senha em um lugar seguro: sem ela, ninguém, nem o WordCraft, consegue abrir o documento. Deixe as duas caixas vazias para remover a senha.
+
+# Interface text routed through translation (#313)
+	Align Top Left	Alinhar acima à esquerda
+	Align Top Center	Alinhar acima ao centro
+	Align Top Right	Alinhar acima à direita
+	Align Center Left	Alinhar ao meio à esquerda
+	Align Center	Alinhar ao centro
+	Align Center Right	Alinhar ao meio à direita
+	Align Bottom Left	Alinhar abaixo à esquerda
+	Align Bottom Center	Alinhar abaixo ao centro
+	Align Bottom Right	Alinhar abaixo à direita
+	{contributors} contributors · {commits} commits	{contributors} colaboradores · {commits} commits
+	{cols}×{rows} Table	Tabela {cols}×{rows}
+	AaBbYyZz	AaBbYyZz ÇçÃã
+	pt	pt
+	Document1	Documento1
+	Username	Nome de usuário
+	Display name	Nome de exibição
+	Real name	Nome real
+	Name	Nome
+	PRs	PRs
+	Commits	Commits
+	First	Primeiro
+	Last	Último
+	Model	Modelo
+	Version	Versão
+	% of all commits	% de todos os commits
+	Lines +/−	Linhas +/−
+	Craft	Artesanal
+	Studio	Estúdio
+	Atelier	Ateliê
+	Darkroom	Câmara escura
+	Gallery	Galeria
+	Sketchbook	Caderno de esboços
+	Change Picture…	Alterar imagem…
+	Font…	Fonte…
+	Paragraph…	Parágrafo…
+	Link…	Link…
+	Size and Crop…	Tamanho e corte…
+	Insert Columns to the Left	Inserir colunas à esquerda
+	Insert Columns to the Right	Inserir colunas à direita
+	Insert Rows Above	Inserir linhas acima
+	Insert Rows Below	Inserir linhas abaixo
+	Mon	Seg
+	Tue	Ter
+	Wed	Qua
+	Sum	Soma
+	North	Norte
+	South	Sul
+	West	Oeste
+	Total	Total
 	Rotation	Rotação
 	Rotation:	Rotação:
 	Rotate Right 90°	Girar 90° para a direita
@@ -1169,3 +1332,4 @@
 	Page overflow	Conteúdo fora da página
 	Content exceeds page area on {count} page(s).	O conteúdo ultrapassa a área da página em {count} página(s).
 	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	Primeiro problema: {element} ultrapassa o limite {axis} na página {page}. O conteúdo foi preservado. Clique para ir até lá.
+	Formatted	Formatado

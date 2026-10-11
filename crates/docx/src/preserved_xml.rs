@@ -99,14 +99,20 @@ pub(crate) fn inspect(bytes: &[u8]) -> Result<Vec<Element>, DocxError> {
                     let attr = attr.map_err(|e| error(e.to_string()))?;
                     if attr.key.as_ref() == b"xmlns" || attr.key.as_ref().starts_with(b"xmlns:") {
                         let key = std::str::from_utf8(attr.key.as_ref()).map_err(|e| error(e.to_string()))?;
-                        let value = attr.unescape_value().map_err(|e| error(e.to_string()))?.into_owned();
+                        let value = attr
+                            .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, reader.decoder())
+                            .map_err(|e| error(e.to_string()))?
+                            .into_owned();
                         check_chars(&value)?;
                         attrs.insert(format!("namespace:{key}"), value);
                         continue;
                     }
-                    let (namespace, local) = reader.resolve_attribute(attr.key);
+                    let (namespace, local) = reader.resolver().resolve_attribute(attr.key);
                     let key = name(namespace, local.as_ref())?;
-                    let value = attr.unescape_value().map_err(|e| error(e.to_string()))?.into_owned();
+                    let value = attr
+                        .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, reader.decoder())
+                        .map_err(|e| error(e.to_string()))?
+                        .into_owned();
                     check_chars(&value)?;
                     if attrs.insert(key, value).is_some() {
                         return Err(error("duplicate expanded XML attribute"));

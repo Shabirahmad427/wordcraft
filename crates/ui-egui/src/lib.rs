@@ -19,12 +19,15 @@ pub mod chrome;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
+pub mod dialogs_insert;
 pub mod dialogs_lists;
+pub mod dialogs_para;
 pub mod equation_tab;
 pub mod file_dialogs;
 pub mod frame;
 pub mod i18n;
 pub mod icons;
+pub mod ink;
 pub mod keys;
 pub mod keytips;
 pub mod mini_toolbar;
@@ -36,6 +39,7 @@ pub mod read_aloud;
 pub mod recovery;
 pub mod ribbon;
 pub mod scroll;
+pub mod table_pen;
 pub mod theme;
 pub mod widgets;
 pub mod window_geometry;
@@ -91,6 +95,8 @@ pub struct UiState {
     pub backstage_page: String,
     pub ribbon_collapsed: bool,
     pub recent: Vec<String>,
+    /// Symbols inserted from the Symbol dialog, most recent first (#321).
+    pub recent_symbols: Vec<dialogs_insert::RecentSymbol>,
     /// Interface theme: light, dark, or follow the OS appearance (#115).
     pub theme: theme::Appearance,
     /// The dark-mode switch `ui.json` held before `theme` (#115): read once to migrate, never written.
@@ -129,6 +135,7 @@ impl Default for UiState {
             backstage_page: "home".into(),
             ribbon_collapsed: false,
             recent: Vec::new(),
+            recent_symbols: Vec::new(),
             theme: theme::Appearance::default(),
             legacy_dark: None,
             nav_tab: "headings".into(),
@@ -371,6 +378,9 @@ impl WordApp {
         }
         if id == "file.autosave" {
             return self.set_autosave(&params);
+        }
+        if let Some(r) = table_pen::toggle(self, id, &params) {
+            return r;
         }
         let ctx = self.ctx.clone();
         if let Some(r) = zotero::command(self, id, &params, ctx.as_ref()) {
@@ -753,13 +763,14 @@ impl WordApp {
         }
     }
 
-    /// Document title for the title bar.
+    /// Document title for the title bar (and the suggested file name). An untitled document is
+    /// named in the interface language, as `Document1` is in English.
     pub fn title_stem(&self) -> String {
         match &self.session.path {
-            Some(p) => p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Document1".into()),
+            Some(p) => p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| tl!("Document1").into()),
             None => {
                 if self.session.doc.core.title.is_empty() {
-                    "Document1".into()
+                    tl!("Document1").into()
                 } else {
                     self.session.doc.core.title.clone()
                 }
@@ -1085,8 +1096,8 @@ fn keeps_everything(name: &str) -> bool {
 /// The dialog a user-run command opens when it lacks the input it needs (scripts and agents get
 /// the command's own error or default instead): Select Recipients and Edit Recipient List without
 /// data, Insert Merge Field without a field, Find Recipient without text, the If and Skip
-/// Record If rules (or Rules with no rule at all) without a field, and Table Properties without
-/// settings.
+/// Record If rules (or Rules with no rule at all) without a field, Table Properties without
+/// settings, and Symbol and Field without a character or code.
 fn input_dialog(id: &str, params: &Value) -> Option<&'static str> {
     let has = |k: &str| params.get(k).is_some_and(|v| !v.is_null());
     let rule = params.get("rule").and_then(Value::as_str).map(str::to_ascii_uppercase);
@@ -1100,8 +1111,15 @@ fn input_dialog(id: &str, params: &Value) -> Option<&'static str> {
         "mailings.editRecipients" if !has("rows") => Some("recipientList"),
         "mailings.insertField" if !has("field") => Some("insertMergeField"),
         "mailings.findRecipient" if !has("text") => Some("findRecipient"),
+        // Symbol without a character and Field without a code show their dialogs (#321).
+        "insert.symbol" if !has("char") => Some("symbol"),
+        "insert.field" if !has("instr") => Some("field"),
         // Table Properties without settings shows the dialog (with settings it applies them).
         "table.properties" if params.as_object().is_none_or(|m| m.is_empty()) => Some("tableProperties"),
+        // Tabs, Borders and Shading, and Page Borders without settings show their dialogs (#320).
+        "para.tabs" if params.as_object().is_none_or(|m| m.is_empty()) => Some("tabs"),
+        "para.borders" if params.as_object().is_none_or(|m| m.is_empty()) => Some("borders"),
+        "design.pageBorders" if params.as_object().is_none_or(|m| m.is_empty()) => Some("pageBorders"),
         // `null` is an answer here: it removes the password.
         "file.encrypt" if params.get("password").is_none() => Some("encryptPassword"),
         // Define New Multilevel List and Track Changes Options without settings show their dialogs.

@@ -1,5 +1,6 @@
 //! [`Document`] → DOCX.
 
+mod embed;
 mod math;
 mod props;
 mod story;
@@ -42,6 +43,14 @@ impl PartRels {
             self.list.push((id.into(), kind.into(), target.into(), external));
         }
         Ok(())
+    }
+    /// Add a relationship with a given id (the id a kept part's markup uses); a repeated id is
+    /// ignored. Not to be mixed with [`PartRels::add`] in one part.
+    pub fn add_with_id(&mut self, id: &str, kind: &str, target: &str, external: bool) {
+        if self.list.iter().any(|(i, ..)| i == id) {
+            return;
+        }
+        self.list.push((id.to_string(), kind.to_string(), target.to_string(), external));
     }
     fn is_empty(&self) -> bool {
         self.list.is_empty()
@@ -96,6 +105,8 @@ pub(crate) struct Writer<'d> {
     used_media: std::collections::BTreeSet<String>,
     /// Bounds writing text boxes inside text boxes (as layout shows them).
     boxes: wordcraft_doc::BoxBudget,
+    /// Charts, diagrams and OLE objects kept from a file: the parts they need.
+    embeds: embed::EmbedWriter<'d>,
 }
 
 const CT_WML: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.";
@@ -144,8 +155,10 @@ pub(crate) fn write_native(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, Do
         toc_end_here: false,
         used_media: Default::default(),
         boxes: wordcraft_doc::BoxBudget::default(),
+        embeds: embed::EmbedWriter::new(doc),
     };
     wr.assign_media();
+    wr.embeds.reserve_media(wr.media_files.values());
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
     let mut overrides: Vec<(String, String)> = Vec::new();
     let mut rels = PartRels::default();
@@ -332,6 +345,11 @@ pub(crate) fn write_native(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, Do
             media_types.insert(ext, content_type_for(file));
             entries.push((format!("word/media/{file}"), bytes.to_vec()));
         }
+    }
+
+    // Parts of charts, diagrams and OLE objects kept from a file, as the objects written need them.
+    for (name, bytes, ct, prels) in std::mem::take(&mut wr.embeds.parts) {
+        push_part(&mut entries, &mut overrides, &name, bytes, &ct, prels);
     }
 
     // The macro project and the parts it relates to (VBA data, signatures…), verbatim. A
@@ -591,7 +609,7 @@ fn styles_xml(doc: &Document) -> Vec<u8> {
     w.close("w:rPrDefault");
     w.open("w:pPrDefault", &[]);
     w.open("w:pPr", &[]);
-    props::ppr_inner(&mut w, &s.default_para, false);
+    props::ppr_inner(&mut w, &s.default_para, false, None);
     w.close("w:pPr");
     w.close("w:pPrDefault");
     w.close("w:docDefaults");
@@ -646,7 +664,7 @@ fn style_xml(w: &mut W, st: &Style) {
     }
     if !st.para.is_empty() && st.kind != StyleKind::Character {
         w.open("w:pPr", &[]);
-        props::ppr_inner(w, &st.para, false);
+        props::ppr_inner(w, &st.para, false, None);
         w.close("w:pPr");
     }
     if props::has_rpr(&st.chr) && st.kind != StyleKind::Numbering {

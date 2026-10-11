@@ -118,8 +118,13 @@ fn missing_malformed_and_colliding_preserved_data_blocks_export() {
 fn generated_part_collision_blocks_save_and_chart_ids_remain_unique() {
     let mut files = fixture("scientific");
     replace(&mut files, "word/charts/_rels/chart1.xml.rels", "style1.xml", "../theme/theme1.xml");
-    let doc = wordcraft_docx::read(&archive(&files)).unwrap();
-    assert!(wordcraft_docx::write(&doc).is_err());
+    let bytes = archive(&files);
+    let mut doc = wordcraft_docx::read(&bytes).unwrap();
+    assert_eq!(wordcraft_docx::write(&doc).unwrap(), bytes, "a guarded no-op preserves the target and every package part");
+    doc.insert_text(&wordcraft_doc::Pos::body(0, 0), "Edit: ", &Default::default()).unwrap();
+    let edited = unpack(&wordcraft_docx::write(&doc).unwrap());
+    assert!(text(&edited, "word/charts/_rels/chart1.xml.rels").contains("../theme/theme1.xml"));
+    assert_eq!(edited.get("word/theme/theme1.xml"), files.get("word/theme/theme1.xml"));
     let mut files = fixture("scientific");
     replace(&mut files, "word/document.xml", "</w:p>", &format!("{}</w:p>", drawing("originalChart", false).replace("id=\"1\"", "id=\"2\"")));
     let doc = wordcraft_docx::read(&archive(&files)).unwrap();

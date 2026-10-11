@@ -84,6 +84,12 @@ pub struct ViewState {
     pub track_changes_pane: bool,
     /// Check spelling and grammar as you type.
     pub proofing: bool,
+    /// Review › Hide Ink: ink strokes aren't shown on screen (they stay in the document).
+    #[serde(default)]
+    pub hide_ink: bool,
+    /// Draw tab: the tool dragging on the page uses, and each pen's colour and thickness.
+    #[serde(default)]
+    pub draw: crate::cmd::draw::DrawState,
 }
 
 impl Default for ViewState {
@@ -109,6 +115,8 @@ impl Default for ViewState {
             show_markup: true,
             track_changes_pane: false,
             proofing: true,
+            hide_ink: false,
+            draw: Default::default(),
         }
     }
 }
@@ -730,6 +738,10 @@ impl Session {
         match &result {
             Ok(_) => {
                 if spec.mutates {
+                    // Formatting changed while tracking becomes a formatting revision.
+                    if let Some((before, ..)) = &before_doc {
+                        crate::cmd::fmt_revisions::record(self, id, before);
+                    }
                     self.touch();
                     self.doc.ensure_nonempty();
                     self.doc.prune_text_boxes();

@@ -100,6 +100,8 @@ pub enum Placed {
         fill: Option<Rgb>,
         stroke: Option<Rgb>,
         stroke_width: f32,
+        /// A freeform's paths (ink strokes among them).
+        freeform: Option<Arc<wordcraft_doc::freeform::Freeform>>,
         effects: wordcraft_doc::effects::ShapeEffects,
         spin: Spin,
     },
@@ -2057,8 +2059,18 @@ fn float_items(o: &InlineObject, rect: Rect, outer: (Spin, Point), story: StoryR
         InlineObject::Image { media, crop, .. } => {
             vec![Placed::Image { rect, media: media.clone(), crop: *crop, story, path: Path(path.to_vec()), off, spin }]
         }
-        InlineObject::Shape { kind, fill, stroke, stroke_width, effects, .. } => {
-            vec![Placed::Shape { rect, story, kind: *kind, fill: *fill, stroke: *stroke, stroke_width: *stroke_width, effects: *effects, spin }]
+        InlineObject::Shape { kind, fill, stroke, stroke_width, effects, freeform, .. } => {
+            vec![Placed::Shape {
+                rect,
+                story,
+                kind: *kind,
+                fill: *fill,
+                stroke: *stroke,
+                stroke_width: *stroke_width,
+                effects: *effects,
+                freeform: freeform.clone(),
+                spin,
+            }]
         }
         InlineObject::Graphic { graphic, .. } => {
             vec![Placed::Graphic { rect, graphic: graphic.clone(), story, path: Path(path.to_vec()), off, spin }]
@@ -2419,8 +2431,8 @@ fn place_para(ctx: &mut Ctx, pb: &mut PageBuilder, p: &Paragraph, block: usize, 
         {
             for li in l0..l1 {
                 let Some(line) = pl.lines.get(li).filter(|l| !l.beside) else { continue };
-                pb.line_no += 1;
-                let n = pb.line_no + ln.start.saturating_sub(1);
+                pb.line_no = pb.line_no.saturating_add(1);
+                let n = pb.line_no.saturating_add(ln.start.saturating_sub(1));
                 if ln.count_by > 1 && !n.is_multiple_of(ln.count_by) {
                     continue;
                 }

@@ -3,6 +3,8 @@
 mod chart;
 mod diagram;
 mod drawing_color;
+mod embed;
+mod freeform;
 mod math;
 mod props;
 mod story;
@@ -20,7 +22,7 @@ use wordcraft_doc::styles::{Style, StyleKind, StyleSheet, TableStyleParts};
 use wordcraft_doc::{Block, Blocks, Comment, Document, InlineObject, PartKind, Revision, RevisionKind};
 
 use crate::DocxError;
-use crate::package::{ContentTypes, MAX_VBA_RELATED, Package, Rels, VBA_PROJECT_PART, VBA_RELATED, rel_is, rt};
+use crate::package::{ContentTypes, EMBEDDED_PARTS, EmbeddedManifest, MAX_VBA_RELATED, Package, Rels, VBA_PROJECT_PART, VBA_RELATED, rel_is, rt};
 use crate::units::{flag, int, on_off, tw, u32_of};
 use crate::xml::El;
 pub(crate) use props::PropCtx;
@@ -60,6 +62,12 @@ pub(crate) struct Reader<'p> {
     graphic_budget: usize,
     opaque: crate::opaque::Preservation,
     preservation_error: Option<DocxError>,
+    /// The main document part’s name.
+    main: String,
+    /// The package’s content types, read when first needed.
+    content_types: Option<ContentTypes>,
+    /// Parts kept for charts, diagrams and OLE objects (see `embed`).
+    embedded: EmbeddedManifest,
 }
 
 /// Read a `.docx` package.
@@ -110,6 +118,9 @@ fn read_impl(bytes: &[u8], preserve: bool) -> Result<Document, DocxError> {
         graphic_budget: MAX_GRAPHIC_WORK,
         opaque: Default::default(),
         preservation_error: None,
+        main: main.clone(),
+        content_types: None,
+        embedded: EmbeddedManifest::default(),
     };
     r.pc.major_font = r.doc.settings.major_font.clone();
     r.pc.minor_font = r.doc.settings.minor_font.clone();
@@ -191,6 +202,10 @@ fn read_impl(bytes: &[u8], preserve: bool) -> Result<Document, DocxError> {
     }
     r.opaque.preserve(&pkg, &main, &mut r.doc)?;
     crate::custom_xml::read(&pkg, &rels, &main, &mut r.doc)?;
+    if !r.embedded.parts.is_empty() {
+        let manifest = r.embedded.to_bytes();
+        r.doc.passthrough.insert(EMBEDDED_PARTS.into(), Arc::new(manifest));
+    }
     let mut doc = r.doc;
     doc.ensure_nonempty();
     if preserve {
@@ -272,7 +287,8 @@ impl Reader<'_> {
     /// content types (see [`VBA_RELATED`]). Parts outside `word/`, relationship parts, the project
     /// itself and missing targets are skipped (logged); at most [`MAX_VBA_RELATED`] are kept.
     fn read_vba_related(&mut self, project: &str) {
-        let types = ContentTypes::read(self.pkg);
+        let pkg = self.pkg;
+        let types = self.content_types.get_or_insert_with(|| ContentTypes::read(pkg));
         let mut manifest = String::new();
         let mut kept = 0usize;
         for rel in self.pkg.rels(project).list.iter().filter(|r| !r.external) {

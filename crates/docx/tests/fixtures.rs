@@ -422,10 +422,21 @@ fn chart_and_diagram_drawings_are_graphic_objects() {
     };
     let body = format!(
         "<w:p>{}{}</w:p>",
-        drawing("http://schemas.openxmlformats.org/drawingml/2006/chart", ""),
+        drawing(
+            "http://schemas.openxmlformats.org/drawingml/2006/chart",
+            r#"<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rIdChart"/>"#
+        ),
         drawing("http://schemas.openxmlformats.org/drawingml/2006/diagram", r#"<a:blip r:embed="rIdImg"/>"#)
     );
-    let bytes = docx(&body, &[("rIdImg", "image", "media/pic.png")], &[("word/media/pic.png", "image bytes")]);
+    let types = format!(
+        r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/charts/chart1.xml" ContentType="{CT_CHART}"/></Types>"#
+    );
+    let chart_xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart/></c:chartSpace>"#;
+    let bytes = docx(
+        &body,
+        &[("rIdImg", "image", "media/pic.png"), ("rIdChart", "chart", "charts/chart1.xml")],
+        &[("[Content_Types].xml", &types), ("word/charts/chart1.xml", chart_xml), ("word/media/pic.png", "image bytes")],
+    );
     let d = wordcraft_docx::read(&bytes).unwrap();
     let p = paras(&d);
     assert_eq!(p[0].objects.len(), 2);
@@ -704,6 +715,195 @@ fn hostile_vml_style_values_stay_finite() {
     assert_eq!((float.h_align, float.dist, float.dist_top), (None, 0.0, 1584.0));
 }
 
+// ---- charts and OLE objects written back (#319) ----
+
+const CHART_XML: &str = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart><c:plotArea><c:barChart><c:ser><c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart></c:plotArea></c:chart><c:externalData r:id="rId1"><c:autoUpdate val="0"/></c:externalData></c:chartSpace>"#;
+/// Stands in for the chart's workbook: opaque bytes, never opened.
+const WORKBOOK: &str = "PK\u{3}\u{4} not really a workbook";
+const COLORS_XML: &str = r#"<cs:colorStyle xmlns:cs="http://schemas.microsoft.com/office/drawing/2012/chartStyle" meth="cycle" id="10"/>"#;
+const CT_CHART: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+const CT_XLSX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+/// A package holding one inline chart (3 × 1.5 in) with its workbook and colour style parts.
+fn chart_docx() -> Vec<u8> {
+    let body = r#"<w:p><w:r><w:t>Sales</w:t></w:r><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="2743200" cy="1371600"/><wp:docPr id="1" name="Chart 1"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rId7"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+    let chart_rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/package" Target="../embeddings/Microsoft_Excel_Worksheet.xlsx"/><Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2011/relationships/chartColorStyle" Target="colors1.xml"/></Relationships>"#;
+    let types = format!(
+        r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="xlsx" ContentType="{CT_XLSX}"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/charts/chart1.xml" ContentType="{CT_CHART}"/><Override PartName="/word/charts/colors1.xml" ContentType="application/vnd.ms-office.chartcolorstyle+xml"/></Types>"#
+    );
+    docx(
+        body,
+        &[("rId7", "chart", "charts/chart1.xml")],
+        &[
+            ("[Content_Types].xml", &types),
+            ("word/charts/chart1.xml", CHART_XML),
+            ("word/charts/_rels/chart1.xml.rels", chart_rels),
+            ("word/charts/colors1.xml", COLORS_XML),
+            ("word/embeddings/Microsoft_Excel_Worksheet.xlsx", WORKBOOK),
+        ],
+    )
+}
+
+/// The entries of a zip, by name.
+fn unzip(bytes: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>> {
+    use std::io::Read;
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut out = std::collections::BTreeMap::new();
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).unwrap();
+        let mut b = Vec::new();
+        f.read_to_end(&mut b).unwrap();
+        out.insert(f.name().to_string(), b);
+    }
+    out
+}
+
+fn text(files: &std::collections::BTreeMap<String, Vec<u8>>, name: &str) -> String {
+    String::from_utf8(files.get(name).unwrap_or_else(|| panic!("no {name} in {:?}", files.keys())).clone()).unwrap()
+}
+
+/// Values of attribute `attr` on the elements named `el` (in written order).
+fn attr_values(xml: &str, el: &str, attr: &str) -> Vec<String> {
+    let start = |s: &str| format!(" {}", s.split('>').next().unwrap_or(""));
+    xml.split(&format!("<{el} "))
+        .skip(1)
+        .filter_map(|s| start(s).split(&format!(" {attr}=\"")).nth(1)?.split('"').next().map(str::to_string))
+        .collect()
+}
+
+/// (type, target) of relationship `id` in a relationships part.
+fn rel(rels: &str, id: &str) -> (String, String) {
+    let r = rels.split("<Relationship ").find(|r| r.contains(&format!("Id=\"{id}\""))).unwrap_or_else(|| panic!("no {id} in {rels}"));
+    let get = |a: &str| r.split(&format!("{a}=\"")).nth(1).unwrap().split('"').next().unwrap().to_string();
+    (get("Type"), get("Target"))
+}
+
+/// Package part a relationship target of `from_dir` names.
+fn part_at(from_dir: &str, target: &str) -> String {
+    let mut parts: Vec<&str> = from_dir.split('/').filter(|s| !s.is_empty()).collect();
+    for seg in target.split('/') {
+        match seg {
+            ".." => {
+                parts.pop();
+            }
+            "." | "" => {}
+            s => parts.push(s),
+        }
+    }
+    parts.join("/")
+}
+
+/// Checks a written chart: its part and the parts it relates to are all in the package, with the
+/// original bytes and content types. Returns the chart's part name.
+fn check_chart(files: &std::collections::BTreeMap<String, Vec<u8>>, rid: &str) -> String {
+    let (kind, target) = rel(&text(files, "word/_rels/document.xml.rels"), rid);
+    assert!(kind.ends_with("/chart"), "{kind}");
+    let chart = part_at("word", &target);
+    assert_eq!(text(files, &chart), CHART_XML);
+    let (dir, file) = chart.rsplit_once('/').unwrap();
+    let chart_rels = text(files, &format!("{dir}/_rels/{file}.rels"));
+    let (kind, wb) = rel(&chart_rels, "rId1");
+    assert!(kind.ends_with("/package"), "{kind}");
+    let wb = part_at(dir, &wb);
+    assert_eq!(files.get(&wb).map(Vec::as_slice), Some(WORKBOOK.as_bytes()), "{wb}");
+    let (kind, colors) = rel(&chart_rels, "rId2");
+    assert!(kind.ends_with("/chartColorStyle"), "{kind}");
+    assert_eq!(text(files, &part_at(dir, &colors)), COLORS_XML);
+    let types = text(files, "[Content_Types].xml");
+    assert!(types.contains(&format!(r#"PartName="/{chart}" ContentType="{CT_CHART}""#)), "{types}");
+    assert!(
+        types.contains(&format!(r#"PartName="/{wb}" ContentType="{CT_XLSX}""#))
+            || types.contains(&format!(r#"Extension="xlsx" ContentType="{CT_XLSX}""#)),
+        "{types}"
+    );
+    chart
+}
+
+fn graphics(d: &Document) -> Vec<InlineObject> {
+    paras(d).iter().flat_map(|p| p.objects.iter()).filter(|o| matches!(o, InlineObject::Graphic { .. })).cloned().collect()
+}
+
+#[test]
+fn chart_round_trips_with_its_parts() {
+    let d = wordcraft_docx::read(&chart_docx()).unwrap();
+    let out = wordcraft_docx::write(&d).unwrap();
+    let files = unzip(&out);
+    let body = text(&files, "word/document.xml");
+    let ids = attr_values(&body, "c:chart", "r:id");
+    assert_eq!(ids.len(), 1, "{body}");
+    assert_eq!(check_chart(&files, &ids[0]), "word/charts/chart1.xml");
+    assert_eq!(attr_values(&body, "wp:extent", "cx"), ["2743200"]);
+
+    // Read back: still drawn, and a second save still carries it.
+    let back = wordcraft_docx::read(&out).unwrap();
+    let g = graphics(&back);
+    let [InlineObject::Graphic { w, graphic, .. }] = g.as_slice() else { panic!("{g:?}") };
+    assert_eq!(*w, 216.0);
+    assert!(!graphic.items.is_empty() && graphic.source.is_some());
+    let again = unzip(&wordcraft_docx::write(&back).unwrap());
+    let ids = attr_values(&text(&again, "word/document.xml"), "c:chart", "r:id");
+    check_chart(&again, &ids[0]);
+}
+
+#[test]
+fn moved_and_copied_chart_keeps_its_parts() {
+    let d = wordcraft_docx::read(&chart_docx()).unwrap();
+    let g = graphics(&d);
+    let [InlineObject::Graphic { alt, graphic, .. }] = g.as_slice() else { panic!("{g:?}") };
+    // Resized and dragged to float on the page in WordCraft, then copied and pasted.
+    let float = wordcraft_doc::para::Float { wrap: Wrap::Square, h_rel: Anchor::Page, v_rel: Anchor::Page, x: 36.0, y: 18.0, ..Default::default() };
+    let moved = InlineObject::Graphic { w: 288.0, h: 144.0, alt: alt.clone(), float, graphic: graphic.clone() };
+    let mut p = Paragraph::new();
+    p.insert_object(0, moved.clone(), &Default::default()).unwrap();
+    p.insert_object(p.len(), moved, &Default::default()).unwrap();
+    let mut doc = d.clone();
+    doc.body = vec![wordcraft_doc::para_block(p)];
+
+    assert!(wordcraft_docx::write(&doc).is_err(), "the package-wide guard refuses structural chart edits until source markup can be safely merged");
+}
+
+#[test]
+fn ole_object_round_trips() {
+    let body = r##"<w:p><w:r><w:object w:dxaOrig="1440" w:dyaOrig="720"><v:shape id="_x0000_i1025" type="#_x0000_t75" style="width:72pt;height:36pt" o:ole=""><v:imagedata r:id="rId8" o:title=""/></v:shape><o:OLEObject Type="Embed" ProgID="Package" ShapeID="_x0000_i1025" DrawAspect="Content" ObjectID="_1000000001" r:id="rId9"/></w:object></w:r></w:p>"##;
+    let picture = "\u{89}PNG stand-in";
+    let ole = "\u{d0}\u{cf} opaque OLE storage";
+    let types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    let bytes = docx(
+        body,
+        &[("rId8", "image", "media/image1.png"), ("rId9", "oleObject", "embeddings/oleObject1.bin")],
+        &[("[Content_Types].xml", types), ("word/media/image1.png", picture), ("word/embeddings/oleObject1.bin", ole)],
+    );
+    let d = wordcraft_docx::read(&bytes).unwrap();
+    let Some(InlineObject::Image { w, ole: Some(_), .. }) = paras(&d)[0].objects.first() else { panic!("{:?}", paras(&d)[0].objects) };
+    assert_eq!(*w, 72.0);
+
+    assert_eq!(wordcraft_docx::write(&d).unwrap(), bytes, "an unchanged OLE package is retained exactly");
+
+    // OLE frame edits in a guarded source package are refused until the source markup can be
+    // merged safely; the original embedded payload remains available for recovery/save-as.
+    let mut doc = d.clone();
+    if let Some(wordcraft_doc::Block::Para(p)) = doc.body.first_mut().map(std::sync::Arc::make_mut)
+        && let Some(InlineObject::Image { w, h, .. }) = p.objects.first_mut()
+    {
+        (*w, *h) = (144.0, 72.0);
+    }
+    assert!(wordcraft_docx::write(&doc).is_err());
+}
+
+#[test]
+fn hostile_embedded_relationships_fail_before_any_lossy_import() {
+    // Duplicate ids, self/cyclic links, reserved targets and missing parts invalidate the package
+    // graph. Refuse the package instead of silently omitting relationships from a copied object.
+    let chart_rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="x/package" Target="chart1.xml"/><Relationship Id="rId2" Type="x/a" Target="../document.xml"/><Relationship Id="rId3" Type="x/b" Target="../_rels/document.xml.rels"/><Relationship Id="rId4" Type="x/c" Target="gone.bin"/><Relationship Id="rId4" Type="x/d" Target="chart1.xml"/></Relationships>"#;
+    let drawing = r#"<w:r><w:drawing><wp:inline><wp:extent cx="2743200" cy="1371600"/><wp:docPr id="1" name="C"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rId7"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    let bytes = docx(
+        &format!("<w:p>{drawing}</w:p>"),
+        &[("rId7", "chart", "charts/chart1.xml")],
+        &[("word/charts/chart1.xml", CHART_XML), ("word/charts/_rels/chart1.xml.rels", chart_rels)],
+    );
+    assert!(wordcraft_docx::read(&bytes).is_err(), "invalid nested dependencies must not be silently omitted");
+}
+
 /// A group as Word saves one (in `mc:AlternateContent`, needing `wpg`): its members' space
 /// starts at `a:chOff`, and a nested group is flattened into it through its own transform.
 #[test]
@@ -727,4 +927,93 @@ fn word_group_with_nested_group() {
         })
         .collect();
     assert_eq!(got, [(0.0, 0.0, ShapeKind::Rectangle, 100.0, 50.0), (110.0, 60.0, ShapeKind::Ellipse, 20.0, 10.0)]);
+}
+
+/// The first object of the first paragraph, made mutable.
+fn first_object(doc: &mut Document) -> &mut InlineObject {
+    let Some(wordcraft_doc::Block::Para(p)) = doc.body.first_mut().map(std::sync::Arc::make_mut) else { panic!("a paragraph") };
+    p.objects.first_mut().expect("an object")
+}
+
+/// OLE rotation survives unchanged saves. A frame edit on a guarded DOCX fails explicitly instead
+/// of replacing the original object with only its preview picture.
+#[test]
+fn rotated_ole_objects_keep_the_original_guarded_package() {
+    let picture = "\u{89}PNG stand-in";
+    let ole = "\u{d0}\u{cf} opaque OLE storage";
+    let types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    let parts = [("[Content_Types].xml", types), ("word/media/image1.png", picture), ("word/embeddings/oleObject1.bin", ole)];
+    let doc_rels = [("rId8", "image", "media/image1.png"), ("rId9", "oleObject", "embeddings/oleObject1.bin")];
+    let bodies = [
+        r##"<w:p><w:r><w:object w:dxaOrig="1440" w:dyaOrig="720"><v:shape id="_x0000_i1025" type="#_x0000_t75" style="width:72pt;height:36pt;rotation:30;flip:x" o:ole=""><v:imagedata r:id="rId8" o:title=""/></v:shape><o:OLEObject Type="Embed" ProgID="Package" ShapeID="_x0000_i1025" DrawAspect="Content" ObjectID="_1000000001" r:id="rId9"/></w:object></w:r></w:p>"##,
+        r##"<w:p><w:r><w:object w:dxaOrig="1440" w:dyaOrig="720"><w:drawing><wp:inline><wp:extent cx="914400" cy="457200"/><wp:docPr id="7" name="Object 7"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name=""/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId8"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm flipH="1"><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing><o:OLEObject Type="Embed" ProgID="Package" DrawAspect="Content" ObjectID="_1000000002" r:id="rId9"/></w:object></w:r></w:p>"##,
+    ];
+    for body in bodies {
+        let bytes = docx(body, &doc_rels, &parts);
+        let mut doc = wordcraft_docx::read(&bytes).unwrap();
+        assert_eq!(wordcraft_docx::write(&doc).unwrap(), bytes);
+        if let Some(frame) = first_object(&mut doc).float_mut() {
+            frame.set_spin(wordcraft_geom::Spin::new(45.0, false, true));
+        }
+        assert!(wordcraft_docx::write(&doc).is_err(), "guarded OLE frame edits must fail explicitly");
+    }
+}
+
+/// Issue #41: tracked formatting changes (ECMA-376 §17.13.5) survive open and save — run,
+/// paragraph mark, paragraph, numbering, table, row, cell and section — each written last in
+/// its parent, holding the properties before the change.
+#[test]
+fn formatting_revisions_round_trip() {
+    let body = r#"
+<w:p><w:r><w:t xml:space="preserve">Plain, </w:t></w:r><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Alice" w:date="2026-10-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>bold by Alice</w:t></w:r><w:r><w:rPr><w:sz w:val="28"/><w:rPrChange w:id="99999999999" w:author="Bob"><w:rPr><w:i/><w:sz w:val="24"/><w:rPrChange w:id="1" w:author="Nested"><w:rPr/></w:rPrChange></w:rPr></w:rPrChange></w:rPr><w:t xml:space="preserve"> end.</w:t></w:r></w:p>
+<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/><w:numberingChange w:id="6" w:author="Alice" w:date="2026-10-01T00:00:00Z" w:original="1."/></w:numPr><w:jc w:val="center"/><w:rPr><w:i/><w:rPrChange w:id="7" w:author="Alice" w:date="2026-10-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:pPrChange w:id="8" w:author="Alice" w:date="2026-10-01T00:00:00Z"><w:pPr><w:ind w:left="720"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>Centred</w:t></w:r></w:p>
+<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/><w:tblPrChange w:id="9" w:author="Bob"><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr></w:tblPrChange></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>
+<w:tr><w:trPr><w:cantSplit/><w:trPrChange w:id="10" w:author="Bob"><w:trPr/></w:trPrChange></w:trPr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/><w:tcPrChange w:id="11" w:author="Bob"><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr></w:tcPrChange></w:tcPr><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+<w:p/>
+<w:sectPr><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/><w:sectPrChange w:id="12" w:author="Carol" w:date="2026-10-02T00:00:00Z"><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:sectPrChange></w:sectPr>"#;
+    let d = read_body(body);
+    let rev = |i: u32| d.revisions.get(i as usize).map(|r| (r.kind, r.author.as_str(), r.date.as_str()));
+    let p = paras(&d);
+    let runs: Vec<_> = p[0].run_ranges().map(|(r, c)| (r, c.clone())).collect();
+    assert_eq!(runs.len(), 3);
+    let alice = runs[1].1.fmt_change.as_deref().expect("Alice's rPrChange");
+    assert_eq!(rev(alice.rev), Some((wordcraft_doc::RevisionKind::Format, "Alice", "2026-10-01T00:00:00Z")));
+    assert_eq!((runs[1].1.bold, alice.old.bold), (Some(true), None));
+    let bob = runs[2].1.fmt_change.as_deref().expect("Bob's rPrChange");
+    assert_eq!((bob.old.italic, bob.old.size, bob.old.fmt_change.is_none()), (Some(true), Some(12.0), true), "a nested change is dropped");
+    assert!(runs[0].1.fmt_change.is_none());
+    let pc = p[1].props.fmt_change.as_deref().expect("pPrChange");
+    assert_eq!((p[1].props.align, pc.old.align, pc.old.indent_left), (Some(Align::Center), None, Some(36.0)));
+    assert_eq!(p[1].props.num_change.as_deref().map(|n| n.original.as_str()), Some("1."));
+    assert!(p[1].mark.fmt_change.is_some());
+    let Some(Block::Table(t)) = d.body.get(2).map(|b| &**b) else { panic!("table") };
+    assert_eq!(t.props.fmt_change.as_deref().map(|c| c.old.align), Some(None));
+    assert_eq!(t.rows[0].props.fmt_change.as_deref().map(|c| c.old.cant_split), Some(false));
+    assert_eq!(t.rows[0].cells[0].props.fmt_change.as_deref().map(|c| c.old.shading), Some(None));
+    let sc = d.last_section.fmt_change.as_deref().expect("sectPrChange");
+    assert_eq!((d.last_section.landscape, sc.old.landscape), (true, false));
+    assert_eq!(rev(sc.rev).map(|r| r.1), Some("Carol"));
+
+    // Written back: each change is the last child of its parent, and reads back the same.
+    let bytes = wordcraft_docx::write(&d).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml).unwrap();
+    for (tag, parent) in [
+        ("w:rPrChange", "</w:rPr></w:rPrChange></w:rPr>"),
+        ("w:pPrChange", "</w:pPr></w:pPrChange></w:pPr>"),
+        ("w:tblPrChange", "</w:tblPr></w:tblPrChange></w:tblPr>"),
+        ("w:trPrChange", "</w:trPrChange></w:trPr>"),
+        ("w:tcPrChange", "</w:tcPr></w:tcPrChange></w:tcPr>"),
+        ("w:sectPrChange", "</w:sectPr></w:sectPrChange></w:sectPr>"),
+    ] {
+        assert!(xml.contains(&format!("<{tag} w:id=")), "{tag}: {xml}");
+        assert!(xml.contains(parent), "{tag} last: {xml}");
+    }
+    assert!(xml.contains(r#"<w:numberingChange w:id="#) && xml.contains(r#"w:original="1."/></w:numPr>"#), "{xml}");
+    assert!(xml.contains(r#"<w:b/><w:rPrChange w:id="#), "{xml}");
+    let again = wordcraft_docx::read(&bytes).unwrap();
+    assert_eq!(again.body, d.body);
+    assert_eq!(again.last_section, d.last_section);
+    assert_eq!(again.revisions, d.revisions);
 }
