@@ -73,11 +73,11 @@ Six package integration tests exercise three generations and multiple output fla
 
 The pixel comparison is WordCraft before/after restoration and round-tripping, not a Microsoft Word reference comparison. Linux verification does not establish native Windows/macOS behavior. Independent Word reference outputs and a consented real-world corpus are unavailable in this environment. There is no full Microsoft Word 365 parity claim.
 
-## Upstream integration through `e4b7d15`
+## Upstream integration through `dba6e66`
 
-The fork now includes the upstream changes through `e4b7d15` (15 upstream commits after the shared base), merged as `30b06020b20667bdc607dd6410eba97138e60fcd`. Changes include the 0.5.0 source version, charts/SmartArt/OLE save support, freeform drawing, formatting revisions, table drawing/editing, new layout dialogs, localization updates, defensive pagination fixes and the `quick-xml` 0.41 security update. The package-wide preservation and guarded-edit path described below remains in place alongside the upstream embedded-object writer. The XML scanner uses the 0.41 namespace resolver and normalized attribute decoder so extension attributes remain identified by expanded name. Recovery snapshots also serialize embedded chart/diagram source markup and relationship references, so save-after-restart can reconstruct those supported objects while retaining their package data.
+The fork now includes upstream `main` through `dba6e66d53733c2c0fd28355249d24eb3698187e`, 25 commits after shared base `e4b7d155f15a7784197ba34eeea0b54490d70eb2`. New upstream work includes `.doc` import fidelity, equation and field fixes, more citation styles, command/keyboard/ribbon customization, mail-merge rules, and shape contour/wrap-side and grouping improvements. The DOCX preservation guard and chart/XLSX transaction code remain fork-owned; upstream's open chart-editing PR was not merged. Horizontal/vertical bar, line, area and single-series pie/doughnut editing continues to use the validated fork mapper and transaction; scatter remains read-only.
 
-The source tree reports version 0.5.0; the upstream GitHub Releases page still lists v0.4.0 as its latest published release. This integration is built and tested from source, not treated as a published 0.5.0 release. See the final merge verification recorded in `ROADMAP.md` for the exact merge commit and test outcome.
+The source tree remains version 0.5.0 and GitHub lists v0.5.0 as the latest published release; this `main` update is additional source work after that release, not a new release. The merge test suite is synthetic and internal; it is not independent Word/Excel compatibility verification. See `ROADMAP.md` for verification results and the open-PR audit.
 
 ## Package-wide safety audit from 6807535
 

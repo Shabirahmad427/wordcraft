@@ -38,7 +38,7 @@ font can't match Word's metrics.
 | Nested tables | 🟡 | render; polish missing | 2–4 |
 | Floating pictures/shapes placement (relative to page/margin/column/paragraph/line/character) | ✅ | #136 | — |
 | Text wrap: square, top-and-bottom, behind, in front | ✅ | 2026-10-06 | — |
-| Text wrap: tight, through (contour, wrap polygon) | ❌ | laid out as square | 6–10 |
+| Text wrap: tight, through (contour, wrap polygon) | 🟡 | Upstream #354 follows supported object outlines and wrap-side settings; picture outlines use a convex hull. Complex outline accuracy and page-by-page Word comparison remain unverified | 1–2 |
 | Text boxes, overflow, linked text boxes | 🟡 | Horizontal text-box boundary overflow and vertical clipping are reported before the fit pass; body, table, cell and object diagnostics are page/element/severity tagged and the UI jumps to the first affected page. No auto-resize/move. Linked text boxes and complex drawing effect bounds remain open (#46) | 3–5 |
 | Rotated objects and text | 🟡 | #332: pictures, shapes, charts and groups drawn turned and flipped about their centre (screen and PDF); square wrap and inline lines keep clear of the rotated bounds; hit testing on the turned shape. Text in a rotated text box stays upright | 2–3 |
 | Page borders (from page edge or text), page colour, watermark | ✅ | | — |
@@ -68,6 +68,8 @@ font can't match Word's metrics.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Upstream #354 adds contour-based Tight/Through wrapping and left/right/largest-side wrap selection; no independent Word page comparison |
+| 2026-10-11 | trivial | Upstream #441–#445 fixes group resize/orientation and erasing rotated ink |
 | 2026-10-10 | minor | Tall default/inherited/first/even header and footer stories reserve body clearance; NextColumn starts in the following column and rolls over at the final column. Internal tests added; Word comparison outstanding |
 | 2026-10-10 | minor | Multicolumn footnotes reserve note space across the page and reflow earlier columns; equivalent source/DOCX note-marker raster equality and text coverage tested; Word comparison outstanding |
 | 2026-10-10 | minor | Document-end endnotes continue across columns/pages at line boundaries; Undo/redo, recovery, DOCX reopen/raster and PDF regressions added; placement/restart settings remain unmodeled |

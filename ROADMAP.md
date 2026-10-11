@@ -2,6 +2,12 @@
 
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
+## Upstream synchronization (2026-10-11)
+
+- Integrated upstream `storytold/wordcraft` main through `dba6e66` (25 commits since shared base `e4b7d15`). The update adds configurable ribbon/Quick Access Toolbar and keyboard shortcuts, field-code commands, object contour/wrap-side behavior, drawing group/rotation fixes, equation and citation fixes, `.doc` and text-format import/export fixes, mail-merge fields, spelling vocabulary, interface sizing, Russian/Turkish localization, and CLI closed-output handling.
+- The merge retains fork-specific DOCX package guards and custom XML preservation, recovery, atomic saves, pagination, print adapters, academic editing, and chart/XLSX mapping and transactions. The chart families currently validated by the fork remain horizontal/vertical bars, line, area and single-series pie/doughnut; scatter remains read-only.
+- Upstream's open PRs were reviewed but not merged. Synthetic tests and local builds are not independent Microsoft Word/Excel compatibility verification.
+
 > **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** integrated atomic chart transactions with engine Undo/redo, recovery, rendering and guarded DOCX save · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and

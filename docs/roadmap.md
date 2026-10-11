@@ -54,8 +54,8 @@ partial rows are fidelity gaps (beta work), not broken workflows. WordCraft stay
 | M7 | Review | done (balloons, paragraph-mark revisions, formatting revisions #41); move tracking, multilingual proofing missing | 35–60 h |
 | M8 | View | mostly done; window commands missing | 3–5 h |
 | M9 | Mailings | done (first version); Excel/Outlook data sources and email merge missing | 6–10 h |
-| M10 | File/Backstage | preview and platform print adapters landed; physical-driver verification and Windows async/cancellation depth remain | 12–20 h |
-| M11 | Draw and objects | text wrap, text boxes, canvas handles, rotation (#332), ink pens and eraser (#307) done; lasso and ink conversion, grouping, contour wrap missing | 35–55 h |
+| M10 | File/Backstage | preview and platform print adapters landed; physical-driver verification and Windows async/cancellation depth remain; upstream added configurable interface sizing | 12–20 h |
+| M11 | Draw and objects | text wrap, text boxes, canvas handles, rotation (#332), ink pens and eraser (#307), group resize/orientation (#441–#445), and contour wrap (#354) landed; lasso and ink conversion remain | 35–55 h |
 | M12 | Formats breadth (PDF, ODT, RTF, HTML, MD, TXT, LaTeX, `.doc` import) | done (first versions); `.doc` write, encryption, minor formats missing | 60–100 h |
 | M13 | Performance budgets | on track (1.4 ms relayout); large real-world documents unmeasured | 10–20 h |
 | M14 | 1.0 polish, packaging, signing | releases v0.1.0–v0.4.0 published (signed macOS, Windows MSI x64/x86/arm64, Linux, FreeBSD, web) | — |

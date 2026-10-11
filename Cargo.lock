@@ -6425,6 +6425,7 @@ dependencies = [
 name = "wordcraft-layout"
 version = "0.5.0"
 dependencies = [
+ "image",
  "js-sys",
  "log",
  "serde",

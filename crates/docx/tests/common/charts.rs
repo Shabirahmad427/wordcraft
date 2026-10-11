@@ -86,7 +86,13 @@ pub fn fixture(kind: &str) -> BTreeMap<String, Vec<u8>> {
     table.rows.get_mut(2).unwrap().cells = vec![wordcraft_doc::table::Cell::with_text("B"), wordcraft_doc::table::Cell::with_text("84")];
     doc.body.push(std::sync::Arc::new(wordcraft_doc::Block::Table(table)));
     let mut footer = Paragraph::with_text("Page ", Default::default());
-    footer.insert_object(footer.len(), InlineObject::Field { instr: "PAGE".into(), result: "1".into(), locked: false }, &Default::default()).unwrap();
+    footer
+        .insert_object(
+            footer.len(),
+            InlineObject::Field { instr: "PAGE".into(), result: "1".into(), locked: false, code: false },
+            &Default::default(),
+        )
+        .unwrap();
     doc.last_section.footers.default = Some(doc.add_part(PartKind::Footer, vec![para_block(footer)]));
     let mut files = unpack(&wordcraft_docx::write(&doc).unwrap());
     let drawing = drawing("originalChart", kind == "thesis");
