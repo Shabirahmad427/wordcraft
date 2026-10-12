@@ -112,8 +112,22 @@ pub struct ErrorBarSnapshot {
     #[serde(default)]
     pub negative: Vec<f64>,
     #[serde(default)]
+    pub positive_references: Vec<ErrorBarCellReference>,
+    #[serde(default)]
+    pub negative_references: Vec<ErrorBarCellReference>,
+    #[serde(default)]
     pub caps: bool,
     pub diagnostic: Option<String>,
+}
+
+/// Exact workbook source cell for one validated error magnitude.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrorBarCellReference {
+    pub worksheet: String,
+    pub worksheet_part: String,
+    pub address: String,
+    pub value: f64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
@@ -465,6 +479,8 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
     let mut sheet_cache: BTreeMap<String, BTreeMap<String, CellValue>> = BTreeMap::new();
     let mut mapped = Vec::with_capacity(series.len());
     let mut mapped_cells = 0usize;
+    let mut numeric_chart_sources = BTreeSet::new();
+    let mut error_bar_sources = BTreeSet::new();
     for ser in series {
         let name_source = ser.child("c:tx").ok_or_else(|| unsupported("series name has no source"))?;
         let name_ref = ref_formula(name_source, "series name")?;
@@ -548,7 +564,43 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
             SeriesDataMapping::CategoryValues { values, .. } => values.len(),
             SeriesDataMapping::Scatter { y_values, .. } => y_values.len(),
         };
-        mapped.push(SeriesMapping { name, data, formatting: inspect_series_format(ser, chart_kind, kind, point_count) });
+        let numeric_values = match &data {
+            SeriesDataMapping::CategoryValues { values, .. } => values.iter().collect::<Vec<_>>(),
+            SeriesDataMapping::Scatter { y_values, .. } => y_values.iter().collect::<Vec<_>>(),
+        };
+        numeric_chart_sources.extend(numeric_values.into_iter().map(|cell| (cell.worksheet_part.clone(), cell.address.clone())));
+        let x_count = if let SeriesDataMapping::Scatter { x_values, .. } = &data {
+            numeric_chart_sources.extend(x_values.iter().map(|cell| (cell.worksheet_part.clone(), cell.address.clone())));
+            x_values.len()
+        } else {
+            0
+        };
+        let mut formatting = inspect_series_format(ser, chart_kind, kind, point_count);
+        map_error_bar_sources(
+            ser,
+            chart_kind,
+            point_count,
+            x_count,
+            &sheets,
+            &mut sheet_cache,
+            &xlsx,
+            &shared,
+            &numeric_chart_sources,
+            &mut error_bar_sources,
+            &mut mapped_cells,
+            &mut formatting.error_bars,
+        )?;
+        mapped.push(SeriesMapping { name, data, formatting });
+    }
+    if mapped.iter().any(|series| match &series.data {
+        SeriesDataMapping::CategoryValues { values, .. } => {
+            values.iter().any(|cell| error_bar_sources.contains(&(cell.worksheet_part.clone(), cell.address.clone())))
+        }
+        SeriesDataMapping::Scatter { x_values, y_values } => {
+            x_values.iter().chain(y_values).any(|cell| error_bar_sources.contains(&(cell.worksheet_part.clone(), cell.address.clone())))
+        }
+    }) {
+        return Err(ambiguous("error-bar source cells overlap plotted data values"));
     }
     if chart_kind == "scatter" {
         let mut sources = BTreeSet::new();
@@ -721,7 +773,20 @@ fn inspect_error_bars(series: &El, chart_kind: &str, point_count: usize) -> Vec<
         }
         let renderable = diagnostic.is_none();
         let editable = renderable && matches!(value_type.as_deref(), Some("fixedVal" | "cust"));
-        ErrorBarSnapshot { direction, bar_type, value_type, renderable, editable, fixed_value, positive, negative, caps, diagnostic }
+        ErrorBarSnapshot {
+            direction,
+            bar_type,
+            value_type,
+            renderable,
+            editable,
+            fixed_value,
+            positive,
+            negative,
+            positive_references: Vec::new(),
+            negative_references: Vec::new(),
+            caps,
+            diagnostic,
+        }
     }).collect();
     for direction in ["x", "y"] {
         let indices: Vec<usize> = snapshots.iter().enumerate().filter_map(|(index, bar)| (bar.direction == direction).then_some(index)).collect();
@@ -747,6 +812,157 @@ fn error_num_lit_values(source: Option<&El>) -> Option<Vec<f64>> {
         *values.get_mut(index)? = value;
     }
     values.iter().all(|value| value.is_finite()).then_some(values)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn map_error_bar_sources(
+    series: &El,
+    chart_kind: &str,
+    y_count: usize,
+    x_count: usize,
+    sheets: &BTreeMap<String, String>,
+    sheet_cache: &mut BTreeMap<String, BTreeMap<String, CellValue>>,
+    xlsx: &Package,
+    shared: &[String],
+    numeric_chart_sources: &BTreeSet<(String, String)>,
+    error_bar_sources: &mut BTreeSet<(String, String)>,
+    mapped_cells: &mut usize,
+    snapshots: &mut [ErrorBarSnapshot],
+) -> MResult<()> {
+    if !matches!(chart_kind, "bar" | "column" | "line" | "scatter") {
+        return Ok(());
+    }
+    for direction in ["x", "y"] {
+        if snapshots.iter().filter(|bar| bar.direction == direction).count() > 1 {
+            return Ok(());
+        }
+    }
+    for (snapshot, node) in snapshots.iter_mut().zip(series.children("c:errBars")) {
+        if !matches!(snapshot.value_type.as_deref(), Some("cust")) {
+            continue;
+        }
+        let point_count = if snapshot.direction == "x" { x_count } else { y_count };
+        if point_count == 0 {
+            continue;
+        }
+        let (positive_needed, negative_needed) = match snapshot.bar_type.as_deref() {
+            Some("both") => (true, true),
+            Some("plus") => (true, false),
+            Some("minus") => (false, true),
+            _ => continue,
+        };
+        if node.children("c:val").count() != 0
+            || node.children("c:plus").count() != usize::from(positive_needed)
+            || node.children("c:minus").count() != usize::from(negative_needed)
+        {
+            continue;
+        }
+        let mut valid = true;
+        let mut has_workbook_ranges = false;
+        for (local, target_values, target_refs) in [
+            ("plus", &mut snapshot.positive, &mut snapshot.positive_references),
+            ("minus", &mut snapshot.negative, &mut snapshot.negative_references),
+        ] {
+            let Some(source) = node.child(if local == "plus" { "c:plus" } else { "c:minus" }) else { continue };
+            if source.child("c:numLit").is_some() {
+                if let Some(values) = error_num_lit_values(Some(source)).filter(|values| values.len() == point_count) {
+                    *target_values = values;
+                } else {
+                    valid = false;
+                    break;
+                }
+                continue;
+            }
+            let references: Vec<_> = source.children("c:numRef").collect();
+            if references.len() != 1 || source.els().count() != 1 {
+                snapshot.renderable = false;
+                snapshot.diagnostic = Some("Custom error-bar source is not one unambiguous numeric reference.".into());
+                break;
+            }
+            let resolved = (|| {
+                has_workbook_ranges = true;
+                let range = ref_formula(source, "custom error-bar values")?;
+                if range.cells.len() != point_count {
+                    return Err(inconsistent("custom error-bar range length does not match plotted data points"));
+                }
+                let Some(sheet_part) = sheets.get(&range.sheet) else {
+                    return Err(unsupported("custom error-bar range references a missing worksheet"));
+                };
+                if !sheet_cache.contains_key(sheet_part) {
+                    let root = xlsx
+                        .xml(sheet_part)
+                        .map_err(|_| unsupported("error-bar worksheet XML is malformed"))?
+                        .ok_or_else(|| unsupported("error-bar worksheet part is missing"))?;
+                    let rels = xlsx.rels_checked(sheet_part).map_err(|_| unsupported("error-bar worksheet relationships are malformed"))?;
+                    if !rels.list.is_empty() {
+                        return Err(unsupported("error-bar worksheet has relationships outside the supported subset"));
+                    }
+                    sheet_cache.insert(sheet_part.clone(), parse_sheet(&root, shared)?);
+                }
+                let cells = sheet_cache.get(sheet_part).ok_or_else(|| inconsistent("error-bar worksheet mapping is unavailable"))?;
+                let values = read_number_range(&range, &range.sheet, sheet_part, cells)?;
+                if values.iter().any(|cell| cell.value < 0.0) {
+                    return Err(inconsistent("custom error-bar magnitudes must be nonnegative"));
+                }
+                verify_number_cache(Some(source), &values)?;
+                let new_count = mapped_cells.checked_add(values.len()).ok_or_else(|| unsupported("mapped cell budget overflow"))?;
+                if new_count > MAX_MAPPED_CELLS {
+                    return Err(unsupported("chart exceeds the mapped cell budget"));
+                }
+                for cell in &values {
+                    let key = (cell.worksheet_part.clone(), cell.address.clone());
+                    if numeric_chart_sources.contains(&key) || !error_bar_sources.insert(key) {
+                        return Err(ambiguous("error-bar source cells overlap plotted data or another uncertainty range"));
+                    }
+                }
+                *mapped_cells = new_count;
+                Ok(values)
+            })();
+            match resolved {
+                Ok(values) => {
+                    *target_values = values.iter().map(|cell| cell.value).collect();
+                    *target_refs = values
+                        .into_iter()
+                        .map(|cell| ErrorBarCellReference {
+                            worksheet: cell.worksheet,
+                            worksheet_part: cell.worksheet_part,
+                            address: cell.address,
+                            value: cell.value,
+                        })
+                        .collect();
+                    snapshot.renderable = true;
+                    snapshot.diagnostic = None;
+                    // Workbook-backed edits are enabled only after the read-only/rendering phase
+                    // has passed its end-to-end regressions.
+                    snapshot.editable = false;
+                }
+                Err(Reason::Unsupported(reason) | Reason::Ambiguous(reason) | Reason::Inconsistent(reason)) => {
+                    snapshot.diagnostic = Some(reason);
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid {
+            if !positive_needed {
+                snapshot.positive = vec![0.0; point_count];
+            }
+            if !negative_needed {
+                snapshot.negative = vec![0.0; point_count];
+            }
+            snapshot.renderable = true;
+            snapshot.diagnostic = None;
+            snapshot.editable = !has_workbook_ranges;
+        } else {
+            snapshot.renderable = false;
+            snapshot.positive.clear();
+            snapshot.negative.clear();
+            snapshot.positive_references.clear();
+            snapshot.negative_references.clear();
+            snapshot.diagnostic.get_or_insert_with(|| "Custom error-bar source is malformed or unsupported.".into());
+        }
+    }
+    Ok(())
 }
 
 fn valid_error_num_lit(source: Option<&El>, expected: usize) -> bool {
@@ -3316,6 +3532,39 @@ mod tests {
         assert_eq!(updated.series[0].error_bars[0].positive, [1.25, 2.25, 3.25]);
         assert_eq!(updated.series[0].error_bars[0].negative, [0.25, 0.75, 1.25]);
         assert_eq!(Package::open(&output).unwrap().get("word/embeddings/book.xlsx"), Some(original_xlsx.as_slice()));
+    }
+
+    #[test]
+    fn maps_asymmetric_workbook_backed_error_bars_to_exact_cells_and_rejects_cache_mismatch() {
+        let bars = r#"<c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numRef><c:f>Data!E1:E3</c:f><c:numCache><c:ptCount val="3"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt><c:pt idx="2"><c:v>3</c:v></c:pt></c:numCache></c:numRef></c:plus><c:minus><c:numRef><c:f>Data!F1:F3</c:f><c:numCache><c:ptCount val="3"/><c:pt idx="0"><c:v>0.5</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt><c:pt idx="2"><c:v>1.5</c:v></c:pt></c:numCache></c:numRef></c:minus></c:errBars>"#;
+        let chart = chart_with_error_bars(chart(false), bars, "</c:ser>");
+        let mut xlsx =
+            Package::open(&workbook(false, false, false)).unwrap().entries().map(|(n, b)| (n.to_string(), b.to_vec())).collect::<BTreeMap<_, _>>();
+        let sheet = String::from_utf8(xlsx["xl/worksheets/sheet1.xml"].clone())
+            .unwrap()
+            .replace(r#"<row r="1">"#, r#"<row r="1"><c r="E1"><v>1</v></c><c r="F1"><v>0.5</v></c>"#)
+            .replace(r#"<row r="2">"#, r#"<row r="2"><c r="E2"><v>2</v></c><c r="F2"><v>1</v></c>"#)
+            .replace(r#"<row r="3">"#, r#"<row r="3"><c r="E3"><v>3</v></c><c r="F3"><v>1.5</v></c>"#);
+        xlsx.insert("xl/worksheets/sheet1.xml".into(), sheet.into_bytes());
+        let docx = docx_with_error_bars(&chart, Some(&zip(&xlsx)));
+        let snapshot = inspect_chart_data(&docx, "word/charts/chart1.xml").unwrap();
+        let error = &snapshot.series[0].error_bars[0];
+        assert!(error.renderable);
+        assert!(!error.editable);
+        assert_eq!(error.positive, vec![1.0, 2.0, 3.0]);
+        assert_eq!(error.negative, vec![0.5, 1.0, 1.5]);
+        assert_eq!(error.positive_references.iter().map(|cell| cell.address.as_str()).collect::<Vec<_>>(), ["E1", "E2", "E3"]);
+        assert_eq!(error.negative_references.iter().map(|cell| cell.address.as_str()).collect::<Vec<_>>(), ["F1", "F2", "F3"]);
+        assert_eq!(Package::open(&docx).unwrap().get("word/charts/chart1.xml"), Some(chart.as_slice()));
+
+        let bad_chart = String::from_utf8(chart)
+            .unwrap()
+            .replace("<c:v>2</c:v></c:pt><c:pt idx=\"2\"><c:v>3", "<c:v>99</c:v></c:pt><c:pt idx=\"2\"><c:v>3")
+            .into_bytes();
+        let bad = docx_with_error_bars(&bad_chart, Some(&zip(&xlsx)));
+        let rejected = &inspect_chart_data(&bad, "word/charts/chart1.xml").unwrap().series[0].error_bars[0];
+        assert!(!rejected.renderable);
+        assert!(rejected.diagnostic.as_deref().is_some_and(|reason| reason.contains("cache")));
     }
 
     #[test]

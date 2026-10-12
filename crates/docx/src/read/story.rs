@@ -1019,10 +1019,29 @@ impl Reader<'_> {
     fn graphic_items(&mut self, kind: GraphicKind, path: &str, w: f32, h: f32) -> Vec<GraphicItem> {
         match kind {
             GraphicKind::Chart => match self.graphic_part(path) {
-                Some(space) => super::chart::chart_items(&space, &self.doc.settings.theme_colors, w, h),
+                Some(space) => {
+                    let mapped = self.validated_chart_error_bars(path);
+                    match mapped {
+                        Some(errors) => super::chart::chart_items_with_mapped_errors(&space, &self.doc.settings.theme_colors, w, h, &errors),
+                        None => super::chart::chart_items(&space, &self.doc.settings.theme_colors, w, h),
+                    }
+                }
                 None => Vec::new(),
             },
             GraphicKind::Diagram => self.diagram_drawing(path, w, h),
+        }
+    }
+
+    fn validated_chart_error_bars(&self, path: &str) -> Option<Vec<Vec<crate::chart_mapping::ErrorBarSnapshot>>> {
+        let chart_xml = self.pkg.get(path)?;
+        let part = self.embedded.parts.get(path)?;
+        let workbook_rel = part.rels.iter().find(|rel| !rel.external && crate::package::rel_is(&rel.kind, "package"))?;
+        let workbook = self.pkg.get(&workbook_rel.target)?;
+        match crate::chart_mapping::map_chart(chart_xml, &part.rels, &workbook_rel.target, workbook) {
+            crate::chart_mapping::Classification::Mappable(mapping) => {
+                Some(mapping.series.into_iter().map(|series| series.formatting.error_bars).collect())
+            }
+            _ => None,
         }
     }
 

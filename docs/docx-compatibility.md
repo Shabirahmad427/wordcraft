@@ -143,13 +143,15 @@ only the existing numeric XML values; embedded XLSX cells, chart data caches, di
 identifiers and unrelated XML remain unchanged. Cancel discards the local draft.
 
 Percentage, standard-deviation and standard-error forms, malformed or sparse arrays, duplicate
-definitions, unsupported directions, and formula-backed `c:numRef` ranges remain read-only. Custom
-formula ranges are not editable because their referenced workbook cells have not been mapped and
-verified. `chart.inspectData` reports editability and a specific diagnostic in `errorBars`; the Chart
-Design view displays the reason when a structure cannot be edited. Synthetic parser, transaction,
-UI, preview/PDF, Undo/redo, recovery, save/reopen and package-preservation tests cover this subset.
-This is not a Word or Excel rendering comparison; formula-range mapping, custom styling editing,
-statistical calculation and application interoperability remain outstanding.
+definitions, unsupported directions, and formula-backed `c:numRef` ranges remain read-only. A
+constrained read-only mapper now resolves contiguous single-column A1 ranges against the chart's
+embedded workbook and verifies numeric literal cells, point count/order and cached values. It rejects
+external/missing worksheets, formula cells, malformed or ambiguous references, and ranges that
+overlap plotted or other uncertainty cells. Validated asymmetric positive/negative ranges (including
+scatter X/Y) feed the shared preview/PDF error-bar renderer. The mapped cell addresses and values
+are exposed in `chart.inspectData`; these workbook-backed bars are deliberately not editable yet.
+This is synthetic-fixture verification, not a Word or Excel rendering comparison. Editing formula
+ranges, custom styling, statistical calculations and application interoperability remain outstanding.
 
 Undo and recovery retain the opaque object and graph bytes. Recovery holds the current edited package parts in the model and retains the exact initially opened package independently. Removing a chart can leave preserved orphan parts in that save; preservation does not synchronize embedded workbook data with edits to nearby tables. Graphs shared with regenerated document parts, or colliding with custom XML graph output, can be rejected rather than rewritten unsafely.
 

@@ -47,11 +47,40 @@ const AXIS: Rgb = Rgb(0xBF, 0xBF, 0xBF);
 
 /// Items for a chart part, sized `w` x `h` points. Empty when nothing supported is in it.
 pub(crate) fn chart_items(space: &El, theme: &[Rgb], w: f32, h: f32) -> Vec<GraphicItem> {
+    chart_items_inner(space, theme, w, h, None)
+}
+
+pub(crate) fn chart_items_with_mapped_errors(
+    space: &El,
+    theme: &[Rgb],
+    w: f32,
+    h: f32,
+    mapped: &[Vec<crate::chart_mapping::ErrorBarSnapshot>],
+) -> Vec<GraphicItem> {
+    chart_items_inner(space, theme, w, h, Some(mapped))
+}
+
+fn chart_items_inner(space: &El, theme: &[Rgb], w: f32, h: f32, mapped: Option<&[Vec<crate::chart_mapping::ErrorBarSnapshot>]>) -> Vec<GraphicItem> {
     let mut out = Vec::new();
     if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0) {
         return out;
     }
-    let Some(chart) = Chart::parse(space, theme) else { return out };
+    let Some(mut chart) = Chart::parse(space, theme) else { return out };
+    if let Some(mapped) = mapped
+        && mapped.len() == chart.series.len()
+    {
+        for (series, bars) in chart.series.iter_mut().zip(mapped) {
+            for bar in bars.iter().filter(|bar| bar.renderable && (!bar.positive_references.is_empty() || !bar.negative_references.is_empty())) {
+                let direction = if bar.direction == "x" { ErrorDirection::X } else { ErrorDirection::Y };
+                if let Some(existing) = series.error_bars.iter_mut().find(|existing| existing.direction == direction) {
+                    existing.positive = bar.positive.clone();
+                    existing.negative = bar.negative.clone();
+                    existing.caps = bar.caps;
+                    existing.diagnostic = None;
+                }
+            }
+        }
+    }
     backdrop(&mut out, space, theme, w, h);
     let mut area = Rect { x: PAD, y: PAD, w: (w - 2.0 * PAD).max(1.0), h: (h - 2.0 * PAD).max(1.0) };
     if let Some(t) = &chart.title {
@@ -2388,6 +2417,46 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn validated_workbook_error_values_replace_unverified_formula_values_for_rendering() {
+        let formula = ser(0, "Mapped", Some("D04050"), &["A", "B"], &["4", "8"]).replace(
+            "</c:ser>",
+            r#"<c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numRef><c:f>Data!E1:E2</c:f></c:numRef></c:plus><c:minus><c:numRef><c:f>Data!F1:F2</c:f></c:numRef></c:minus></c:errBars></c:ser>"#,
+        );
+        let space = space(&format!(r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>{formula}</c:barChart>"#));
+        let empty = chart_items(&space, &theme(), 300.0, 200.0);
+        let mapped = crate::chart_mapping::ErrorBarSnapshot {
+            direction: "y".into(),
+            bar_type: Some("both".into()),
+            value_type: Some("cust".into()),
+            renderable: true,
+            editable: false,
+            fixed_value: None,
+            positive: vec![1.0, 2.0],
+            negative: vec![0.5, 1.0],
+            positive_references: vec![crate::chart_mapping::ErrorBarCellReference {
+                worksheet: "Data".into(),
+                worksheet_part: "xl/worksheets/sheet1.xml".into(),
+                address: "E1".into(),
+                value: 1.0,
+            }],
+            negative_references: vec![crate::chart_mapping::ErrorBarCellReference {
+                worksheet: "Data".into(),
+                worksheet_part: "xl/worksheets/sheet1.xml".into(),
+                address: "F1".into(),
+                value: 0.5,
+            }],
+            caps: true,
+            diagnostic: None,
+        };
+        let rendered = chart_items_with_mapped_errors(&space, &theme(), 300.0, 200.0, &[vec![mapped]]);
+        let paths = |items: &[GraphicItem]| {
+            items.iter().filter(|item| matches!(item, GraphicItem::Path { stroke: Some(Rgb(0xD0, 0x40, 0x50)), segs, .. } if segs.len() == 6)).count()
+        };
+        assert_eq!(paths(&empty), 0);
+        assert_eq!(paths(&rendered), 2);
     }
 
     #[test]
