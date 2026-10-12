@@ -19,6 +19,22 @@ them without a repair warning. The existing chart, academic compatibility and en
 combinations of equations, reference fields, tables, figures, embedded workbooks, chart error bars,
 sections, notes, comments and revisions, but they are not a licensed real-world corpus.
 
+## Synthetic opening-path check for upstream issue #963
+
+On 2026-10-12, two original synthetic DOCX fixtures were used to test image and vertical-textbox
+opening through WordCraft. The desktop UI test opens through `file.open`, checks the rendered image
+pixels and top-to-bottom text orientation, and compares its page PNG byte-for-byte with the engine's
+`file.exportPng` result. A separate real-process CLI test edits, saves, reopens, rasterizes and exports
+a multipage document with inline and floating images; both image regions must appear in the rendered
+PNG, and the source file bytes must remain unchanged. The headless app window and installed CLI
+raster were visually inspected.
+
+These results verify only WordCraft's synthetic path. They did not reproduce the reporter's missing
+images or horizontal textbox behavior, and they do not establish that a Microsoft Word-generated
+document opens correctly. Issue #963 remains open and unverified pending a minimal, shareable
+reproducer. This section is regression evidence, not an addition to the Word-generated reference
+corpus above.
+
 Reference documents supplied later must have documented provenance and a redistribution license (or
 remain outside the repository under `/corpus/`). Record whether the file was actually saved by Word,
 the Word product/channel/build, source or author permission, license, and the original archive SHA-256.
