@@ -120,6 +120,31 @@ content loss, **S2** major layout/editing failure, **S3** cosmetic difference.
 
 ## Current verification
 
+### Phase 7G baseline check (2026-10-12)
+
+The fork `main` baseline was fetched and verified at `9336c2008da5a9009bfaa066d3f917a2c416fbda`
+(WordCraft v0.6.1 source). `cargo xtask ci` passed all six local gates; the workspace reported
+2,097 passed, 0 failed and 2 ignored. Linux GUI/CLI release builds and release-mode CLI checks for
+Windows GNU and macOS ARM64 completed successfully.
+
+Hosted evidence for this baseline:
+
+- [Document Regressions](https://github.com/Shabirahmad427/wordcraft/actions/runs/38316357991):
+  passed on `9336c20`, including Linux golden comparison and both advisory performance workloads.
+- [Packaging lint](https://github.com/Shabirahmad427/wordcraft/actions/runs/38316358241): passed on
+  `9336c20`.
+- [Printing](https://github.com/Shabirahmad427/wordcraft/actions/runs/38310906468): passed on Linux,
+  Windows and macOS at `f71d779`; this workflow was not triggered by later regression-only changes.
+- [FreeBSD](https://github.com/Shabirahmad427/wordcraft/actions/runs/38306533331) and
+  [Windows ARM64](https://github.com/Shabirahmad427/wordcraft/actions/runs/38306533411): passed on
+  `6535bb2`; neither workflow was triggered by the later regression-only changes.
+
+These hosted successes verify their respective commits and workflows; they are not one full
+cross-platform run on `9336c20`. The source corpus still contains zero authorized Word-generated
+reference documents. No original DOCX was opened, fingerprinted, saved, or compared in this phase;
+therefore Word 365 repair, editability, and PDF comparison remain blocked. The five corpus classes in
+the manifest template remain pending rather than being represented by synthetic fixtures.
+
 Phase 7E added the explicit-policy raster comparator (`cargo xtask visual compare`) and a synthetic
 CLI performance harness. Its 2026-10-12 smoke run covered 45 pages, 8 tables, 8 workbook-backed
 charts, 8 vector figure shapes, 12 footnotes, 8 endnotes and an equation; measured stage medians and
