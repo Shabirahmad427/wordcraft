@@ -28,6 +28,20 @@ fn part_text(doc: &Document, id: Option<u32>) -> String {
         .unwrap_or_default()
 }
 
+#[test]
+fn canonical_note_separator_defaults_do_not_become_custom_document_separators() {
+    let mut doc = Document::from_text("A claim with a note.");
+    let note = doc.add_part(PartKind::Footnote, vec![para_block(Paragraph::with_text("Source note", CharProps::default()))]);
+    doc.insert_object(
+        &wordcraft_doc::Pos::body(0, "A claim with a note".len()),
+        InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() },
+        &CharProps::default(),
+    )
+    .unwrap();
+    let reopened = rt(&doc);
+    assert!(reopened.footnote_separators.is_empty(), "writer-generated defaults should remain layout defaults");
+}
+
 fn doc_with(blocks: Vec<Paragraph>) -> Document {
     let mut d = Document::new();
     d.body = blocks.into_iter().map(para_block).collect();

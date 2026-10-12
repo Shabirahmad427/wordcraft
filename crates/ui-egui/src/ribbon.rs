@@ -230,7 +230,6 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                         "Picture Format" => picture_format(app, ui),
                         "Chart Design" => chart_design(app, ui),
                         "Shape Format" => shape_format(app, ui),
-                        "Chart Design" => chart_design(app, ui),
                         _ => home(app, ui),
                     }
                     if let Some(e) = entry {
@@ -1522,7 +1521,11 @@ fn chart_design(app: &mut WordApp, ui: &mut Ui) {
         });
     });
     group(ui, "Data", None, app, |ui, app| {
-        big(ui, app, "chartData", "Edit\nData", "chart.editData", json!({}), false);
+        if let Some(chart_part) = selected_chart_part(&app.session) {
+            big(ui, app, "chartData", "Edit\nData", "ui.chartData", json!({"chartPart": chart_part}), false);
+        } else {
+            big(ui, app, "chartData", "Edit\nData", "chart.editData", json!({}), false);
+        }
     });
     group(ui, "Type", None, app, |ui, app| {
         big(ui, app, "changeChartType", "Change\nChart Type", "chart.type", json!({}), false);
@@ -1850,13 +1853,6 @@ fn picture_format(app: &mut WordApp, ui: &mut Ui) {
                 }
             });
         });
-    });
-}
-
-fn chart_design(app: &mut WordApp, ui: &mut Ui) {
-    let chart_part = selected_chart_part(&app.session).unwrap_or_default();
-    group(ui, "Data", None, app, |ui, app| {
-        big(ui, app, "chart", "Edit Chart Data", "ui.chartData", json!({"chartPart": chart_part}), false);
     });
 }
 

@@ -1480,7 +1480,6 @@
 	Moved from	Teisaldatud kohast
 	Moved to	Teisaldatud kohta
 	Change Chart Type	Muuda diagrammi tüüpi
-	Chart Design	Diagrammi kujundus
 	Type	Tüüp
 	Edit Data	Redigeeri andmeid
 	Chart Title	Diagrammi pealkiri
@@ -1503,7 +1502,6 @@
 	Series {n}	Sari {n}
 	Type the categories down the side and a column of values per series.	Sisesta kategooriad külje peale ja iga sarja jaoks väärtuste veerg.
 	Categories	Kategooriad
-	Series name	Sarja nimi
 	Remove series	Eemalda sari
 	Remove row	Eemalda rida
 	Add Row	Lisa rida
@@ -1550,7 +1548,6 @@
 	Swap footnotes and endnotes	Vaheta all- ja lõpumärkused
 	Custom mark:	Kohandatud märk:
 	Continuous numbering	Pidev nummerdus
-	Apply	Rakenda
 	Convert Notes	Teisenda märkused
 	A, B, C, …	A, B, C, …
 	Above the item	Objekti kohal
@@ -1727,7 +1724,6 @@
 	Unchecked symbol	Märkimata sümbol
 	List entries	Loendi kirjed
 	Display text	Kuvatav tekst
-	Value	Väärtus
 	Today	Täna
 	Put the caret in a content control first.	Pange kursor esmalt sisujuhtelementi.
 	Add line numbering	Lisa reanummerdus

@@ -27,6 +27,12 @@ pub(crate) struct Chains {
     flows: HashMap<usize, Vec<Vec<Placed>>>,
 }
 
+/// Positioned text-box content and any measured overflow before clipping.
+pub(crate) struct BoxItems {
+    pub items: Vec<Placed>,
+    pub overflow: Option<(bool, bool)>,
+}
+
 impl Chains {
     fn build(&mut self, doc: &wordcraft_doc::Document) {
         if self.built {
@@ -95,23 +101,26 @@ fn lay(ctx: &mut Ctx, id: u32, blocks: &Blocks, len: f32, vert: TextVert, depth:
 
 /// The items showing text box `id` in its frame `rect` (page coordinates): its text, or its
 /// share of a linked chain's, cut to what fits, aligned and turned as the box says.
-pub(crate) fn box_items(ctx: &mut Ctx, id: u32, rect: Rect, depth: usize) -> Vec<Placed> {
+pub(crate) fn box_items(ctx: &mut Ctx, id: u32, rect: Rect, depth: usize) -> BoxItems {
     let body = ctx.doc.parts.get(&id).map(|p| p.body).unwrap_or_default();
     let (len, across) = frame(body.vert, rect.w, rect.h);
-    let items = match chain_share(ctx, id, depth) {
-        Some(items) => items,
+    let (items, overflow) = match chain_share(ctx, id, depth) {
+        Some(items) => (items, None),
         None => {
             if !ctx.boxes.enter(id) {
-                return Vec::new();
+                return BoxItems { items: Vec::new(), overflow: None };
             }
             let blocks = ctx.doc.parts.get(&id).map(|p| p.blocks.clone()).unwrap_or_default();
             let inner = lay(ctx, id, &blocks, len, body.vert, depth);
+            let content_bottom = extent(&inner);
+            let horizontal = inner.iter().filter_map(crate::placed_bounds).any(|bounds| bounds.x < -0.5 || bounds.right() > len + 0.5);
+            let overflow = Some((horizontal, content_bottom > across + 0.5));
             ctx.boxes.leave();
             // Text that doesn't fit inside the margins is hidden, as in Word.
-            fit_box(inner, across)
+            (fit_box(inner, across), overflow)
         }
     };
-    place(items, &body, rect, across)
+    BoxItems { items: place(items, &body, rect, across), overflow }
 }
 
 /// Move items laid out in a box's frame onto the page: aligned in the `across` room (top,

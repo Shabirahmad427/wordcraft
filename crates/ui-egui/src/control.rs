@@ -8,7 +8,7 @@
 //!   real pointer input in screen points (reaches every widget)
 //! - `ui.clickText {page, x, y}`: click at a page position (points from the page's top-left)
 //! - `ui.key {key, shift?, alt?, cmd?}`, `ui.text {text}`: keyboard input through egui
-//! - `ui.screenshot {path?}`: PNG of the window; `ui.render {path, page?, scale?}`: page PNG
+//! - `ui.screenshot {path?}`: PNG of the window; `ui.render {path?, page?, scale?}`: page PNG
 //! - `ui.parity`: feature catalog parity
 
 use std::sync::mpsc::Sender;
@@ -203,11 +203,29 @@ pub fn handle(app: &mut WordApp, ctx: &egui::Context, req: &ControlRequest) -> O
         }
         "ui.screenshot" => Outcome::Screenshot { path: s("path").map(str::to_string) },
         "ui.render" => {
-            let path = s("path").unwrap_or("/tmp/wordcraft-page.png");
-            let page = p.get("page").and_then(Value::as_u64).unwrap_or(1);
-            match app.session.run("file.exportPng", &json!({"path": path, "page": page, "scale": f("scale").unwrap_or(2.0)})) {
-                Ok(v) => ok(v),
-                Err(e) => err(e),
+            let page = p.get("page").and_then(Value::as_u64).unwrap_or(1).max(1);
+            let scale = f("scale").filter(|value| value.is_finite()).unwrap_or(2.0).clamp(0.1, 8.0);
+            if let Some(path) = s("path") {
+                match app.session.run("file.exportPng", &json!({"path": path, "page": page, "scale": scale})) {
+                    Ok(v) => ok(v),
+                    Err(e) => err(e),
+                }
+            } else {
+                let layout = app.session.export_layout();
+                let Some(page_index) = page.checked_sub(1).and_then(|index| usize::try_from(index).ok()) else {
+                    return err(format!("invalid page {page}"));
+                };
+                let Some(pg) = layout.pages.get(page_index) else {
+                    return err(format!("no page {page}"));
+                };
+                let image = wordcraft_render::render_page(&app.session.doc, pg, scale, &Default::default());
+                let png = image.to_png();
+                ok(json!({
+                    "png": wordcraft_engine::cmd::insert::base64_encode(&png),
+                    "width": image.width,
+                    "height": image.height,
+                    "pages": layout.pages.len()
+                }))
             }
         }
         "ui.resize" => {
@@ -235,18 +253,34 @@ pub fn handle(app: &mut WordApp, ctx: &egui::Context, req: &ControlRequest) -> O
 }
 
 pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>) -> Value {
-    let path = path.unwrap_or("/tmp/wordcraft-screenshot.png");
     let [w, h] = image.size;
     let bytes: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
     let rendered = wordcraft_render::Rendered { width: w as u32, height: h as u32, pixels: bytes };
     let png = rendered.to_png();
-    #[cfg(target_arch = "wasm32")]
-    let _ = (&png, path);
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        if let Err(e) = wordcraft_engine::io::atomic_write(std::path::Path::new(path), &png) {
-            return json!({"ok": false, "error": format!("{path}: {e}")});
+    if let Some(path) = path {
+        #[cfg(target_arch = "wasm32")]
+        return json!({"ok": false, "error": "saving screenshots to a path is unavailable in the web build"});
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Err(e) = wordcraft_engine::io::atomic_write(std::path::Path::new(path), &png) {
+                return json!({"ok": false, "error": format!("{path}: {e}")});
+            }
+            return json!({"ok": true, "result": {"path": path, "width": w, "height": h}});
         }
     }
-    json!({"ok": true, "result": {"path": path, "width": w, "height": h}})
+    json!({"ok": true, "result": {"png": wordcraft_engine::cmd::insert::base64_encode(&png), "width": w, "height": h}})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::save_screenshot;
+
+    #[test]
+    fn screenshot_without_path_returns_png_data_without_writing_a_fixed_file() {
+        let image = egui::ColorImage::filled([1, 1], egui::Color32::WHITE);
+        let value = save_screenshot(&image, None);
+        let png = value["result"]["png"].as_str().expect("PNG data returned in memory");
+        assert!(png.starts_with("iVBORw0KGgo"));
+        assert!(value["result"].get("path").is_none());
+    }
 }

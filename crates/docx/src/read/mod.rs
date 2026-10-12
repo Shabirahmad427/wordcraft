@@ -36,6 +36,27 @@ const MAX_PARTS: usize = 50_000;
 /// charts and diagrams; later ones are left empty.
 const MAX_GRAPHIC_WORK: usize = 2_000_000;
 
+/// Whether a notes-part separator is the canonical default emitted by WordCraft's writer.
+fn canonical_note_separator(blocks: &Blocks, continuation: bool) -> bool {
+    let [block] = blocks.as_slice() else { return false };
+    let Some(para) = block.as_para() else { return false };
+    if !para.text.chars().eq(std::iter::once(OBJ)) || para.objects.len() != 1 || para.mark != Default::default() || para.section.is_some() {
+        return false;
+    }
+    if !para.runs.iter().all(|run| run.props.is_empty()) || para.objects.first().and_then(InlineObject::as_note_separator) != Some(continuation) {
+        return false;
+    }
+    let mut props = para.props.clone();
+    let canonical_spacing = props.space_after == Some(0.0)
+        && matches!(props.line_spacing, Some(wordcraft_doc::props::LineSpacing::Multiple(value)) if (value - 1.0).abs() < f32::EPSILON);
+    if !canonical_spacing {
+        return false;
+    }
+    props.space_after = None;
+    props.line_spacing = None;
+    props == Default::default()
+}
+
 /// Resolve an internal relationship only when it has the expected type.
 fn part_of(rels: &Rels, id: &str, kind: &str) -> Option<String> {
     rels.by_id(id).filter(|rel| !rel.external && rel_is(&rel.kind, kind)).map(|rel| rel.target.clone())
@@ -69,6 +90,10 @@ pub(crate) struct Reader<'p> {
     graphics: HashMap<(GraphicKind, String, u32, u32), Arc<Graphic>>,
     /// Bound the total graphic work performed on hostile input.
     graphic_budget: usize,
+    /// Drawing ids retained because connectors refer to them.
+    pub glued: HashSet<u32>,
+    /// Whether shapes carried ids while reading.
+    pub shape_ids: bool,
     opaque: crate::opaque::Preservation,
     preservation_error: Option<DocxError>,
     /// The main document part’s name.
@@ -131,6 +156,8 @@ fn read_impl(bytes: &[u8], preserve: bool) -> Result<Document, DocxError> {
         graphic_parts: HashMap::new(),
         graphics: HashMap::new(),
         graphic_budget: MAX_GRAPHIC_WORK,
+        glued: HashSet::new(),
+        shape_ids: false,
         opaque: Default::default(),
         preservation_error: None,
         main: main.clone(),
@@ -956,6 +983,15 @@ impl Reader<'_> {
         self.in_note_sep = false;
         if blocks.is_empty() {
             blocks.push(para_block(Paragraph::new()));
+        }
+        // The writer emits the OOXML-mandated default separator paragraph for every notes
+        // part. Treat that canonical marker as the layout default rather than a user-customized
+        // separator: laying the same one-line marker out as a custom story subtly changes note
+        // clearance and causes save/reopen pagination drift. Any additional text, run formatting,
+        // paragraph formatting, or non-canonical marker remains explicitly preserved.
+        let continuation = kind == "continuationSeparator";
+        if canonical_note_separator(&blocks, continuation) {
+            return;
         }
         let seps = if foot { &mut self.doc.footnote_separators } else { &mut self.doc.endnote_separators };
         let slot = match kind {

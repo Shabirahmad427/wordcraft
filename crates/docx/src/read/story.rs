@@ -43,7 +43,7 @@ enum Phase {
 
 enum Item {
     Text(String),
-    Obj(InlineObject),
+    Obj(Box<InlineObject>),
 }
 
 struct FieldState {
@@ -791,7 +791,7 @@ impl Reader<'_> {
             for (it, p) in f.buf.drain(..) {
                 match it {
                     Item::Text(t) => pb.push_text(&t, &p),
-                    Item::Obj(o) => pb.push_obj(o, &p),
+                    Item::Obj(o) => pb.push_obj(*o, &p),
                 }
             }
         }
@@ -812,7 +812,7 @@ impl Reader<'_> {
         match sink(sc) {
             Some(f) => {
                 if f.phase == Phase::Result && f.buf.len() < 100_000 {
-                    f.buf.push((Item::Obj(o), props.clone()));
+                    f.buf.push((Item::Obj(Box::new(o)), props.clone()));
                 }
             }
             _ => pb.push_obj(o, props),

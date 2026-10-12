@@ -11,9 +11,9 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod bidi;
+pub mod chart;
 pub mod connector;
 pub mod control;
-pub mod chart;
 pub mod edit;
 pub mod effects;
 pub mod encoding;
@@ -21,6 +21,7 @@ pub mod eq;
 pub mod fields;
 pub mod freeform;
 pub mod graphic;
+pub mod links;
 pub mod math;
 pub mod math_edit;
 pub mod math_latex;
@@ -340,14 +341,22 @@ pub struct Source {
     pub kind: String,
     /// "Last, First; Last, First"
     pub author: String,
+    /// Editor or secondary contributor retained by native citation fields.
+    pub editor: String,
     pub title: String,
     pub year: String,
+    /// Publication month, kept as supplied rather than normalized.
+    pub month: String,
+    /// Publication day, kept as supplied rather than normalized.
+    pub day: String,
     pub publisher: String,
     pub city: String,
     pub journal: String,
     pub volume: String,
     pub pages: String,
     pub url: String,
+    /// Date the web source was accessed, kept as supplied.
+    pub accessed: String,
     /// Digital Object Identifier, stored without inventing a resolver URL.
     pub doi: String,
     pub isbn: String,

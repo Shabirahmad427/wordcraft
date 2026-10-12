@@ -113,6 +113,7 @@ fn oversized_floating_shape_reports_its_overflow_page() {
                 ..Default::default()
             },
             story: None,
+            extra: Default::default(),
             freeform: None,
         },
         &Default::default(),
@@ -1241,7 +1242,7 @@ fn footnote_in_later_column_reflows_the_whole_page_without_losing_text() {
     let anchor = Pos::body(0, 900);
     doc.insert_object(&anchor, InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() }, &Default::default()).unwrap();
 
-    let first_pass = layout_pass(&doc, &mut LayoutCache::new(), &LayoutOptions::default(), &[]).0;
+    let first_pass = layout_pass(&doc, &mut LayoutCache::new(), &LayoutOptions::default(), &HashMap::new(), &[]).0;
     let first_anchor = first_pass.caret(&anchor).expect("first pass places the reference");
     assert_eq!(first_anchor.page, 0, "fixture should place the note on the first page: {first_anchor:?}");
     assert!(first_anchor.x > 300.0, "fixture should anchor in the second column: {first_anchor:?}");
@@ -1552,6 +1553,7 @@ fn tables_and_anchored_shapes_keep_existing_flow_and_report_balance_fallback() {
         story: None,
         freeform: None,
         effects: Default::default(),
+        extra: Default::default(),
     };
     doc.insert_object(&Pos::body(1, 0), shape, &Default::default()).unwrap();
     let mut table = Table::new(1, 1, doc.last_section.text_width());

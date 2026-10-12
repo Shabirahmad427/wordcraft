@@ -8,6 +8,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod chart_mapping;
+mod chart_spec;
 mod crypt;
 mod custom;
 mod custom_xml;
@@ -29,6 +30,8 @@ pub use chart_mapping::{
     AxisBoundChange, AxisChanges, ChartAxisSnapshot, ChartDataChanges, ChartDataSnapshot, ChartEditPlan, ChartSeriesSnapshot, SeriesChanges,
     apply_chart_edit, document_has_chart, inspect_chart_data, prepare_chart_edit,
 };
+/// Render an in-memory chart model through the same chart drawing engine as imported charts.
+pub use chart_spec::chart_items;
 
 pub use crypt::{DEFAULT_SPIN_COUNT, MAX_PASSWORD_CHARS, check_password, decrypt, encrypt, encrypt_with_spin_count, is_encrypted};
 pub use read::read;
@@ -38,6 +41,9 @@ pub use write::{write, write_as};
 pub const PASSWORD_REQUIRED: &str = "this document is protected with a password";
 /// What [`DocxError::WrongPassword`] says.
 pub const WRONG_PASSWORD: &str = "the password is incorrect";
+
+/// Drawing Canvas extension carrying canvas rotation and flips.
+pub(crate) const CANVAS_SPIN_EXT: &str = "urn:wordcraft:canvas-xfrm";
 
 /// Read a package that may be password-protected. Encrypted packages require a password.
 pub fn read_with_password(bytes: &[u8], password: Option<&str>) -> Result<wordcraft_doc::Document, DocxError> {

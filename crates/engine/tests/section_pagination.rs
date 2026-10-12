@@ -163,26 +163,10 @@ fn academic_sections_roundtrip_undo_and_recovery_keep_pagination_and_pixels() {
         assert_eq!((a.w, a.h, a.number, a.section), (b.w, b.h, b.number, b.section));
         let options = wordcraft_render::RenderOptions::default();
         let original = wordcraft_render::render_page(&session.doc, a, 1.0, &options);
-        assert!(
-            original.to_straight() == wordcraft_render::render_page(&reopened.doc, b, 1.0, &options).to_straight(),
-            "pixels changed on page {index}: before {:?}; after {:?}",
-            session
-                .doc
-                .body
-                .iter()
-                .filter_map(|x| x.as_para())
-                .flat_map(|p| p.objects.iter())
-                .filter(|o| matches!(o, InlineObject::Equation { .. }))
-                .collect::<Vec<_>>(),
-            reopened
-                .doc
-                .body
-                .iter()
-                .filter_map(|x| x.as_para())
-                .flat_map(|p| p.objects.iter())
-                .filter(|o| matches!(o, InlineObject::Equation { .. }))
-                .collect::<Vec<_>>()
-        );
+        let rendered_after = wordcraft_render::render_page(&reopened.doc, b, 1.0, &options);
+        let before_bytes = original.to_straight();
+        let after_bytes = rendered_after.to_straight();
+        assert_eq!(before_bytes, after_bytes, "pixels changed on page {index}");
         if let Ok(path) = std::env::var("WORDCRAFT_LAYOUT_CORPUS_DIR") {
             std::fs::create_dir_all(&path).unwrap();
             std::fs::write(std::path::Path::new(&path).join(format!("section-{index}.png")), original.to_png()).unwrap();

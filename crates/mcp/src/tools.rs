@@ -246,13 +246,18 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         "parity" => wrap(b.call("ui.parity", json!({}))),
         "render_page" => {
             if b.has_ui() {
-                let path = std::env::temp_dir().join("wordcraft-mcp-page.png");
-                let path_s = path.to_string_lossy().to_string();
-                match b.call("ui.render", json!({"path": path_s, "page": a.get("page").cloned().unwrap_or(json!(1)), "scale": a.get("scale").cloned().unwrap_or(json!(1.0))})) {
-                    Ok(info) => match std::fs::read(&path) {
-                        Ok(bytes) => ToolResult::image(wordcraft_engine::cmd::insert::base64_encode(&bytes), &info),
-                        Err(e) => ToolResult::error(e.to_string()),
-                    },
+                match b.call(
+                    "ui.render",
+                    json!({"page": a.get("page").cloned().unwrap_or(json!(1)), "scale": a.get("scale").cloned().unwrap_or(json!(1.0))}),
+                ) {
+                    Ok(info) => {
+                        let png = info.get("png").and_then(Value::as_str).unwrap_or("");
+                        if png.is_empty() {
+                            ToolResult::error("the UI renderer returned no PNG data")
+                        } else {
+                            ToolResult::image(png.to_string(), &json!({"width": info["width"], "height": info["height"], "pages": info["pages"]}))
+                        }
+                    }
                     Err(e) => ToolResult::error(e),
                 }
             } else {
@@ -265,19 +270,58 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
                 }
             }
         }
-        "screenshot" => {
-            let path = std::env::temp_dir().join("wordcraft-mcp-shot.png");
-            match b.call("ui.screenshot", json!({"path": path.to_string_lossy()})) {
-                Ok(info) => match std::fs::read(&path) {
-                    Ok(bytes) => ToolResult::image(wordcraft_engine::cmd::insert::base64_encode(&bytes), &info),
-                    Err(e) => ToolResult::error(e.to_string()),
-                },
-                Err(e) => ToolResult::error(e),
+        "screenshot" => match b.call("ui.screenshot", json!({})) {
+            Ok(info) => {
+                let png = info.get("png").and_then(Value::as_str).unwrap_or("");
+                if png.is_empty() {
+                    ToolResult::error("the UI screenshot returned no PNG data")
+                } else {
+                    ToolResult::image(png.to_string(), &json!({"width": info["width"], "height": info["height"]}))
+                }
             }
-        }
+            Err(e) => ToolResult::error(e),
+        },
         "click" => wrap(b.call("ui.click", a.clone())),
         "key" => wrap(b.call("ui.key", a.clone())),
         "ui_inspect" => wrap(b.call("ui.inspect", json!({}))),
         other => ToolResult::error(format!("unknown tool `{other}`")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[derive(Default)]
+    struct RecordingBackend {
+        calls: Vec<(String, Value)>,
+    }
+
+    impl Backend for RecordingBackend {
+        fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+            self.calls.push((method.to_string(), params));
+            Ok(json!({"png": "aVBORw0KGgo=", "width": 1, "height": 1, "pages": 1}))
+        }
+        fn has_ui(&self) -> bool {
+            true
+        }
+        fn describe(&self) -> String {
+            "recording test backend".into()
+        }
+    }
+
+    #[test]
+    fn ui_image_tools_request_inline_png_without_temp_paths() {
+        let mut backend = RecordingBackend::default();
+        let rendered = call_tool(&mut backend, "render_page", &json!({"page": 2}));
+        let screenshot = call_tool(&mut backend, "screenshot", &json!({}));
+        assert!(!rendered.is_error && !screenshot.is_error);
+        assert_eq!(backend.calls[0].0, "ui.render");
+        assert!(backend.calls[0].1.get("path").is_none());
+        assert_eq!(backend.calls[1].0, "ui.screenshot");
+        assert!(backend.calls[1].1.get("path").is_none());
+        assert!(rendered.content[0]["data"].as_str().is_some());
+        assert!(screenshot.content[0]["data"].as_str().is_some());
     }
 }

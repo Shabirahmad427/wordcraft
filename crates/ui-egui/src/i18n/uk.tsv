@@ -1505,7 +1505,6 @@
 	Unchecked symbol	Символ вимкненого стану
 	List entries	Елементи списку
 	Display text	Текст для показу
-	Value	Значення
 	Today	Сьогодні
 	Put the caret in a content control first.	Спершу поставте курсор в елемент керування вмістом.
 	Right-to-Left Table	Таблиця справа наліво
@@ -1536,7 +1535,6 @@
 	Enclosure	Обведення
 	Circle	Коло
 	Change Chart Type	Змінити тип діаграми
-	Chart Design	Конструктор діаграми
 	Type	Тип
 	Edit Data	Редагувати дані
 	Chart Title	Назва діаграми
@@ -1559,7 +1557,6 @@
 	Series {n}	Ряд {n}
 	Type the categories down the side and a column of values per series.	Введіть категорії збоку та стовпець значень для кожного ряду.
 	Categories	Категорії
-	Series name	Назва ряду
 	Remove series	Видалити ряд
 	Remove row	Видалити рядок
 	Add Row	Додати рядок
@@ -1585,7 +1582,6 @@
 	Swap footnotes and endnotes	Поміняти виноски й кінцеві виноски
 	Custom mark:	Власна позначка:
 	Continuous numbering	Наскрізна нумерація
-	Apply	Застосувати
 	Convert Notes	Перетворити примітки
 	A, B, C, …	A, B, C, …
 	Above the item	Над елементом

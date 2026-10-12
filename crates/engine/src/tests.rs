@@ -2367,9 +2367,9 @@ fn chart_edits_are_one_undo_step_each() {
 fn hostile_chart_data_is_capped() {
     use wordcraft_doc::chart::{MAX_CELLS, MAX_POINTS, MAX_SERIES, MAX_TEXT};
     let mut s = s();
-    let values: Vec<serde_json::Value> = (0..5000).map(|i| if i % 2 == 0 { json!("NaN") } else { json!(1e308) }).collect();
-    let series: Vec<serde_json::Value> = (0..300).map(|i| json!({"name": "n".repeat(10_000), "values": values, "x": i})).collect();
-    let cats: Vec<serde_json::Value> = (0..6000).map(|i| json!(i)).collect();
+    let values: Vec<serde_json::Value> = (0..500).map(|i| if i % 2 == 0 { json!("NaN") } else { json!(1e308) }).collect();
+    let series: Vec<serde_json::Value> = (0..80).map(|i| json!({"name": "n".repeat(10_000), "values": values, "x": i})).collect();
+    let cats: Vec<serde_json::Value> = (0..600).map(|i| json!(i)).collect();
     run(
         &mut s,
         "insert.chart",

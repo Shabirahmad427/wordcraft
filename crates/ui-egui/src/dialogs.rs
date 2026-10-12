@@ -2756,6 +2756,20 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                             || crate::i18n::lowercase(&crate::i18n::location(c.location)).contains(&localized_q))
                 })
                 .collect();
+            hits.sort_by_key(|c| {
+                let id = c.id.to_ascii_lowercase();
+                let canonical = c.label.to_lowercase();
+                let localized = crate::i18n::lowercase(tl!(c.label));
+                if id == q {
+                    0
+                } else if id.starts_with(&q) {
+                    1
+                } else if canonical.starts_with(&q) || localized.starts_with(&localized_q) {
+                    2
+                } else {
+                    3
+                }
+            });
             hits.truncate(14);
             let mut close = false;
             for c in hits {
@@ -3836,8 +3850,7 @@ mod tests {
             h.run_steps(4);
             assert!(
                 h.query(egui_kittest::kittest::By::new().role(egui::accesskit::Role::Button).label_contains(expected)).is_some(),
-                "{language}: {query}\n{:?}",
-                h.query_all_by_role(egui::accesskit::Role::Button).collect::<Vec<_>>()
+                "{language}: {query} did not find {expected}"
             );
             assert_eq!(crate::i18n::lowercase("Iİıi"), if language == "tr" { "ıiıi" } else { "ii\u{307}ıi" });
         }

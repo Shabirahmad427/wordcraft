@@ -1,10 +1,20 @@
 # Upstream WordCraft audit — 2026-10-11
 
-Compared fork commit `25f4056c14506d35c90b548f5bcaaf085375df8a` with upstream `main` at
-`dba6e66d53733c2c0fd28355249d24eb3698187e`. The common base is `e4b7d155f15a7784197ba34eeea0b54490d70eb2`;
-the merge includes 25 upstream commits. This audit covers recent merged work and open PRs/issues
-that intersect DOCX integrity, recovery, printing, equations, charts, layout or security. Open PRs
-were not merged.
+Updated 2026-10-11 for the requested sync from fork commit
+`f17dbb3e08c3534412f0f34d8b687f5ec707bf69`. Upstream `main` was fetched at
+`2ffba93b5189410a415970be179dcf481092d756`, 19 commits beyond the prior common commit
+`dba6e66d53733c2c0fd28355249d24eb3698187e`. The merge commit is `f3038b4` (full hash recorded
+after validation); integration follow-up changes are kept as ordinary commits. Open PRs were
+reviewed individually and not auto-merged. The protected `/home/shabir/software/wordcraft`
+checkout and its `fix/failed-save-metadata` branch were not used.
+
+The 19 upstream commits add WordArt/text effects and shape connectors, editable content controls,
+chart creation, accessibility and dialogs, drawing/ink tools, document grid and RTL tables,
+move tracking, section-specific note options and separators, linked text boxes, continuous-break
+column balancing, spreadsheet mail-merge recipients, icons, enclosed characters and phonetic ruby
+text. The fork's chart-preserving writer remains authoritative for imported package-backed charts;
+new model-only chart creation uses upstream chart serialization. The merge needed compatibility
+repairs because fork-owned layout, command and source models differ from current upstream types.
 
 ## Recently merged upstream PRs
 
@@ -39,17 +49,21 @@ source, not a new published release.
 
 | PR | Status | Relevance and overlap | Risk | Recommended action |
 |---|---|---|---|---|
-| [#621](https://github.com/storytold/wordcraft/pull/621) | Open, dirty | Protects native saves against predictable-temp collisions and symlink redirection. Direct overlap with fork atomic save; current `crates/engine/src/io.rs` still uses a predictable sibling `.tmp` and `std::fs::write` | High: original or neighboring files can be overwritten in hostile filesystem conditions | Prioritize a dedicated security review and port only after adapting tests to the fork's save metadata/recovery semantics; do not treat current atomic rename as sufficient protection |
+| [#621](https://github.com/storytold/wordcraft/pull/621) | Open, dirty at last GitHub review | Security fix for predictable temporary filenames/symlinks. The fork already has random exclusive sibling staging, atomic replacement, fsync and symlink-destination rejection in `wordcraft_engine::io::atomic_write`; UI no-path screenshot/render defaults were still unsafe and are now changed to return bytes in memory | Medium: platform-specific atomic replacement and filesystem race guarantees need native testing | Keep the fork's tested writer; review #621 only for any additional platform-specific defense not already present. Do not claim all filesystem threat models are covered |
 | [#612](https://github.com/storytold/wordcraft/pull/612) | Open, clean | Custom XML backing-store preservation. Strong overlap with the fork's bounded package graph and bibliography stores | Medium: duplicate mechanisms could conflict on part naming/relationships | Compare fixtures and edge cases; import missing regression coverage or narrowly scoped gaps, not a parallel preservation pipeline |
-| [#647](https://github.com/storytold/wordcraft/pull/647) | Open, clean | Preserves omitted paragraph defaults; directly relevant to DOCX round-trip fidelity | Medium: interacts with normalized model defaults and guarded-save comparisons | Review against fork preservation tests and retain any missing defaults behavior |
-| [#617](https://github.com/storytold/wordcraft/pull/617) | Open, unknown | Preserves unstyled TOC result ranges; overlaps field/result retention | Medium | Reproduce on fork; adopt if it preserves existing field guards |
-| [#626](https://github.com/storytold/wordcraft/pull/626) | Open, clean | Theme color/font precedence improves DOCX rendering | Low–medium | Review against fork theme/font substitution and add an import/render fixture |
+| [#647](https://github.com/storytold/wordcraft/pull/647) | Open, not merged | Preserves omitted paragraph defaults; directly relevant to DOCX round-trip fidelity | Medium: interacts with normalized model defaults and guarded-save comparisons | Review against the merged fork's omitted-default snapshots before adopting; do not treat the PR as upstream behavior |
+| [#617](https://github.com/storytold/wordcraft/pull/617) | Open, not merged | Preserves unstyled TOC result ranges; overlaps field/result retention | Medium | Reproduce on the integrated fork; adopt narrowly if it preserves field guards |
+| [#626](https://github.com/storytold/wordcraft/pull/626) | Open, not merged | Theme color/font precedence improves DOCX rendering | Low–medium | Compare against fork theme/font substitution and add an import/render fixture before adoption |
 | [#636](https://github.com/storytold/wordcraft/pull/636) | Open, unknown | Keeps active path and dirty flag correct on copy export; overlaps save metadata and recovery | Medium | Compare state-transition tests before porting |
 | [#415](https://github.com/storytold/wordcraft/pull/415) | Open, dirty | Broad chart creation/editing for column/bar/line/pie/area/scatter; fork already has guarded embedded-workbook mappings and atomic edits for bar/line/area/single-series pie/doughnut | High: PR's literal-data charts do not synchronize existing embedded XLSX, which could bypass fork safety | Do not replace fork chart transactions; review only for UI/model ideas that do not mutate foreign charts unsafely |
 | [#392](https://github.com/storytold/wordcraft/pull/392) | Open, dirty | Content-control model/editing; fork preserves SDTs and custom XML but blocks unsafe edits | High: editing bindings without synchronizing custom XML can lose data | Keep read-only guard until binding updates are validated end to end |
 | [#353](https://github.com/storytold/wordcraft/pull/353), [#361](https://github.com/storytold/wordcraft/pull/361), [#390](https://github.com/storytold/wordcraft/pull/390) | Open; clean/clean/dirty | Continuous-break balancing and per-section footnote separators/options overlap fork pagination | Medium | Reproduce with mixed sections/notes; port only behavior not already covered and compare against existing safe fallback |
 | [#366](https://github.com/storytold/wordcraft/pull/366) | Open, unknown | Complex-script formatting preservation overlaps RTL/complex-script DOCX support | Medium | Compare imported run properties and guarded package output before adoption |
 | [#609](https://github.com/storytold/wordcraft/pull/609) | Open, unknown | Windows startup without shipped DXC DLLs; launcher reliability | Medium | Verify Windows package artifact and runtime before adopting |
+
+The three DOCX PRs above remained open and had `merged=false` during the GitHub review; no patch
+was merged solely because it was open or had passing checks. The audited patch descriptions are
+not proof that their behavior is in upstream `main`.
 
 `UNKNOWN`/`DIRTY` is GitHub's mergeability status, not a judgment that the work is invalid.
 
@@ -66,12 +80,28 @@ source, not a new published release.
 | [#584](https://github.com/storytold/wordcraft/issues/584) | Open | Ribbon/context-menu Paste ignores external clipboard while Ctrl+V works | Medium usability bug | Reproduce on Linux/Windows/macOS clipboard adapters |
 | [#529](https://github.com/storytold/wordcraft/issues/529) | Open | RTL tables remain unsupported/incomplete | Medium for right-to-left documents | Add bidi table fixtures without changing guarded XML behavior |
 | [#534](https://github.com/storytold/wordcraft/issues/534) | Open | Font, typesetting and paragraph discrepancies are broad and under-specified | Medium | Triage into reproducible independent reports |
+| [#678](https://github.com/storytold/wordcraft/issues/678) | Open | Control `ui.render`, `ui.screenshot` and the MCP UI bridge used predictable `/tmp` image paths, enabling pre-created symlink/race overwrite attempts | High: could overwrite a file accessible to the app user | Fixed locally for no-path APIs by returning PNG bytes inline; explicit path writes use the atomic writer. Needs post-push hosted verification and native filesystem testing |
+| [#679](https://github.com/storytold/wordcraft/issues/679) | Open | HTML/Markdown output and hyperlink import/click policy did not consistently reject non-web schemes, including newline-obfuscated JavaScript | High: exported links could be unsafe when opened in a browser | Fixed locally with shared scheme validation and regression tests for importer, exporter and click navigation; issue remains open upstream |
+| [#685](https://github.com/storytold/wordcraft/issues/685) | Open | Created charts lack an embedded Excel workbook relationship/data sheet | Medium for edit-in-Excel workflow | Not part of this sync: imported charts retain the fork's safe chart/XLSX synchronization; newly created charts are still model/cache-backed and this report remains open |
 
 ## Integration verification
 
-The merge commit is `f01498726e1a2421f72a8a21ebff646573f74d42` (parents: fork
-`25f4056c14506d35c90b548f5bcaaf085375df8a`, upstream
-`dba6e66d53733c2c0fd28355249d24eb3698187e`). `cargo xtask ci` passed all six gates, and the
-workspace suite passed 1,266 tests with one ignored. Linux GUI/CLI release builds and release-mode
-Windows GNU and macOS Apple Silicon cross-target checks passed. These checks do not establish
-physical-printer, native installer or Microsoft Word/Excel compatibility.
+The merge commit is `f3038b4` (parents: fork `f17dbb3e08c3534412f0f34d8b687f5ec707bf69`,
+upstream `2ffba93b5189410a415970be179dcf481092d756`). Full merge hash:
+`f3038b4f64f481e8cdda03038824c20517e1d89f`. It integrates 19 upstream commits after the common
+base `dba6e66d53733c2c0fd28355249d24eb3698187e`. The working tree's compatibility follow-up is
+committed separately after the merge; no unresolved conflicts remain. The merge required manual
+reconciliation in 22 paths, primarily chart serialization/commands, DOCX package preservation,
+layout state, UI dispatch and locale catalogs.
+
+### Integration follow-up and validation
+
+- Security issue [#678](https://github.com/storytold/wordcraft/issues/678) is still **open upstream**. No-path control screenshots/rendering now return PNG bytes inline, and the MCP bridge no longer creates predictable temporary image files. Explicit file paths use the fork's hardened atomic writer. This mitigates the reported predictable-temp symlink path in tested code; it is not an independent security audit.
+- Security issue [#679](https://github.com/storytold/wordcraft/issues/679) is still **open upstream**. HTML/Markdown export, HTML import and UI hyperlink following now share an allow-list for safe web/mail/fragment/relative destinations and reject unsafe schemes/control characters. This does not substitute for browser-specific URL security testing.
+- DOCX PRs [#647](https://github.com/storytold/wordcraft/pull/647), [#626](https://github.com/storytold/wordcraft/pull/626) and [#617](https://github.com/storytold/wordcraft/pull/617) were rechecked on 2026-10-11 and remain **open with `merged=false`**. None was copied wholesale or represented as part of upstream main. Revisit them individually against the fork's omitted-default, theme and field-preservation fixtures.
+- Chart issue [#685](https://github.com/storytold/wordcraft/issues/685) remains **open**. Existing package-backed editable charts still use the fork's mapped cache/XLSX atomic transactions; charts newly created by WordCraft still do not create embedded Excel workbooks. This synchronization did not implement that separate feature.
+- Full `cargo xtask ci` passed: fmt, Clippy, workspace tests, asset attribution, dependency-layer checks and WASM checks. Workspace totals: **1,420 passed, 0 failed, 1 ignored**. Linux release builds passed for GUI and CLI. Release-mode cross-target checks passed for `x86_64-pc-windows-gnu` and `aarch64-apple-darwin`; these are compile checks, not native runtime tests.
+- The only raster difference discovered during integration was caused by canonical default note separator XML being read back as a custom separator. The reader now normalizes only the exact writer-generated default; styled/custom separator content remains retained. Added a DOCX round-trip test; academic, long-note and NextColumn raster regressions pass.
+- Two additional merge regressions were corrected: text-box bodies are now laid out once for content and overflow reporting, and configured section-end endnotes are placed at their section boundary. UI dialog routing/dirty-state and command search were reconciled with the merged catalog. Russian/Turkish catalogs translate the merged command labels while intentionally retaining English fallback for other untranslated strings.
+
+Hosted workflow statuses for FreeBSD, Windows ARM64 and packaging are checked after the push and recorded with the final pushed commit. Synthetic fixtures and Linux rendering do not establish Microsoft Word/Excel interoperability, native printer compatibility, or full platform runtime behavior.

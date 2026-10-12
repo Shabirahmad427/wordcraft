@@ -1052,20 +1052,11 @@ fn move_revisions_round_trip() {
             assert_eq!(name(c.ins.or(c.del)), None, "{r:?} is no move");
         }
     };
-    let d = read_body(body);
+    let input = docx(body, &[], &[]);
+    let d = wordcraft_docx::read(&input).unwrap();
     check(&d);
     let out = wordcraft_docx::write(&d).unwrap();
-    let xml = text(&unzip(&out), "word/document.xml");
-    assert_eq!(attr_values(&xml, "w:moveFromRangeStart", "w:name"), ["move1"]);
-    assert_eq!(attr_values(&xml, "w:moveToRangeStart", "w:name"), ["move1"]);
-    assert_eq!(attr_values(&xml, "w:moveToRangeStart", "w:author"), ["Ana"]);
-    assert_eq!(attr_values(&xml, "w:moveToRangeStart", "w:id"), attr_values(&xml, "w:moveToRangeEnd", "w:id"));
-    assert_eq!(attr_values(&xml, "w:moveFromRangeStart", "w:id"), attr_values(&xml, "w:moveFromRangeEnd", "w:id"));
-    assert!(xml.contains("<w:moveFrom ") && !xml.contains("<w:delText xml:space=\"preserve\">Moved"), "moved-away text stays in w:t");
-    // The range around the moved paragraph includes its mark: it ends in the next paragraph.
-    let to_start = xml.find("<w:moveToRangeStart").unwrap();
-    let to_end = xml.find("<w:moveToRangeEnd").unwrap();
-    assert!(xml[to_start..to_end].contains("</w:p>"), "{xml}");
+    assert_eq!(out, input, "a no-op save keeps even malformed move-range XML byte-for-byte");
     check(&wordcraft_docx::read(&out).unwrap());
 }
 
@@ -1112,7 +1103,6 @@ fn note_separators_and_continuation_notice_round_trip() {
     }
     assert!(notes.contains(r#"<w:footnote w:id="2">"#), "the note follows the notice: {notes}");
     assert!(part("word/document.xml").contains(r#"<w:footnoteReference w:id="2"/>"#));
-    let settings = part("word/settings.xml");
-    assert!(settings.contains(r#"<w:footnote w:id="-1"/><w:footnote w:id="0"/><w:footnote w:id="1"/>"#), "{settings}");
+    assert_eq!(out, bytes, "a no-op save preserves the complete original package without materializing absent settings");
     check(&wordcraft_docx::read(&out).unwrap());
 }

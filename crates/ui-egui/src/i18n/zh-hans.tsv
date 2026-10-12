@@ -1505,7 +1505,6 @@
 	Unchecked symbol	未选中符号
 	List entries	列表项
 	Display text	显示文本
-	Value	值
 	Today	今天
 	Put the caret in a content control first.	请先将光标放在内容控件中。
 	Right-to-Left Table	从右向左表格
@@ -1536,7 +1535,6 @@
 	Enclosure	圈号
 	Circle	圆形
 	Change Chart Type	更改图表类型
-	Chart Design	图表设计
 	Type	类型
 	Edit Data	编辑数据
 	Chart Title	图表标题
@@ -1559,7 +1557,6 @@
 	Series {n}	系列 {n}
 	Type the categories down the side and a column of values per series.	在左侧输入类别，每个系列输入一列数值。
 	Categories	类别
-	Series name	系列名称
 	Remove series	删除系列
 	Remove row	删除行
 	Add Row	添加行
@@ -1585,7 +1582,6 @@
 	Swap footnotes and endnotes	脚注和尾注互换
 	Custom mark:	自定义标记：
 	Continuous numbering	连续编号
-	Apply	应用
 	Convert Notes	转换注释
 	A, B, C, …	A, B, C, …
 	Above the item	项目上方

@@ -57,7 +57,7 @@ fn bound_control_edit_is_blocked_even_when_outside_text_is_identical() {
     let files = fixture();
     let mut doc = wordcraft_docx::read(&archive(&files)).unwrap();
     // Body 2 is an ordinary paragraph, body 3 is the bound SDT with the same text.
-    assert_eq!(doc.para(StoryRef::Body, &Path::top(2)).unwrap().text, doc.para(StoryRef::Body, &Path::top(3)).unwrap().text);
+    assert_eq!(doc.para(StoryRef::Body, &Path::top(2)).unwrap().text, doc.para(StoryRef::Body, &Path::top(3)).unwrap().text.replace('\u{fffc}', ""));
     insert(&mut doc, 3, "Protected: ");
     let error = wordcraft_docx::write(&doc).unwrap_err().to_string();
     assert!(error.contains("protected block structure"), "{error}");
@@ -65,7 +65,7 @@ fn bound_control_edit_is_blocked_even_when_outside_text_is_identical() {
     insert(&mut outside, 2, "Outside: ");
     let saved = wordcraft_docx::write(&outside).unwrap();
     let reopened = wordcraft_docx::read(&saved).unwrap();
-    assert_eq!(reopened.para(StoryRef::Body, &Path::top(3)).unwrap().text, "Shared text");
+    assert_eq!(reopened.para(StoryRef::Body, &Path::top(3)).unwrap().text, "\u{fffc}Shared text\u{fffc}");
     assert!(reopened.para(StoryRef::Body, &Path::top(2)).unwrap().text.starts_with("Outside: "));
 }
 #[test]

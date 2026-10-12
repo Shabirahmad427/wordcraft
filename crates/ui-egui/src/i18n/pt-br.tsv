@@ -1505,7 +1505,6 @@
 	Unchecked symbol	Símbolo desmarcado
 	List entries	Itens da lista
 	Display text	Texto exibido
-	Value	Valor
 	Today	Hoje
 	Put the caret in a content control first.	Coloque primeiro o cursor em um controle de conteúdo.
 	Right-to-Left Table	Tabela da direita para a esquerda
@@ -1536,7 +1535,6 @@
 	Enclosure	Contorno
 	Circle	Círculo
 	Change Chart Type	Alterar tipo de gráfico
-	Chart Design	Design do gráfico
 	Type	Tipo
 	Edit Data	Editar dados
 	Chart Title	Título do gráfico
@@ -1559,7 +1557,6 @@
 	Series {n}	Série {n}
 	Type the categories down the side and a column of values per series.	Digite as categorias na lateral e uma coluna de valores por série.
 	Categories	Categorias
-	Series name	Nome da série
 	Remove series	Remover série
 	Remove row	Remover linha
 	Add Row	Adicionar linha
@@ -1585,7 +1582,6 @@
 	Swap footnotes and endnotes	Trocar notas de rodapé e notas de fim
 	Custom mark:	Marca personalizada:
 	Continuous numbering	Numeração contínua
-	Apply	Aplicar
 	Convert Notes	Converter notas
 	A, B, C, …	A, B, C, …
 	Above the item	Acima do item

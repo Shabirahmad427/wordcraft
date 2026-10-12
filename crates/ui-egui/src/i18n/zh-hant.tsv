@@ -1494,7 +1494,6 @@
 	Unchecked symbol	未勾選符號
 	List entries	清單項目
 	Display text	顯示文字
-	Value	值
 	Today	今天
 	Put the caret in a content control first.	請先將游標放在內容控制項中。
 	Right-to-Left Table	從右至左表格
@@ -1525,7 +1524,6 @@
 	Enclosure	圍繞符號
 	Circle	圓形
 	Change Chart Type	變更圖表類型
-	Chart Design	圖表設計
 	Type	類型
 	Edit Data	編輯資料
 	Chart Title	圖表標題
@@ -1548,7 +1546,6 @@
 	Series {n}	數列 {n}
 	Type the categories down the side and a column of values per series.	在左側輸入類別，每個數列輸入一欄數值。
 	Categories	類別
-	Series name	數列名稱
 	Remove series	移除數列
 	Remove row	移除列
 	Add Row	新增列
@@ -1574,7 +1571,6 @@
 	Swap footnotes and endnotes	註腳與章節附註互換
 	Custom mark:	自訂標記：
 	Continuous numbering	連續編號
-	Apply	套用
 	Convert Notes	轉換附註
 	A, B, C, …	A, B, C, …
 	Above the item	項目上方

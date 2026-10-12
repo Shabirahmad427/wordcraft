@@ -5,16 +5,19 @@
 use std::io::Write;
 
 use wordcraft_doc::control::{ControlKind, ControlLock, ListItem};
-use wordcraft_doc::{Block, ContentControl, Document, StoryRef};
+use wordcraft_doc::{ContentControl, Document, StoryRef};
 use wordcraft_docx::{read, write};
 
 const NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml""#;
 const ROOT_RELS: &str = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+const CONTENT_TYPES: &str = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
 
 fn package(body: &str) -> Vec<u8> {
     let doc = format!(r#"<w:document {NS}><w:body>{body}</w:body></w:document>"#);
     let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    for (name, bytes) in [("_rels/.rels", ROOT_RELS.as_bytes()), ("word/document.xml", doc.as_bytes())] {
+    for (name, bytes) in
+        [("[Content_Types].xml", CONTENT_TYPES.as_bytes()), ("_rels/.rels", ROOT_RELS.as_bytes()), ("word/document.xml", doc.as_bytes())]
+    {
         zw.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
         zw.write_all(bytes).unwrap();
     }
@@ -179,8 +182,9 @@ fn controls_round_trip() {
 }
 
 #[test]
-fn edited_documents_still_write_whole_controls() {
+fn editing_guarded_content_controls_fails_without_changing_preserved_package_data() {
     let mut d = read(&form()).unwrap();
+    let original_passthrough = d.passthrough.clone();
     // Merge the block control's first paragraph into the one before nothing: delete across the
     // start of the inline name control and the end of the block control.
     let ranges = d.control_ranges(StoryRef::Body);
@@ -189,19 +193,14 @@ fn edited_documents_still_write_whole_controls() {
     let from = wordcraft_doc::Pos { off: 3, ..intro.end.clone() };
     let to = wordcraft_doc::Pos { off: name.start.off + 4, ..name.start.clone() };
     d.delete_range(&from, &to).unwrap();
-    // Both controls are still there, emptied where the deletion went through them.
+    // The retained package includes metadata/data-binding structures which this edit cannot
+    // safely reconcile, so the writer must reject rather than flatten or partially rewrite them.
     let after = d.control_ranges(StoryRef::Body);
     assert!(after.iter().any(|r| r.control.id == Some(7)));
     assert!(after.iter().any(|r| r.control.title == "Intro"));
-    let back = read(&write(&d).unwrap()).unwrap();
-    assert_eq!(controls(&back).len(), controls(&d).len());
-    // An orphan marker (a table carrying an open that lost its table) is dropped on save.
-    if let Some(Block::Table(t)) = d.body.iter_mut().rev().find(|b| b.as_table().is_some()).map(std::sync::Arc::make_mut) {
-        t.controls.close = 0;
-    }
-    assert!(d.has_unbalanced_controls());
-    let back = read(&write(&d).unwrap()).unwrap();
-    assert!(!back.has_unbalanced_controls());
+    let error = write(&d).expect_err("unsafe structural edit must be guarded");
+    assert!(error.to_string().contains("structural editing of a guarded DOCX is unsupported"), "{error}");
+    assert_eq!(d.passthrough, original_passthrough, "a rejected save leaves preserved package parts intact");
 }
 
 #[test]

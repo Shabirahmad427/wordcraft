@@ -1507,7 +1507,6 @@
 	Unchecked symbol	Симбол за непотврђено
 	List entries	Ставке листе
 	Display text	Приказани текст
-	Value	Вредност
 	Today	Данас
 	Put the caret in a content control first.	Прво поставите курсор у контролу садржаја.
 	Right-to-Left Table	Табела са десна на лево
@@ -1538,7 +1537,6 @@
 	Enclosure	Оквир
 	Circle	Круг
 	Change Chart Type	Промени тип графикона
-	Chart Design	Дизајн графикона
 	Type	Тип
 	Edit Data	Уреди податке
 	Chart Title	Наслов графикона
@@ -1561,7 +1559,6 @@
 	Series {n}	Серија {n}
 	Type the categories down the side and a column of values per series.	Унесите категорије са стране и по једну колону вредности за сваку серију.
 	Categories	Категорије
-	Series name	Назив серије
 	Remove series	Уклони серију
 	Remove row	Уклони ред
 	Add Row	Додај ред
@@ -1587,7 +1584,6 @@
 	Swap footnotes and endnotes	Замени фусноте и ендноте
 	Custom mark:	Посебна ознака:
 	Continuous numbering	Непрекидна нумерација
-	Apply	Примени
 	Convert Notes	Претвори напомене
 	A, B, C, …	A, B, C, …
 	Above the item	Изнад ставке

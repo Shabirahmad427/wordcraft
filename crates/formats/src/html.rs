@@ -1004,9 +1004,7 @@ impl<'r> Builder<'r> {
                 }
             }
             "a" => {
-                if let Some(h) =
-                    attr(attrs, "href").filter(|h| !h.trim().is_empty() && !h.trim_start().to_ascii_lowercase().starts_with("javascript:"))
-                {
+                if let Some(h) = attr(attrs, "href").filter(|h| wordcraft_doc::links::safe_hyperlink_target(h)) {
                     fmt.link = Some(h.trim().to_string());
                 }
             }
@@ -1205,7 +1203,7 @@ pub fn inlines_html(inlines: &[Inline]) -> String {
             Inline::Text(t, f) => {
                 let mut open = String::new();
                 let mut close: Vec<&str> = Vec::new();
-                if let Some(l) = &f.link {
+                if let Some(l) = f.link.as_ref().filter(|l| wordcraft_doc::links::safe_hyperlink_target(l)) {
                     open.push_str(&format!("<a href=\"{}\">", esc(l)));
                     close.push("</a>");
                 }
@@ -1583,6 +1581,17 @@ mod tests {
         assert!(matches!(&p.inlines[0], Inline::Text(t, f) if t == "red" && f.bold && f.color == Some(wordcraft_doc::Rgb(255,0,0))));
         assert!(p.inlines.iter().any(|i| matches!(i, Inline::Text(t, f) if t == "l" && f.link.as_deref() == Some("http://x"))));
         assert!(p.text().ends_with("l\nn"));
+    }
+
+    #[test]
+    fn unsafe_html_links_are_dropped_on_import_and_export() {
+        let imported = parse("<p><a href='java&#10;script:alert(1)'>unsafe</a></p>");
+        let FBlock::Para(p) = &imported.blocks[0] else { panic!() };
+        assert!(!p.inlines.iter().any(|inline| matches!(inline, Inline::Text(_, f) if f.link.is_some())));
+        let inlines = vec![Inline::Text("unsafe".into(), Fmt { link: Some("javascript:alert(1)".into()), ..Default::default() })];
+        let html = inlines_html(&inlines);
+        assert!(!html.contains("<a "), "{html}");
+        assert!(html.contains("unsafe"));
     }
 
     #[test]

@@ -169,6 +169,7 @@ impl Writer<'_> {
                 w.open("w:rPr", &[]);
                 for (idx, tag) in mark_revs {
                     let (id, author, date) = self.rev_attrs(idx);
+                    let tag = self.rev_tag(idx, tag);
                     if date.is_empty() {
                         w.empty(tag, &[("w:id", &id), ("w:author", &author)]);
                     } else {
@@ -514,14 +515,23 @@ impl Writer<'_> {
             // the graphic inside as read. Ones made some other way have nothing to write, except
             // charts with a model (made or edited in WordCraft).
             InlineObject::Graphic { w: gw, h: gh, alt, float, graphic } => {
-                let Some(src) = graphic.source.as_deref() else {
-                    self.preservation_error = Some(crate::DocxError::Preservation("chart or diagram source markup is missing".into()));
-                    return;
-                };
-                let Some(inner) = self.embedded_xml(src, rels, None) else {
-                    self.preservation_error =
-                        Some(crate::DocxError::Preservation("chart or diagram dependencies could not be written safely".into()));
-                    return;
+                // Existing package-backed charts always use their guarded source graph so chart
+                // edits keep synchronized workbook parts. Only new model-only charts use the
+                // upstream chart-spec writer.
+                let inner = match (graphic.chart.as_deref(), graphic.source.as_deref()) {
+                    (Some(spec), None) => self.chart_graphic(spec, rels),
+                    (_, Some(src)) => {
+                        let Some(inner) = self.embedded_xml(src, rels, None) else {
+                            self.preservation_error =
+                                Some(crate::DocxError::Preservation("chart or diagram dependencies could not be written safely".into()));
+                            return;
+                        };
+                        inner
+                    }
+                    (None, None) => {
+                        self.preservation_error = Some(crate::DocxError::Preservation("chart or diagram source markup is missing".into()));
+                        return;
+                    }
                 };
                 self.rev_open(w, props);
                 w.open("w:r", &[]);
@@ -543,7 +553,7 @@ impl Writer<'_> {
             InlineObject::Image { media, w: iw, h: ih, alt, float, ole, .. } => {
                 // An OLE object read from a file: the object itself, at its current size.
                 if let Some(src) = ole.as_deref() {
-                    let Some(obj) = self.embedded_xml(src, rels, Some((*iw, *ih, float))) else {
+                    let Some(obj) = self.embedded_xml(src, rels, Some((*iw, *ih, float, alt.as_str()))) else {
                         self.preservation_error = Some(crate::DocxError::Preservation("OLE object dependencies could not be written safely".into()));
                         return;
                     };

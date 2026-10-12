@@ -1503,7 +1503,6 @@
 	Unchecked symbol	Simbol za nepotvrđeno
 	List entries	Stavke liste
 	Display text	Prikazani tekst
-	Value	Vrednost
 	Today	Danas
 	Put the caret in a content control first.	Prvo postavite kursor u kontrolu sadržaja.
 	Right-to-Left Table	Tabela sa desna na levo
@@ -1534,7 +1533,6 @@
 	Enclosure	Okvir
 	Circle	Krug
 	Change Chart Type	Promeni tip grafikona
-	Chart Design	Dizajn grafikona
 	Type	Tip
 	Edit Data	Uredi podatke
 	Chart Title	Naslov grafikona
@@ -1557,7 +1555,6 @@
 	Series {n}	Serija {n}
 	Type the categories down the side and a column of values per series.	Unesite kategorije sa strane i po jednu kolonu vrednosti za svaku seriju.
 	Categories	Kategorije
-	Series name	Naziv serije
 	Remove series	Ukloni seriju
 	Remove row	Ukloni red
 	Add Row	Dodaj red
@@ -1583,7 +1580,6 @@
 	Swap footnotes and endnotes	Zameni fusnote i endnote
 	Custom mark:	Posebna oznaka:
 	Continuous numbering	Neprekidna numeracija
-	Apply	Primeni
 	Convert Notes	Pretvori napomene
 	A, B, C, …	A, B, C, …
 	Above the item	Iznad stavke

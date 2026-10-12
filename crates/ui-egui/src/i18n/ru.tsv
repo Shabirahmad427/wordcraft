@@ -1833,3 +1833,57 @@ preview	Title	Пример
 	Two-sided, short edge	Двусторонняя, переворот по короткому краю
 	Value	Значение
 	{selected} of {pages} pages	Страниц: выбрано {selected} из {pages}
+	Accessibility Pane	Панель специальных возможностей
+	Add Chart Element	Добавить элемент диаграммы
+	Add Pen	Добавить перо
+	Align Text	Выравнивание текста
+	Alt Text Pane	Панель замещающего текста
+	Break Link	Разорвать связь
+	Building Block Gallery Content Control	Элемент управления коллекцией экспресс-блоков
+	Canvas Member	Элемент холста
+	Change Chart Type	Изменить тип диаграммы
+	Chart Layouts	Макеты диаграммы
+	Chart Title	Название диаграммы
+	Check Box Content Control	Элемент управления с флажком
+	Choose List Item	Выбрать элемент списка
+	Combo Box Content Control	Поле со списком
+	Connect Shapes	Соединить фигуры
+	Content Control at Selection	Элемент управления в выделении
+	Controls	Элементы управления
+	Convert Notes	Преобразовать сноски и концевые сноски
+	Convert to Shapes	Преобразовать в фигуры
+	Create Link	Создать связь
+	Data Labels	Подписи данных
+	Date Picker Content Control	Элемент управления выбором даты
+	Delete Selected Ink	Удалить выбранный рукописный объект
+	Design Mode	Режим конструктора
+	Developer	Разработчик
+	Document Grid	Сетка документа
+	Drawing Canvas	Холст для рисования
+	Drop-Down List Content Control	Элемент управления раскрывающимся списком
+	Expand	Развернуть
+	Fit	Вписать
+	Icon Color	Цвет значка
+	Ink Replay	Повтор рукописного ввода
+	Ink to Shape	Преобразовать рукописный ввод в фигуру
+	Lasso Select	Выделение лассо
+	Legend	Легенда
+	Manual Hyphenation	Расстановка переносов вручную
+	Move Selected Ink	Переместить выбранный рукописный объект
+	Picture Content Control	Элемент управления рисунком
+	Plain Text Content Control	Элемент управления обычным текстом
+	Recolor Selected Ink	Изменить цвет выбранного рукописного объекта
+	Remove Content Control	Удалить элемент управления содержимым
+	Remove Pen	Удалить перо
+	Repeating Section Content Control	Элемент управления повторяющимся разделом
+	Rich Text Content Control	Элемент управления форматированным текстом
+	Right-to-Left Section	Раздел справа налево
+	Right-to-Left Table	Таблица справа налево
+	Scale Drawing	Масштабировать рисунок
+	Set Date	Установить дату
+	Text Fill	Заливка текста
+	Text Outline	Контур текста
+	Toggle Check Box	Переключить флажок
+	Transform	Преобразование
+	Type	Тип
+	WordArt Styles	Стили декоративного текста

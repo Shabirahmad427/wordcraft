@@ -4,6 +4,8 @@ use serde_json::{Value, json};
 
 use crate::{CmdError, CmdResult, CommandSpec, Session, p};
 
+pub use super::chart_create::{redraw, selected_chart};
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("chart.inspectData", "Inspect Chart Data", "Agents", inspect_data)
@@ -33,6 +35,11 @@ fn inspect_data(session: &mut Session, params: &Value) -> CmdResult {
 }
 
 fn edit_data(session: &mut Session, params: &Value) -> CmdResult {
+    // Model-only charts inserted by Insert › Chart use the same public command id, while
+    // package-backed charts keep the validated chart/XLSX transaction below.
+    if params.get("documentId").is_none() && params.get("chartPart").is_none() {
+        return super::chart_create::edit_model_data(session, params);
+    }
     let document_id =
         params.get("documentId").and_then(Value::as_u64).ok_or_else(|| CmdError::Params("`documentId` (integer) is required".into()))?;
     if document_id != session.document_id() {

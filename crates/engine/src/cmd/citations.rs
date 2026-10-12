@@ -346,13 +346,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("insert.crossReference", "Cross-reference", "Insert › Links", cross_ref)
             .params(r#"{"to": "heading|bookmark|figure|table|equation", "target": string (text / name / number), "show"?: "text|page|number|aboveBelow"} or {} to list targets"#),
         CommandSpec::new("references.noteOptions", "Footnote and Endnote", "References › Footnotes", |s, v| {
-            if let Some(f) = p::str(v, "footnoteFormat") {
-                s.doc.settings.footnote_format = wordcraft_doc::section::NumFormat::from_ooxml(f);
-            }
-            if let Some(f) = p::str(v, "endnoteFormat") {
-                s.doc.settings.endnote_format = wordcraft_doc::section::NumFormat::from_ooxml(f);
-            }
-            Ok(json!({"footnoteFormat": s.doc.settings.footnote_format, "endnoteFormat": s.doc.settings.endnote_format}))
+            super::references::note_options(s, v)
         })
         .params(r#"{"footnoteFormat"?: "decimal|lowerRoman|upperRoman|lowerLetter|upperLetter", "endnoteFormat"?: …}"#),
         CommandSpec::new("references.researcher", "Researcher", "References › Research", |s, _| {

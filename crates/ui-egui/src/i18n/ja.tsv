@@ -1493,7 +1493,6 @@
 	Unchecked symbol	オフの記号
 	List entries	リストの項目
 	Display text	表示テキスト
-	Value	値
 	Today	今日
 	Put the caret in a content control first.	先にカーソルをコンテンツ コントロールに置いてください。
 	Right-to-Left Table	右から左の表
@@ -1524,7 +1523,6 @@
 	Enclosure	囲い
 	Circle	円
 	Change Chart Type	グラフの種類の変更
-	Chart Design	グラフのデザイン
 	Type	種類
 	Edit Data	データの編集
 	Chart Title	グラフ タイトル
@@ -1547,7 +1545,6 @@
 	Series {n}	系列 {n}
 	Type the categories down the side and a column of values per series.	左端の列にカテゴリを、系列ごとに 1 列ずつ値を入力します。
 	Categories	カテゴリ
-	Series name	系列名
 	Remove series	系列を削除
 	Remove row	行を削除
 	Add Row	行の追加
@@ -1573,7 +1570,6 @@
 	Swap footnotes and endnotes	脚注と文末脚注を入れ替え
 	Custom mark:	独自の記号:
 	Continuous numbering	通し番号
-	Apply	適用
 	Convert Notes	注の変換
 	A, B, C, …	A, B, C, …
 	Above the item	項目の上

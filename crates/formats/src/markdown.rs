@@ -1125,8 +1125,9 @@ fn inlines_md(inlines: &[Inline]) -> String {
         }
     };
     for (text, f, raw) in pieces {
+        let safe_link = f.link.as_ref().filter(|link| wordcraft_doc::links::safe_hyperlink_target(link)).cloned();
         // Links are the outermost construct.
-        if f.link != link || raw.is_some() {
+        if safe_link != link || raw.is_some() {
             close_all(&mut out, &mut stack);
             if let Some(l) = &link {
                 out.push_str(&format!("]({})", link_target(l)));
@@ -1136,9 +1137,9 @@ fn inlines_md(inlines: &[Inline]) -> String {
                 out.push_str(&r);
                 continue;
             }
-            if let Some(l) = &f.link {
+            if let Some(l) = safe_link {
                 out.push('[');
-                link = Some(l.clone());
+                link = Some(l);
             }
         }
         let want: Vec<Mark> =
@@ -1411,5 +1412,16 @@ mod tests {
         let FBlock::Para(q) = &back.blocks[0] else { panic!() };
         assert_eq!(q.text(), "1. not a list *really*");
         assert!(q.list.is_none());
+    }
+
+    #[test]
+    fn unsafe_links_export_as_plain_text() {
+        let mut p = Para::default();
+        p.push_text("danger", &Fmt { link: Some("java\nscript:alert(1)".into()), ..Default::default() });
+        p.push_text("safe", &Fmt { link: Some("https://example.test".into()), ..Default::default() });
+        let md = inlines_md(&p.inlines);
+        assert!(!md.to_ascii_lowercase().contains("javascript:"), "{md:?}");
+        assert!(md.contains("danger"));
+        assert!(md.contains("[safe](https://example.test)"), "{md:?}");
     }
 }
