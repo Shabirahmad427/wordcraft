@@ -2,7 +2,12 @@
 
 use std::{path::PathBuf, process::Command};
 
-use wordcraft_engine::doc::{Document, Paragraph, PartKind, Pos, TextBody, para::InlineObject, para::ShapeKind, para_block, props::TextVert};
+use wordcraft_engine::doc::{
+    Document, Paragraph, PartKind, Pos, TextBody,
+    para::{Anchor, Float, InlineObject, ShapeKind, Wrap},
+    para_block,
+    props::TextVert,
+};
 
 struct Scratch(PathBuf);
 
@@ -87,7 +92,7 @@ fn cli_edit_docx_roundtrip_and_pdf_export_preserve_image_text_and_pages() {
         .insert_object(
             &Pos::body(0, 0),
             InlineObject::Image {
-                media: image,
+                media: image.clone(),
                 w: 36.0,
                 h: 24.0,
                 alt: "Synthetic pipeline test image".into(),
@@ -98,6 +103,21 @@ fn cli_edit_docx_roundtrip_and_pdf_export_preserve_image_text_and_pages() {
             &Default::default(),
         )
         .expect("insert synthetic image");
+    document
+        .insert_object(
+            &Pos::body(1, 0),
+            InlineObject::Image {
+                media: image,
+                w: 36.0,
+                h: 24.0,
+                alt: "Synthetic floating image".into(),
+                float: Float { wrap: Wrap::Square, h_rel: Anchor::Page, v_rel: Anchor::Page, x: 360.0, y: 72.0, ..Default::default() },
+                crop: [0.0; 4],
+                ole: None,
+            },
+            &Default::default(),
+        )
+        .expect("insert synthetic floating image");
     let source_bytes = wordcraft_engine::io::save_bytes("source.docx", &document).expect("write source fixture");
     std::fs::write(&source, &source_bytes).expect("save source fixture");
 
@@ -134,7 +154,19 @@ fn cli_edit_docx_roundtrip_and_pdf_export_preserve_image_text_and_pages() {
         .flat_map(|paragraph| paragraph.objects.iter())
         .filter(|object| matches!(object, InlineObject::Image { .. }))
         .count();
-    assert_eq!(image_count, 1, "CLI text editing and DOCX save/reopen must retain the inserted image");
+    assert_eq!(image_count, 2, "CLI text editing and DOCX save/reopen must retain inline and floating images");
+    let image_objects: Vec<_> = reopened
+        .body
+        .iter()
+        .filter_map(|block| block.as_para())
+        .flat_map(|paragraph| paragraph.objects.iter())
+        .filter_map(|object| match object {
+            InlineObject::Image { float, .. } => Some(float),
+            _ => None,
+        })
+        .collect();
+    assert!(image_objects.iter().any(|float| float.wrap == Wrap::Inline));
+    assert!(image_objects.iter().any(|float| float.wrap == Wrap::Square && float.h_rel == Anchor::Page));
     let vertical_box = reopened.parts.values().find(|part| part.kind == PartKind::TextBox && part.body.vert == TextVert::Vert);
     assert!(vertical_box.is_some(), "CLI round-trip must retain vertical text-box direction");
 
@@ -147,6 +179,16 @@ fn cli_edit_docx_roundtrip_and_pdf_export_preserve_image_text_and_pages() {
     assert!(pdf_bytes.starts_with(b"%PDF-"), "CLI must produce a PDF document");
     let pdf_source = String::from_utf8_lossy(&pdf_bytes);
     assert!(pdf_source.contains("/Subtype/Image"), "image should be emitted as a PDF image XObject");
+
+    let raster = scratch.path("edited.png");
+    let output = cli()
+        .args(["render", edited.to_str().expect("UTF-8 temp path"), raster.to_str().expect("UTF-8 temp path"), "--page", "1", "--scale", "2"])
+        .output()
+        .expect("run CLI page rendering");
+    assert_success(output, "page raster rendering");
+    let raster = image::open(raster).expect("decode rendered page PNG").to_rgba8();
+    let blue_pixels = raster.pixels().filter(|pixel| pixel[0] < 70 && pixel[1] > 70 && pixel[2] > 150).count();
+    assert!(blue_pixels > 4_000, "inline and floating images must both be visibly rasterized, found {blue_pixels} blue pixels");
 
     let info =
         assert_success(cli().args(["info", edited.to_str().expect("UTF-8 temp path")]).output().expect("run CLI info"), "pagination inspection");

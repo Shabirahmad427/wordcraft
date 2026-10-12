@@ -5,6 +5,26 @@ The reproducible package-integrity benchmark and current Word-reference evidence
 are synthetic; package-preservation results are not Microsoft Word rendering or editability
 verification.
 
+## Opening-path consistency and visual regression coverage
+
+Desktop launch arguments (including file association), File → Open, recent files, drops and file
+picker results all enter through the `file.open` engine command. The CLI now uses
+`open_path_with_source` too, so its session retains the original Word-package bytes for guarded
+package-backed operations instead of only retaining the imported document model. Both paths use
+the same DOCX importer and relationship resolution; document rasterization and PDF export use the
+same paginated layout with separate raster/vector renderers.
+
+Synthetic regressions verify an inline image and a page-anchored floating image survive CLI edit,
+save and reopen, and that both paint visible pixels in CLI page PNG output. A UI-open regression
+opens a generated DOCX through `file.open`, verifies a vertical text box remains top-to-bottom in
+layout and in the rendered ink bounds, checks visible image pixels, and requires the UI page PNG to
+match `file.exportPng` exactly. A headless app-window screenshot of the synthetic page was visually
+reviewed. The CLI pipeline also checks multipage content, a continuous section transition, PDF
+export and original-input byte stability. These synthetic checks do not reproduce upstream issue
+[#963](https://github.com/storytold/wordcraft/issues/963): no reporter document or minimal sequence
+is available, so the reported symptom and its cause remain unverified. They do not constitute
+Microsoft Word 365 comparison.
+
 ## Phase 6C table-edit audit
 
 WordCraft's existing table model and commands support row/column insertion and deletion, cell

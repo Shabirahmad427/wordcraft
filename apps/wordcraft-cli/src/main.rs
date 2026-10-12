@@ -44,9 +44,10 @@ USAGE:
 ";
 
 fn open(path: &str) -> Result<Session, String> {
-    let doc = wordcraft_engine::io::open_path(std::path::Path::new(path))?;
+    let (doc, source_package) = wordcraft_engine::io::open_path_with_source(std::path::Path::new(path))?;
     let mut s = Session::new(doc);
     s.path = Some(path.into());
+    s.source_package = source_package;
     Ok(s)
 }
 
@@ -431,6 +432,21 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).into()).collect()
+    }
+
+    #[test]
+    fn opening_a_docx_in_the_cli_retains_its_source_package() {
+        let path = std::env::temp_dir().join(format!("wordcraft-cli-source-package-{}.docx", std::process::id()));
+        let document = wordcraft_doc::Document::from_text("Synthetic source package");
+        let bytes = wordcraft_engine::io::save_bytes("source.docx", &document).expect("encode test DOCX");
+        std::fs::write(&path, &bytes).expect("write test DOCX");
+
+        let session = open(path.to_str().expect("UTF-8 temporary path")).expect("open test DOCX");
+        assert_eq!(session.path.as_deref(), Some(path.as_path()));
+        let package = session.source_package.as_ref().expect("CLI must retain package provenance like desktop file.open");
+        assert_eq!(package.bytes.as_ref(), &bytes);
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

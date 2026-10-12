@@ -4296,6 +4296,131 @@ mod tests {
         assert_eq!(v["result"]["height"], 1, "{v}");
     }
 
+    /// #963's reported open path: a desktop app open must load raster media and retain the
+    /// vertical text-box direction through the UI's actual `file.open` command and page renderer.
+    #[test]
+    fn file_open_renders_embedded_image_and_vertical_textbox() {
+        use wordcraft_doc::{
+            InlineObject, Paragraph, PartKind, Pos, TextBody,
+            para::{Float, ShapeKind},
+            para_block,
+            props::TextVert,
+        };
+
+        let dir = scratch("issue-963-render");
+        let path = dir.join("synthetic.docx");
+        let mut doc = wordcraft_doc::Document::from_text("Synthetic open-path visual check");
+        let box_id = doc.add_part(PartKind::TextBox, vec![para_block(Paragraph::with_text("VERTICAL", Default::default()))]);
+        if let Some(part) = doc.parts.get_mut(&box_id) {
+            part.body = TextBody { vert: TextVert::Vert, ..Default::default() };
+        }
+        let textbox = InlineObject::Shape {
+            kind: ShapeKind::TextBox,
+            w: 36.0,
+            h: 150.0,
+            fill: None,
+            stroke: None,
+            stroke_width: 0.0,
+            float: Float::default(),
+            story: Some(box_id),
+            effects: Default::default(),
+            freeform: None,
+            extra: Default::default(),
+        };
+        let anchor = doc.body.first().and_then(|block| block.as_para()).map_or(0, Paragraph::len);
+        doc.insert_object(&Pos::body(0, anchor), textbox, &Default::default()).expect("insert vertical text box");
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(12, 8, image::Rgba([30, 120, 210, 255])).write_to(&mut png, image::ImageFormat::Png).expect("encode image");
+        let media = doc.add_media(png.into_inner(), "png");
+        doc.insert_object(
+            &Pos::body(0, 0),
+            InlineObject::Image { media, w: 36.0, h: 24.0, alt: "Visible test image".into(), float: Float::default(), crop: [0.0; 4], ole: None },
+            &Default::default(),
+        )
+        .expect("insert embedded image");
+        for index in 0..40 {
+            doc.body.push(para_block(Paragraph::with_text(&format!("Page flow {index}"), Default::default())));
+            if index == 10 {
+                let mut section_end = Paragraph::with_text("Continuous section transition", Default::default());
+                section_end.section =
+                    Some(Box::new(wordcraft_doc::SectionProps { start: wordcraft_doc::section::SectionStart::Continuous, ..Default::default() }));
+                doc.body.push(para_block(section_end));
+            }
+        }
+        let bytes = wordcraft_engine::io::save_bytes("synthetic.docx", &doc).expect("encode synthetic DOCX");
+        if let Some(path) = std::env::var_os("WORDCRAFT_ISSUE963_DOCX_PATH") {
+            std::fs::write(path, &bytes).expect("write optional synthetic DOCX for GUI visual review");
+        }
+        std::fs::write(&path, bytes).expect("write synthetic DOCX");
+
+        let mut app = WordApp::new(Session::new(wordcraft_doc::Document::new()), Services::default());
+        app.run("file.open", json!({"path": path.to_string_lossy()})).expect("desktop file.open command");
+        let loaded_box =
+            app.session.doc.parts.iter().find_map(|(id, part)| (part.kind == PartKind::TextBox && part.body.vert == TextVert::Vert).then_some(*id));
+        let box_id = loaded_box.expect("vertical text-box metadata survives DOCX import");
+        let layout = app.session.export_layout();
+        assert!(layout.pages.len() >= 2, "the synthetic document exercises multipage rendering");
+        let (page_index, frame) = layout
+            .pages
+            .iter()
+            .enumerate()
+            .find_map(|(page_index, page)| {
+                page.items.iter().find_map(|item| match item {
+                    wordcraft_layout::Placed::Object { rect, text_box: Some(id), .. } if *id == box_id => Some((page_index, *rect)),
+                    _ => None,
+                })
+            })
+            .expect("text-box frame is placed in the GUI layout");
+        let turn = layout.pages[page_index].items.iter().find_map(|item| match item {
+            wordcraft_layout::Placed::Lines { story: wordcraft_doc::StoryRef::Part(id), turn, .. } if *id == box_id => Some(*turn),
+            _ => None,
+        });
+        assert_eq!(turn, Some(wordcraft_doc::props::TextDirection::Down), "the imported text must flow down the vertical frame");
+
+        let ctx = egui::Context::default();
+        let (req, _reply) = ControlRequest::new("ui.render", json!({"page": page_index + 1, "scale": 2.0}));
+        let control::Outcome::Done(reply) = control::handle(&mut app, &ctx, &req) else { panic!("ui.render replies at once") };
+        assert_eq!(reply["ok"], true, "{reply}");
+        let bytes = wordcraft_engine::cmd::insert::base64_decode(reply["result"]["png"].as_str().expect("page PNG")).expect("decode PNG base64");
+        if let Some(path) = std::env::var_os("WORDCRAFT_ISSUE963_RENDER_PATH") {
+            std::fs::write(path, &bytes).expect("write optional synthetic visual-review raster");
+        }
+        let raster = image::load_from_memory(&bytes).expect("decode rendered page").to_rgba8();
+        let cli_png = dir.join("cli-command-render.png");
+        app.session
+            .run("file.exportPng", &json!({"path": cli_png.to_string_lossy(), "page": page_index + 1, "scale": 2.0}))
+            .expect("export the same page through the engine/CLI command");
+        assert_eq!(
+            std::fs::read(cli_png).expect("read command-rendered PNG"),
+            bytes,
+            "the UI page render and CLI export share identical page pixels"
+        );
+        let blue = raster.pixels().filter(|pixel| pixel[0] < 70 && pixel[1] > 70 && pixel[2] > 150).count();
+        assert!(blue > 500, "the embedded image must appear in rendered page pixels; found {blue}");
+
+        let scale = 2.0;
+        let x0 = (frame.x.max(0.0) * scale) as u32;
+        let y0 = (frame.y.max(0.0) * scale) as u32;
+        let x1 = (frame.right().min(layout.pages[page_index].w) * scale) as u32;
+        let y1 = (frame.bottom().min(layout.pages[page_index].h) * scale) as u32;
+        let mut ink_bounds: Option<(u32, u32, u32, u32)> = None;
+        for y in y0..y1.min(raster.height()) {
+            for x in x0..x1.min(raster.width()) {
+                let px = raster.get_pixel(x, y);
+                if px[0] < 100 && px[1] < 100 && px[2] < 100 {
+                    ink_bounds = Some(match ink_bounds {
+                        Some((left, top, right, bottom)) => (left.min(x), top.min(y), right.max(x), bottom.max(y)),
+                        None => (x, y, x, y),
+                    });
+                }
+            }
+        }
+        let (left, top, right, bottom) = ink_bounds.expect("vertical text has visible ink inside the frame");
+        assert!(bottom.saturating_sub(top) > right.saturating_sub(left) * 2, "visible text ink should be vertical: {ink_bounds:?}");
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// #821: Shift+F10 opens the page's context menu below the caret, like right-clicking there
     /// (Word's keyboard way to it; the Menu key isn't passed on by the windowing layer); Escape
     /// closes it and typing goes on.
