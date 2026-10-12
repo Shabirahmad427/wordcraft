@@ -5,6 +5,7 @@
 - Audited the shared Rust document path and hosted regression coverage from fork commit `9d023894`; the five ranked remaining gaps are in [the cross-platform audit](docs/cross-platform-audit-2026-10-12.md). The Word 365 reference corpus still has zero verified pairs, so no new application-level compatibility claim is made.
 - DOCX export now validates every completed package and rejects XML-forbidden model characters instead of silently dropping them. Synthetic regression covers all four Word package flavors. Document Regressions now requests shared DOCX/engine tests on Linux, macOS and Windows and a Linux GUI/CLI release build; hosted results remain to be verified.
 - The native macOS gate exposed a font-sensitive two-column footnote test fixture; its anchor was moved within column two and the test passes with both bundled-only and system-font resolution. No layout algorithm or parity claim changed.
+- Hosted [Document Regressions run 38320170798](https://github.com/Shabirahmad427/wordcraft/actions/runs/38320170798) passed all six jobs for `3a480b9`, including native shared-core suites on Ubuntu/macOS/Windows and Linux GUI/CLI release build and CLI smoke. [Packaging lint 38320171307](https://github.com/Shabirahmad427/wordcraft/actions/runs/38320171307) passed. No Word 365 application comparison or Windows ARM64/macOS Intel runtime result was obtained in this arc.
 
 ## Phase 7E — visual regression and performance evidence (2026-10-12)
 
