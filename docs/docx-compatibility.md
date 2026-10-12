@@ -99,14 +99,23 @@ invent missing formatting nodes.
 
 For line and scatter charts, line width is editable only when exactly one existing `c:spPr/a:ln`
 has an explicit `@w` value representable from 0 to 20 points. It updates only that width attribute;
-other line attributes remain intact. Dash patterns and marker type/size are not yet editable or
-rendered with full OOXML semantics. Data-label visibility/placement and error bars are not modeled
-by the chart renderer, so they remain untouched in the preserved chart package and cannot be
-edited. These formatting changes go through the same `chart.editData` atomic command and Undo unit,
-refresh the shared chart preview/PDF path, and do not alter chart caches or embedded XLSX parts.
-Synthetic tests cover all seven chart families, scatter marker color, read-only fills, color/width
-validation, package preservation, Undo/redo, recovery, DOCX reopen and PDF export. No independent
-Word or Excel application comparison is available.
+other line attributes remain intact. For scatter charts, the same formatter edits an existing,
+explicit `c:marker/c:symbol` among circle, dot, square, triangle, diamond, star, plus, x, dash and
+none, an explicit size from 2 to 72 points, and a separate simple RGB marker fill when that fill is
+distinct from the series line color. Generated scatter charts now contain explicit circle/5 pt
+marker settings. Imported charts with marker-style defaults but no series marker retain the
+renderer’s circle fallback; editing does not invent marker nodes in imported packages. Complex
+marker formatting, unsupported symbols, implicit sizes, theme/gradient fills and markers in
+non-scatter charts remain read-only. Supported marker shapes are drawn as vector geometry in the
+shared preview/PDF path.
+
+Dash patterns, data-label visibility/placement and error bars are not yet modeled as editable
+formatting. Existing OOXML is preserved unchanged for those properties. Marker, color and width
+changes use the same `chart.editData` atomic command and Undo unit, refresh the shared preview/PDF
+path, and do not alter chart caches or embedded XLSX parts. Synthetic tests cover all seven chart
+families, scatter marker mapping/rendering, read-only structures, workbook/cache preservation,
+Undo/redo, recovery, DOCX reopen and PDF export. No independent Word or Excel application
+comparison is available.
 
 Undo and recovery retain the opaque object and graph bytes. Recovery holds the current edited package parts in the model and retains the exact initially opened package independently. Removing a chart can leave preserved orphan parts in that save; preservation does not synchronize embedded workbook data with edits to nearby tables. Graphs shared with regenerated document parts, or colliding with custom XML graph output, can be rejected rather than rewritten unsafely.
 

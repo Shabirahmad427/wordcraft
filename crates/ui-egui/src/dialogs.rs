@@ -418,6 +418,15 @@ struct ChartSeriesForm {
     line_width: Option<f64>,
     original_line_width: Option<f64>,
     line_width_editable: bool,
+    marker_symbol: String,
+    original_marker_symbol: Option<String>,
+    marker_symbol_editable: bool,
+    marker_size: u8,
+    original_marker_size: Option<u8>,
+    marker_size_editable: bool,
+    marker_color: [u8; 3],
+    original_marker_color: Option<[u8; 3]>,
+    marker_color_editable: bool,
 }
 
 /// The Table Properties dialog's fields. Lengths are in the interface unit
@@ -1153,6 +1162,15 @@ impl Dialog {
                         line_width: series.get("lineWidth").and_then(Value::as_f64),
                         original_line_width: series.get("lineWidth").and_then(Value::as_f64),
                         line_width_editable: series.get("lineWidthEditable").and_then(Value::as_bool).unwrap_or(false),
+                        marker_symbol: series.get("markerSymbol").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        original_marker_symbol: series.get("markerSymbol").and_then(Value::as_str).map(str::to_string),
+                        marker_symbol_editable: series.get("markerSymbolEditable").and_then(Value::as_bool).unwrap_or(false),
+                        marker_size: series.get("markerSize").and_then(Value::as_u64).and_then(|value| u8::try_from(value).ok()).unwrap_or(5),
+                        original_marker_size: series.get("markerSize").and_then(Value::as_u64).and_then(|value| u8::try_from(value).ok()),
+                        marker_size_editable: series.get("markerSizeEditable").and_then(Value::as_bool).unwrap_or(false),
+                        marker_color: series.get("markerColor").and_then(Value::as_str).and_then(parse_rgb_hex).unwrap_or([80, 120, 180]),
+                        original_marker_color: series.get("markerColor").and_then(Value::as_str).and_then(parse_rgb_hex),
+                        marker_color_editable: series.get("markerColorEditable").and_then(Value::as_bool).unwrap_or(false),
                         categories: series
                             .get("categories")
                             .and_then(Value::as_array)
@@ -1655,6 +1673,24 @@ fn chart_series_changes(chart_kind: &str, series: &[ChartSeriesForm], original: 
                 }
                 changes.insert("lineWidth".into(), json!(series.line_width?));
             }
+            if series.marker_symbol != original.marker_symbol {
+                if !series.marker_symbol_editable {
+                    return None;
+                }
+                changes.insert("markerSymbol".into(), json!(series.marker_symbol));
+            }
+            if series.marker_size != original.marker_size {
+                if !series.marker_size_editable {
+                    return None;
+                }
+                changes.insert("markerSize".into(), json!(series.marker_size));
+            }
+            if series.marker_color != original.marker_color {
+                if !series.marker_color_editable || original.original_marker_color.is_none() {
+                    return None;
+                }
+                changes.insert("markerColor".into(), json!(rgb_hex(series.marker_color)));
+            }
             if chart_kind == "scatter" {
                 if series.x_values.len() != original.x_values.len() || series.values.len() != original.values.len() {
                     return None;
@@ -1775,6 +1811,36 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                                     ui.label(series.formatting_diagnostic.as_deref().unwrap_or("Line width is read-only for this series."));
                                 }
                             });
+                            if form.chart_kind == "scatter" {
+                                ui.horizontal(|ui| {
+                                    ui.label(tl!(tl!("Marker")));
+                                    ui.add_enabled_ui(series.marker_symbol_editable, |ui| {
+                                        egui::ComboBox::from_id_salt(("scatter_marker", series_index))
+                                            .selected_text(if series.marker_symbol.is_empty() {
+                                                tl!(tl!("Unavailable"))
+                                            } else {
+                                                tl!(series.marker_symbol.as_str())
+                                            })
+                                            .show_ui(ui, |ui| {
+                                                for symbol in ["circle", "dot", "square", "triangle", "diamond", "star", "plus", "x", "dash", "none"]
+                                                {
+                                                    ui.selectable_value(&mut series.marker_symbol, symbol.to_string(), tl!(symbol));
+                                                }
+                                            });
+                                    });
+                                    if !series.marker_symbol_editable {
+                                        ui.label(tl!(tl!("Marker shape is read-only unless the chart has one simple explicit marker.")));
+                                    }
+                                    ui.label(tl!(tl!("Size")));
+                                    ui.add_enabled_ui(series.marker_size_editable, |ui| {
+                                        ui.add(egui::DragValue::new(&mut series.marker_size).range(2..=72).suffix(" pt"));
+                                    });
+                                    ui.label(tl!(tl!("Marker color")));
+                                    ui.add_enabled_ui(series.marker_color_editable, |ui| {
+                                        egui::color_picker::color_edit_button_srgb(ui, &mut series.marker_color);
+                                    });
+                                });
+                            }
                             ui.horizontal(|ui| {
                                 ui.label(format!("{} {}", tl!(tl!("Series")), series_index + 1));
                                 let label = ui.label(tl!(tl!("Series name")));
@@ -3882,6 +3948,32 @@ mod tests {
         assert_eq!(chart_series_changes("line", std::slice::from_ref(&original), std::slice::from_ref(&original)), Some(vec![json!({})]));
         let changed = ChartSeriesForm { color: [0, 0x80, 0xFF], line_width: Some(1.5), ..original.clone() };
         assert_eq!(chart_series_changes("line", &[changed], &[original]), Some(vec![json!({"color":"0080FF", "lineWidth":1.5})]));
+    }
+
+    #[test]
+    fn scatter_marker_controls_emit_only_supported_changes() {
+        let original = ChartSeriesForm {
+            marker_symbol: "circle".into(),
+            original_marker_symbol: Some("circle".into()),
+            marker_symbol_editable: true,
+            marker_size: 5,
+            original_marker_size: Some(5),
+            marker_size_editable: true,
+            marker_color: [0x11, 0x22, 0x33],
+            original_marker_color: Some([0x11, 0x22, 0x33]),
+            marker_color_editable: true,
+            ..Default::default()
+        };
+        let edited = ChartSeriesForm { marker_symbol: "diamond".into(), marker_size: 12, marker_color: [0xAA, 0xBB, 0xCC], ..original.clone() };
+        assert_eq!(
+            chart_series_changes("scatter", &[edited], &[original]),
+            Some(vec![json!({
+                "markerSymbol":"diamond", "markerSize":12, "markerColor":"AABBCC"
+            })])
+        );
+        let locked = ChartSeriesForm { marker_symbol_editable: false, ..ChartSeriesForm::default() };
+        let invalid = ChartSeriesForm { marker_symbol: "star".into(), ..locked.clone() };
+        assert_eq!(chart_series_changes("scatter", &[invalid], &[locked]), None);
     }
 
     #[test]

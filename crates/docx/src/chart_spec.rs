@@ -385,6 +385,10 @@ fn series(w: &mut W, spec: &ChartSpec, i: usize, s: &ChartSeries, embedded: bool
             w.empty("a:noFill", &[]);
             w.close("a:ln");
             w.close("c:spPr");
+            w.open("c:marker", &[]);
+            w.empty("c:symbol", &[("val", "circle")]);
+            w.empty("c:size", &[("val", "5")]);
+            w.close("c:marker");
         }
         ChartType::Column | ChartType::ColumnStacked | ChartType::Bar | ChartType::BarStacked => {
             w.empty("c:invertIfNegative", &[("val", "0")]);
@@ -831,6 +835,58 @@ mod tests {
     }
 
     #[test]
+    fn inserted_scatter_chart_has_editable_markers_through_the_package_mapper() {
+        use std::sync::Arc;
+        use wordcraft_doc::graphic::{Graphic, GraphicKind};
+        use wordcraft_doc::para::{Float, InlineObject, Paragraph};
+        use wordcraft_doc::{Block, Document};
+
+        let spec = ChartSpec::sample(ChartType::Scatter);
+        let graphic = Graphic {
+            kind: GraphicKind::Chart,
+            items: chart_items(&spec, &THEME_COLORS, 360.0, 220.0),
+            w: 360.0,
+            h: 220.0,
+            source: None,
+            smart_art: None,
+            chart: Some(Arc::new(spec)),
+        };
+        let mut paragraph = Paragraph::new();
+        paragraph
+            .insert_object(
+                0,
+                InlineObject::Graphic { w: 360.0, h: 220.0, alt: String::new(), float: Float::default(), graphic: Arc::new(graphic) },
+                &Default::default(),
+            )
+            .expect("new scatter chart should fit");
+        let mut document = Document::new();
+        document.body = vec![Arc::new(Block::Para(paragraph))];
+        let source = crate::write::write(&document).expect("scatter chart should be packaged with data");
+        let original = crate::chart_mapping::inspect_chart_data(&source, "word/charts/chart1.xml").expect("inserted chart should map");
+        assert!(original.series.iter().all(|series| series.marker_symbol_editable && series.marker_size_editable));
+        assert!(original.series.iter().all(|series| series.marker_symbol.as_deref() == Some("circle")));
+        let plan = crate::chart_mapping::prepare_chart_edit(&source, "word/charts/chart1.xml").expect("marker edits should have a validated plan");
+        let updated = crate::chart_mapping::apply_chart_edit(
+            &source,
+            &plan,
+            &crate::chart_mapping::ChartDataChanges {
+                series: vec![
+                    crate::chart_mapping::SeriesChanges { marker_symbol: Some("diamond".into()), marker_size: Some(10), ..Default::default() },
+                    crate::chart_mapping::SeriesChanges { marker_symbol: Some("square".into()), marker_size: Some(8), ..Default::default() },
+                ],
+                ..Default::default()
+            },
+        )
+        .expect("inserted scatter marker formatting should transact");
+        let snapshot = crate::chart_mapping::inspect_chart_data(&updated, "word/charts/chart1.xml").expect("edited chart should remap");
+        assert_eq!(snapshot.series[0].marker_symbol.as_deref(), Some("diamond"));
+        assert_eq!(snapshot.series[0].marker_size, Some(10));
+        assert_eq!(snapshot.series[1].marker_symbol.as_deref(), Some("square"));
+        assert_eq!(snapshot.series[1].marker_size, Some(8));
+        assert!(crate::read::read(&updated).is_ok(), "updated chart package should reopen");
+    }
+
+    #[test]
     fn a_chart_with_more_than_the_model_stays_read_only() {
         let spec = ChartSpec::sample(ChartType::Column);
         let x = chart_xml(&spec).replace("<c:roundedCorners val=\"0\"/>", "<c:roundedCorners val=\"0\"/><c:style val=\"2\"/>");
@@ -880,7 +936,7 @@ mod tests {
         assert_eq!(names(lc.child("c:ser").unwrap()), ["c:idx", "c:order", "c:tx", "c:marker", "c:cat", "c:val", "c:smooth"]);
         let sc = parse(&ChartSpec::sample(ChartType::Scatter));
         let sc = sc.child("c:chart").unwrap().child("c:plotArea").unwrap().child("c:scatterChart").unwrap();
-        assert_eq!(names(sc.child("c:ser").unwrap()), ["c:idx", "c:order", "c:tx", "c:spPr", "c:xVal", "c:yVal", "c:smooth"]);
+        assert_eq!(names(sc.child("c:ser").unwrap()), ["c:idx", "c:order", "c:tx", "c:spPr", "c:marker", "c:xVal", "c:yVal", "c:smooth"]);
         let dn = parse(&ChartSpec::sample(ChartType::Doughnut));
         let dn = dn.child("c:chart").unwrap().child("c:plotArea").unwrap();
         assert_eq!(names(dn), ["c:layout", "c:doughnutChart"]);

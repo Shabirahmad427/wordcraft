@@ -155,6 +155,9 @@ struct AxisTitle {
 struct Series {
     name: String,
     color: Option<Rgb>,
+    marker_color: Option<Rgb>,
+    marker: Option<Marker>,
+    marker_size: f32,
     line_w: f32,
     /// Whether the series is drawn as a line (scatter series without one get markers).
     line: bool,
@@ -171,6 +174,20 @@ struct Series {
     /// The values as the file has them, for data labels (`values` become shares in a 100%
     /// stacked chart); empty when the series shows no labels.
     raw: Vec<Option<f64>>,
+}
+
+#[derive(Clone, Copy)]
+enum Marker {
+    Circle,
+    Dot,
+    Square,
+    Triangle,
+    Diamond,
+    Star,
+    Plus,
+    Cross,
+    Dash,
+    None,
 }
 
 struct Chart {
@@ -212,8 +229,18 @@ impl Chart {
         let ty = plot.els().find(|e| Kind::of(&e.name).is_some())?;
         let kind = Kind::of(&ty.name)?;
         let scatter = kind == Kind::Scatter;
+        let scatter_markers = scatter
+            && ty
+                .child("c:scatterStyle")
+                .and_then(|style| style.attr("val"))
+                .is_some_and(|style| matches!(style, "marker" | "lineMarker" | "smoothMarker"));
+        let scatter_lines = scatter
+            && ty
+                .child("c:scatterStyle")
+                .and_then(|style| style.attr("val"))
+                .is_some_and(|style| matches!(style, "line" | "lineMarker" | "smooth" | "smoothMarker"));
         let date1904 = space.child("c:date1904").is_some_and(|d| d.attr("val").is_none_or(truthy));
-        let mut series = read_series(ty, scatter, theme);
+        let mut series = read_series(ty, scatter, scatter_markers, scatter_lines, theme);
         if series.is_empty() {
             return None;
         }
@@ -321,11 +348,11 @@ impl Chart {
 }
 
 /// The series of a chart type element, within the chart's cell budget.
-fn read_series(ty: &El, scatter: bool, theme: &[Rgb]) -> Vec<Series> {
+fn read_series(ty: &El, scatter: bool, scatter_markers: bool, scatter_lines: bool, theme: &[Rgb]) -> Vec<Series> {
     let mut budget = MAX_CELLS;
     let mut series = Vec::new();
     for ser in ty.children("c:ser").take(MAX_SERIES) {
-        let s = Series::parse(ser, scatter, theme, budget.min(MAX_POINTS));
+        let s = Series::parse(ser, scatter, scatter_markers, scatter_lines, theme, budget.min(MAX_POINTS));
         budget = budget.saturating_sub(s.values.len().max(s.xs.len()));
         series.push(s);
     }
@@ -497,14 +524,42 @@ fn text_size(space: &El) -> f32 {
 }
 
 impl Series {
-    fn parse(ser: &El, scatter: bool, theme: &[Rgb], cap: usize) -> Series {
+    fn parse(ser: &El, scatter: bool, scatter_markers: bool, scatter_lines: bool, theme: &[Rgb], cap: usize) -> Series {
         let name = ser.child("c:tx").and_then(|t| t.find("c:v")).map(|v| label(v.text().trim())).unwrap_or_default();
         let sp = ser.child("c:spPr");
         let ln = sp.and_then(|p| p.child("a:ln"));
         let marker = ser.child("c:marker").and_then(|m| m.child("c:spPr")).and_then(|p| fill_colour(p, theme));
+        let marker_element = ser.child("c:marker");
+        let marker_kind = marker_element
+            .and_then(|marker| marker.child("c:symbol"))
+            .and_then(|symbol| symbol.attr("val"))
+            .and_then(|symbol| match symbol {
+                "circle" => Some(Marker::Circle),
+                "dot" => Some(Marker::Dot),
+                "square" => Some(Marker::Square),
+                "triangle" => Some(Marker::Triangle),
+                "diamond" => Some(Marker::Diamond),
+                "star" => Some(Marker::Star),
+                "plus" => Some(Marker::Plus),
+                "x" => Some(Marker::Cross),
+                "dash" => Some(Marker::Dash),
+                "none" => Some(Marker::None),
+                _ => None,
+            })
+            .or_else(|| scatter_markers.then_some(Marker::Circle));
+        let marker_size = marker_element
+            .and_then(|marker| marker.child("c:size"))
+            .and_then(|size| size.attr("val"))
+            .and_then(int)
+            .map(|size| (size as f32).clamp(2.0, 72.0));
+        let marker_color = marker_element.and_then(|marker| marker.child("c:spPr")).and_then(|properties| fill_colour(properties, theme));
         let color = sp.and_then(|p| fill_colour(p, theme)).or_else(|| ln.and_then(|l| fill_colour(l, theme))).or(marker);
         let line_w = ln.and_then(|l| l.attr("w")).and_then(|v| measure(v, 12_700.0)).map_or(LINE_W, |w| w.clamp(0.0, 20.0));
-        let line = ln.is_none_or(|l| l.child("a:noFill").is_none());
+        let line = if scatter {
+            ln.map_or(scatter_lines, |line| line.child("a:noFill").is_none())
+        } else {
+            ln.is_none_or(|l| l.child("a:noFill").is_none())
+        };
         let (values, fmt) = numbers(ser.child(if scatter { "c:yVal" } else { "c:val" }), cap);
         let (mut xs, x_fmt) = if scatter { numbers(ser.child("c:xVal"), cap) } else { (Vec::new(), None) };
         if scatter && xs.is_empty() {
@@ -519,7 +574,22 @@ impl Series {
             }
         }
         let labels = show_values(ser.child("c:dLbls"));
-        Series { name, color, line_w, line, values, xs, points, fmt, x_fmt, labels, raw: Vec::new() }
+        Series {
+            name,
+            color,
+            marker_color,
+            marker: marker_kind,
+            marker_size: marker_size.unwrap_or(6.0),
+            line_w,
+            line,
+            values,
+            xs,
+            points,
+            fmt,
+            x_fmt,
+            labels,
+            raw: Vec::new(),
+        }
     }
 }
 
@@ -1694,7 +1764,6 @@ fn areas(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, labels: &mut Vec<Data
 
 /// Scatter series as lines, or as small markers when the series has no line.
 fn draw_scatter(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, labels: &mut Vec<DataLabel>) {
-    const MARKER: f32 = 6.0;
     for (j, s) in c.series.iter().enumerate() {
         let pts: Vec<Option<(f32, f32)>> =
             s.xs.iter()
@@ -1706,18 +1775,51 @@ fn draw_scatter(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, labels: &mut V
                 .collect();
         for (i, p) in pts.iter().enumerate() {
             if let (Some((x, y)), Some(text)) = (p, label_of(s, i)) {
-                labels.push(DataLabel { x: *x, y: *y - MARKER / 2.0, text, inside: false });
+                labels.push(DataLabel { x: *x, y: *y - s.marker_size / 2.0, text, inside: false });
             }
         }
         if s.line {
             stroke(out, runs(pts.iter().copied()), c.series_colour(j), s.line_w);
-            continue;
         }
-        for (x, y) in pts.iter().flatten() {
-            let rect = [x - MARKER / 2.0, y - MARKER / 2.0, MARKER, MARKER];
-            out.push(GraphicItem::Shape { rect, kind: ShapeKind::Ellipse, fill: Some(c.series_colour(j)), stroke: None, stroke_width: 0.0 });
+        if let Some(marker) = s.marker {
+            let color = s.marker_color.unwrap_or_else(|| c.series_colour(j));
+            for (x, y) in pts.iter().flatten() {
+                draw_scatter_marker(out, *x, *y, s.marker_size, marker, color);
+            }
         }
     }
+}
+
+fn draw_scatter_marker(out: &mut Vec<GraphicItem>, x: f32, y: f32, size: f32, marker: Marker, color: Rgb) {
+    let half = size.clamp(2.0, 72.0) / 2.0;
+    let shape = match marker {
+        Marker::Circle | Marker::Dot => Some(ShapeKind::Ellipse),
+        Marker::Square => Some(ShapeKind::Rectangle),
+        Marker::Triangle => Some(ShapeKind::Triangle),
+        Marker::Diamond => Some(ShapeKind::Diamond),
+        Marker::Star => Some(ShapeKind::Star),
+        Marker::Plus | Marker::Cross | Marker::Dash => None,
+        Marker::None => return,
+    };
+    if let Some(kind) = shape {
+        let scale = if matches!(marker, Marker::Dot) { 0.55 } else { 1.0 };
+        let inner_size = size * scale;
+        let inner = [x - inner_size / 2.0, y - inner_size / 2.0, inner_size, inner_size];
+        out.push(GraphicItem::Shape { rect: inner, kind, fill: Some(color), stroke: None, stroke_width: 0.0 });
+        return;
+    }
+    let a = match marker {
+        Marker::Dash => vec![PathSeg::Move(x - half, y), PathSeg::Line(x + half, y)],
+        Marker::Plus => vec![PathSeg::Move(x - half, y), PathSeg::Line(x + half, y), PathSeg::Move(x, y - half), PathSeg::Line(x, y + half)],
+        Marker::Cross => vec![
+            PathSeg::Move(x - half, y - half),
+            PathSeg::Line(x + half, y + half),
+            PathSeg::Move(x - half, y + half),
+            PathSeg::Line(x + half, y - half),
+        ],
+        _ => Vec::new(),
+    };
+    stroke(out, a, color, (size / 7.0).clamp(0.7, 2.5));
 }
 
 fn pie(out: &mut Vec<GraphicItem>, c: &Chart, area: Rect) {
@@ -2048,6 +2150,23 @@ mod tests {
         let slices = filled(&items);
         assert_eq!(slices.len(), 4);
         assert_eq!(slices[0].0, theme()[4], "first slice is accent1");
+    }
+
+    #[test]
+    fn scatter_marker_symbol_size_and_color_are_reflected_in_draw_items() {
+        let plot = r#"<c:scatterChart><c:scatterStyle val="marker"/><c:ser><c:spPr><a:ln><a:noFill/></a:ln></c:spPr><c:marker><c:symbol val="diamond"/><c:size val="12"/><c:spPr><a:solidFill><a:srgbClr val="C04050"/></a:solidFill></c:spPr></c:marker><c:xVal><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numLit></c:xVal><c:yVal><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numLit></c:yVal></c:ser><c:axId val="1"/><c:axId val="2"/></c:scatterChart>"#;
+        let items = chart_items(&space(plot), &theme(), 240.0, 160.0);
+        assert!(items.iter().any(|item| matches!(item, GraphicItem::Shape { rect, kind: ShapeKind::Diamond, fill: Some(Rgb(0xC0, 0x40, 0x50)), .. } if (rect[2] - 12.0).abs() < 0.01)));
+    }
+
+    #[test]
+    fn scatter_marker_only_style_without_series_marker_keeps_default_circle() {
+        let plot = r#"<c:scatterChart><c:scatterStyle val="marker"/><c:ser><c:xVal><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numLit></c:xVal><c:yVal><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numLit></c:yVal></c:ser></c:scatterChart>"#;
+        let items = chart_items(&space(plot), &theme(), 240.0, 160.0);
+        assert!(
+            items.iter().any(|item| matches!(item, GraphicItem::Shape { kind: ShapeKind::Ellipse, .. })),
+            "default markers remain visible for legacy scatter charts"
+        );
     }
 
     #[test]

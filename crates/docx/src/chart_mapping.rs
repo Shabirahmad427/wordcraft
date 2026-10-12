@@ -82,6 +82,12 @@ pub struct SeriesFormatSnapshot {
     pub color_editable: bool,
     pub line_width: Option<f64>,
     pub line_width_editable: bool,
+    pub marker_symbol: Option<String>,
+    pub marker_symbol_editable: bool,
+    pub marker_size: Option<u8>,
+    pub marker_size_editable: bool,
+    pub marker_color: Option<String>,
+    pub marker_color_editable: bool,
     pub diagnostic: Option<String>,
 }
 
@@ -540,6 +546,17 @@ fn inspect_series_format(series: &El, chart_kind: &str, chart_type: &El) -> Seri
         .map(|width| width / 12_700.0)
         .filter(|width| width.is_finite() && (0.0..=20.0).contains(width));
     let line_width_editable = properties_count == 1 && matches!(chart_kind, "line" | "scatter") && line.is_some() && line_width.is_some();
+    let marker = (chart_kind == "scatter" && series.children("c:marker").count() == 1).then(|| series.child("c:marker")).flatten();
+    let symbol = marker.and_then(|marker| (marker.children("c:symbol").count() == 1).then(|| marker.child("c:symbol")).flatten());
+    let marker_symbol = symbol.and_then(|symbol| symbol.attr("val")).filter(|symbol| supported_marker_symbol(symbol)).map(str::to_string);
+    let marker_symbol_editable = marker_symbol.is_some() && symbol.is_some_and(simple_empty_val_element);
+    let size = marker.and_then(|marker| (marker.children("c:size").count() == 1).then(|| marker.child("c:size")).flatten());
+    let marker_size = size.and_then(|size| size.attr("val")).and_then(|size| size.parse::<u8>().ok()).filter(|size| (2..=72).contains(size));
+    let marker_size_editable = marker_size.is_some() && size.is_some_and(simple_empty_val_element);
+    let marker_fill = simple_marker_fill(marker);
+    let marker_color = marker_fill.and_then(simple_srgb_value);
+    let marker_color_editable =
+        marker_color.is_some() && !color_target.is_some_and(|target| marker_fill.is_some_and(|fill| std::ptr::eq(target, fill)));
     let diagnostic = if pie_varies {
         Some("Pie and doughnut charts use per-slice colors; series color editing is read-only.".into())
     } else if !color_editable {
@@ -549,7 +566,40 @@ fn inspect_series_format(series: &El, chart_kind: &str, chart_type: &El) -> Seri
     } else {
         None
     };
-    SeriesFormatSnapshot { color, color_editable, line_width, line_width_editable, diagnostic }
+    SeriesFormatSnapshot {
+        color,
+        color_editable,
+        line_width,
+        line_width_editable,
+        marker_symbol,
+        marker_symbol_editable,
+        marker_size,
+        marker_size_editable,
+        marker_color,
+        marker_color_editable,
+        diagnostic,
+    }
+}
+
+fn supported_marker_symbol(symbol: &str) -> bool {
+    matches!(symbol, "circle" | "dot" | "square" | "triangle" | "diamond" | "star" | "plus" | "x" | "dash" | "none")
+}
+
+fn simple_empty_val_element(element: &El) -> bool {
+    element.els().next().is_none() && element.kids.is_empty() && element.attr("val").is_some()
+}
+
+fn simple_marker_fill(marker: Option<&El>) -> Option<&El> {
+    let marker = marker?;
+    if marker.children("c:spPr").count() != 1 {
+        return None;
+    }
+    let properties = marker.child("c:spPr")?;
+    let fills: Vec<_> = properties
+        .els()
+        .filter(|element| matches!(element.name.as_str(), "a:solidFill" | "a:gradFill" | "a:pattFill" | "a:noFill" | "a:blipFill"))
+        .collect();
+    (fills.len() == 1 && fills.first().is_some_and(|fill| fill.name == "a:solidFill")).then(|| fills.first().copied()).flatten()
 }
 
 fn series_color_target<'a>(series: &'a El, chart_kind: &str) -> Option<&'a El> {
@@ -1105,6 +1155,12 @@ pub struct SeriesChanges {
     pub color: Option<String>,
     pub line_width: Option<f64>,
     #[serde(default)]
+    pub marker_symbol: Option<String>,
+    #[serde(default)]
+    pub marker_size: Option<u8>,
+    #[serde(default)]
+    pub marker_color: Option<String>,
+    #[serde(default)]
     pub x_values: Option<Vec<f64>>,
     pub values: Option<Vec<f64>>,
 }
@@ -1145,6 +1201,18 @@ pub struct ChartSeriesSnapshot {
     pub line_width: Option<f64>,
     #[serde(default)]
     pub line_width_editable: bool,
+    #[serde(default)]
+    pub marker_symbol: Option<String>,
+    #[serde(default)]
+    pub marker_symbol_editable: bool,
+    #[serde(default)]
+    pub marker_size: Option<u8>,
+    #[serde(default)]
+    pub marker_size_editable: bool,
+    #[serde(default)]
+    pub marker_color: Option<String>,
+    #[serde(default)]
+    pub marker_color_editable: bool,
     #[serde(default)]
     pub formatting_diagnostic: Option<String>,
     #[serde(default)]
@@ -1245,6 +1313,12 @@ pub fn inspect_chart_data(docx: &[u8], chart_part: &str) -> Result<ChartDataSnap
                     color_editable: series.formatting.color_editable,
                     line_width: series.formatting.line_width,
                     line_width_editable: series.formatting.line_width_editable,
+                    marker_symbol: series.formatting.marker_symbol,
+                    marker_symbol_editable: series.formatting.marker_symbol_editable,
+                    marker_size: series.formatting.marker_size,
+                    marker_size_editable: series.formatting.marker_size_editable,
+                    marker_color: series.formatting.marker_color,
+                    marker_color_editable: series.formatting.marker_color_editable,
                     formatting_diagnostic: series.formatting.diagnostic,
                     x_values,
                     values,
@@ -1295,10 +1369,23 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
         let expected_series =
             expected.series.get_mut(index).ok_or_else(|| transaction_error("chart series mapping changed during formatting edit"))?;
         if let Some(color) = &change.color {
+            let shared_marker_color = expected_series.formatting.marker_color == expected_series.formatting.color;
             expected_series.formatting.color = Some(color.to_ascii_uppercase());
+            if shared_marker_color {
+                expected_series.formatting.marker_color = Some(color.to_ascii_uppercase());
+            }
         }
         if let Some(width) = change.line_width {
             expected_series.formatting.line_width = Some((width * 12_700.0).round() / 12_700.0);
+        }
+        if let Some(symbol) = &change.marker_symbol {
+            expected_series.formatting.marker_symbol = Some(symbol.clone());
+        }
+        if let Some(size) = change.marker_size {
+            expected_series.formatting.marker_size = Some(size);
+        }
+        if let Some(color) = &change.marker_color {
+            expected_series.formatting.marker_color = Some(color.to_ascii_uppercase());
         }
     }
     if let Some(position) = &changes.legend_position {
@@ -1418,6 +1505,24 @@ fn validate_changes(mapping: &ChartMapping, changes: &ChartDataChanges) -> Resul
             any = true;
             if !source.formatting.line_width_editable || !width.is_finite() || !(0.0..=20.0).contains(&width) {
                 return Err(transaction_error("series line width is unsupported or outside the safe 0–20 pt range"));
+            }
+        }
+        if let Some(symbol) = &change.marker_symbol {
+            any = true;
+            if !source.formatting.marker_symbol_editable || !supported_marker_symbol(symbol) {
+                return Err(transaction_error("scatter marker symbol is unsupported or has no safe explicit target"));
+            }
+        }
+        if let Some(size) = change.marker_size {
+            any = true;
+            if !source.formatting.marker_size_editable || !(2..=72).contains(&size) {
+                return Err(transaction_error("scatter marker size is unsupported or outside the safe 2–72 pt range"));
+            }
+        }
+        if let Some(color) = &change.marker_color {
+            any = true;
+            if !source.formatting.marker_color_editable || !valid_rgb_hex(color) {
+                return Err(transaction_error("scatter marker color has no safe explicit RGB target"));
             }
         }
         if let Some(name) = &change.name {
@@ -1729,8 +1834,62 @@ fn apply_series_format_changes(chart: &[u8], mapping: &ChartMapping, changes: &C
             }
             current = set_xml_attribute(&current, &nodes, line, "w", &format!("{emu_width:.0}"))?;
         }
+        if let Some(symbol) = &change.marker_symbol {
+            let nodes = preserved_xml::inspect(&current)?;
+            let target = marker_attribute_node(&nodes, series_index, "symbol")?
+                .ok_or_else(|| transaction_error("scatter marker symbol no longer has a safe explicit target"))?;
+            current = set_xml_attribute(&current, &nodes, target, "val", symbol)?;
+        }
+        if let Some(size) = change.marker_size {
+            let nodes = preserved_xml::inspect(&current)?;
+            let target = marker_attribute_node(&nodes, series_index, "size")?
+                .ok_or_else(|| transaction_error("scatter marker size no longer has a safe explicit target"))?;
+            current = set_xml_attribute(&current, &nodes, target, "val", &size.to_string())?;
+        }
+        if let Some(color) = &change.marker_color {
+            let nodes = preserved_xml::inspect(&current)?;
+            let target = marker_color_target_node(&nodes, series_index)?
+                .ok_or_else(|| transaction_error("scatter marker color no longer has a safe explicit RGB target"))?;
+            current = set_xml_attribute(&current, &nodes, target, "val", &color.to_ascii_uppercase())?;
+        }
     }
     Ok(current)
+}
+
+fn marker_attribute_node(nodes: &[Element], series_index: usize, child: &str) -> Result<Option<usize>, DocxError> {
+    let series = chart_series_nodes(nodes, "scatter")?;
+    let Some(series) = series.get(series_index) else { return Err(transaction_error("series index is out of range")) };
+    let markers = child_indices(nodes, *series, CHART_NS, "marker");
+    if markers.len() != 1 {
+        return Ok(None);
+    }
+    let marker = *markers.first().ok_or_else(|| transaction_error("scatter marker is missing"))?;
+    let target = child_index(nodes, marker, CHART_NS, child);
+    Ok(target.filter(|target| nodes.get(*target).is_some_and(|node| node.children.is_empty() && node.attrs.contains_key(&qualified("", "val")))))
+}
+
+fn marker_color_target_node(nodes: &[Element], series_index: usize) -> Result<Option<usize>, DocxError> {
+    let series = chart_series_nodes(nodes, "scatter")?;
+    let Some(series) = series.get(series_index) else { return Err(transaction_error("series index is out of range")) };
+    let markers = child_indices(nodes, *series, CHART_NS, "marker");
+    if markers.len() != 1 {
+        return Ok(None);
+    }
+    let marker = *markers.first().ok_or_else(|| transaction_error("scatter marker is missing"))?;
+    let properties = child_indices(nodes, marker, CHART_NS, "spPr");
+    if properties.len() != 1 {
+        return Ok(None);
+    }
+    let Some(properties) = properties.first().copied() else { return Ok(None) };
+    let fills = child_indices_any(nodes, properties, DRAWING_NS, &["solidFill", "gradFill", "pattFill", "noFill", "blipFill"]);
+    if fills.len() != 1 {
+        return Ok(None);
+    }
+    let fill = *fills.first().ok_or_else(|| transaction_error("scatter marker fill is missing"))?;
+    if !nodes.get(fill).is_some_and(|node| node.is(DRAWING_NS, "solidFill")) {
+        return Ok(None);
+    }
+    Ok(simple_srgb_node(nodes, fill))
 }
 
 fn chart_series_nodes(nodes: &[Element], chart_kind: &str) -> Result<Vec<usize>, DocxError> {
@@ -2794,6 +2953,84 @@ mod tests {
             let source = series_format_fixture(kind, false, true);
             let snapshot = inspect_chart_data(&source, "word/charts/chart1.xml").unwrap();
             assert!(!snapshot.series[0].color_editable, "vary-colors {kind} charts need slice-level editing");
+        }
+    }
+
+    #[test]
+    fn scatter_marker_shape_size_and_color_edit_atomically_without_touching_workbook() {
+        let source = series_format_fixture("scatter", false, false);
+        let package = Package::open(&source).unwrap();
+        let mut files = package.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let chart = String::from_utf8(files.get("word/charts/chart1.xml").unwrap().clone()).unwrap();
+        let chart = chart.replacen(
+            "<c:xVal>",
+            r#"<c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr><a:solidFill><a:srgbClr val="112233"/></a:solidFill></c:spPr></c:marker><c:xVal>"#,
+            1,
+        );
+        files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+        let source = zip(&files);
+        let before = Package::open(&source).unwrap();
+        let snapshot = inspect_chart_data(&source, "word/charts/chart1.xml").unwrap();
+        let series = snapshot.series.first().unwrap();
+        assert_eq!(series.marker_symbol.as_deref(), Some("circle"));
+        assert!(series.marker_symbol_editable);
+        assert_eq!(series.marker_size, Some(5));
+        assert!(series.marker_size_editable);
+        assert_eq!(series.marker_color.as_deref(), Some("112233"));
+        assert!(series.marker_color_editable);
+
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let output = apply_chart_edit(
+            &source,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges {
+                    marker_symbol: Some("diamond".into()),
+                    marker_size: Some(11),
+                    marker_color: Some("AABBCC".into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let after = Package::open(&output).unwrap();
+        let updated = inspect_chart_data(&output, "word/charts/chart1.xml").unwrap();
+        assert_eq!(updated.series[0].marker_symbol.as_deref(), Some("diamond"));
+        assert_eq!(updated.series[0].marker_size, Some(11));
+        assert_eq!(updated.series[0].marker_color.as_deref(), Some("AABBCC"));
+        assert_eq!(before.get("word/embeddings/book.xlsx"), after.get("word/embeddings/book.xlsx"));
+        for (name, bytes) in before.entries().filter(|(name, _)| *name != "word/charts/chart1.xml" && *name != "word/embeddings/book.xlsx") {
+            assert_eq!(Some(bytes), after.get(name), "unrelated package part {name}");
+        }
+        let reopened_plan = prepare_chart_edit(&output, "word/charts/chart1.xml").unwrap();
+        assert_eq!(reopened_plan.mapping.series[0].formatting.marker_symbol.as_deref(), Some("diamond"));
+    }
+
+    #[test]
+    fn unsupported_scatter_marker_markup_and_size_are_rejected_without_package_changes() {
+        for (symbol, size) in [("pentagon", "5"), ("circle", "100")] {
+            let base = series_format_fixture("scatter", false, false);
+            let package = Package::open(&base).unwrap();
+            let mut files = package.entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+            let chart = String::from_utf8(files.get("word/charts/chart1.xml").unwrap().clone()).unwrap();
+            let chart = chart.replacen("<c:xVal>", &format!(r#"<c:marker><c:symbol val="{symbol}"/><c:size val="{size}"/></c:marker><c:xVal>"#), 1);
+            files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+            let source = zip(&files);
+            let snapshot = inspect_chart_data(&source, "word/charts/chart1.xml").unwrap();
+            assert!(!snapshot.series[0].marker_symbol_editable || !snapshot.series[0].marker_size_editable);
+            let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+            assert!(
+                apply_chart_edit(
+                    &source,
+                    &plan,
+                    &ChartDataChanges {
+                        series: vec![SeriesChanges { marker_symbol: Some("triangle".into()), marker_size: Some(9), ..Default::default() }],
+                        ..Default::default()
+                    }
+                )
+                .is_err()
+            );
         }
     }
 

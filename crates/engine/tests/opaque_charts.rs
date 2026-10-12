@@ -108,6 +108,29 @@ fn editable_scatter_chart_fixture() -> Vec<u8> {
     archive(&files)
 }
 
+fn editable_scatter_chart_fixture_with_markers() -> Vec<u8> {
+    let package = editable_scatter_chart_fixture();
+    let mut parts = unpack(&package);
+    let chart = String::from_utf8(parts["word/charts/chart1.xml"].clone()).unwrap();
+    let chart = chart
+        .replace(
+            "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"",
+            "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"",
+        )
+        .replacen(
+            "</c:tx>",
+            r#"</c:tx><c:spPr><a:ln w="28575"><a:solidFill><a:srgbClr val="336699"/></a:solidFill></a:ln></c:spPr>"#,
+            1,
+        )
+        .replacen(
+            "<c:xVal>",
+            r#"<c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr><a:solidFill><a:srgbClr val="C04050"/></a:solidFill></c:spPr></c:marker><c:xVal>"#,
+            1,
+        );
+    parts.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+    archive(&parts)
+}
+
 fn editable_slice_chart_fixture(chart_type: &str) -> Vec<u8> {
     let local = match chart_type {
         "pie" => "pieChart",
@@ -534,6 +557,76 @@ fn chart_series_color_and_line_width_survive_undo_recovery_save_and_pdf() {
     let pdf = directory.join("edited.pdf");
     reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
     assert!(std::fs::metadata(pdf).unwrap().len() > 100);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn scatter_marker_formatting_survives_undo_recovery_docx_reopen_and_pdf() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-scatter-markers-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.docx");
+    let destination = directory.join("edited.docx");
+    let original = editable_scatter_chart_fixture_with_markers();
+    std::fs::write(&source, &original).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source})).unwrap();
+    let document_id = session.document_id();
+    let before = wordcraft_docx::write(&session.doc).unwrap();
+    let before_parts = unpack(&before);
+    let before_snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(before_snapshot["series"][0]["markerSymbol"], "circle");
+    assert_eq!(before_snapshot["series"][0]["markerSize"], 5);
+    assert_eq!(before_snapshot["series"][0]["markerColor"], "C04050");
+    let before_layout = session.layout();
+    let before_render = wordcraft_render::render_page(&session.doc, &before_layout.pages[0], 1.0, &Default::default()).to_straight();
+
+    session
+        .run(
+            "chart.editData",
+            &json!({
+                "documentId": document_id,
+                "chartPart": "word/charts/chart1.xml",
+                "expected": before_snapshot,
+                "series": [{"markerSymbol":"diamond", "markerSize":12, "markerColor":"00AACC"}]
+            }),
+        )
+        .unwrap();
+    let changed = wordcraft_docx::write(&session.doc).unwrap();
+    let changed_parts = unpack(&changed);
+    assert_eq!(changed_parts["word/embeddings/data.xlsx"], before_parts["word/embeddings/data.xlsx"]);
+    let changed_snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(changed_snapshot["series"][0]["markerSymbol"], "diamond");
+    assert_eq!(changed_snapshot["series"][0]["markerSize"], 12);
+    assert_eq!(changed_snapshot["series"][0]["markerColor"], "00AACC");
+    let changed_layout = session.layout();
+    let changed_render = wordcraft_render::render_page(&session.doc, &changed_layout.pages[0], 1.0, &Default::default()).to_straight();
+    assert_ne!(changed_render, before_render);
+
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let recovery_id = store.save(&unique_id(), document_id, &Snapshot::capture(&session)).unwrap();
+    let mut recovered = Session::new(Document::new());
+    store.load(&recovery_id).unwrap().restore(&mut recovered);
+    let recovered_snapshot =
+        recovered.run("chart.inspectData", &json!({"documentId": recovered.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(recovered_snapshot["series"][0]["markerSymbol"], "diamond");
+    assert_eq!(recovered_snapshot["series"][0]["markerSize"], 12);
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), before);
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), changed);
+    session.run("file.save", &json!({"path": destination})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": directory.join("edited.docx")})).unwrap();
+    let reopened_snapshot =
+        reopened.run("chart.inspectData", &json!({"documentId": reopened.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(reopened_snapshot["series"][0]["markerSymbol"], "diamond");
+    let reopened_layout = reopened.layout();
+    let reopened_render = wordcraft_render::render_page(&reopened.doc, &reopened_layout.pages[0], 1.0, &Default::default()).to_straight();
+    assert_eq!(changed_render, reopened_render);
+    let pdf = directory.join("edited.pdf");
+    reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
+    assert!(std::fs::metadata(pdf).unwrap().len() > 100);
+    assert_eq!(std::fs::read(source).unwrap(), original, "marker formatting leaves the source document unchanged");
     std::fs::remove_dir_all(directory).unwrap();
 }
 
