@@ -73,7 +73,7 @@ owner actions (push to `github.com/storytold/wordcraft` and enable the release s
 
 | Area | Status | Parity |
 |---|---|---|
-| Ribbon/menu catalog coverage | **458 / 475 (96.4%)** | measured (`cargo xtask parity` → [`docs/parity-checklist.md`](docs/parity-checklist.md)) |
+| Ribbon/menu catalog coverage | **481 / 496 (97.0%)** | measured (`cargo xtask parity` → [`docs/parity-checklist.md`](docs/parity-checklist.md)) |
 | **Feature breadth** (weighted, incl. dialog options, styles, languages beyond the ribbon) | **~80%** | estimated |
 | **Ready for real work** (full target) | **~60%** (55–63%) | estimated, additive weighted sum over the dimensions |
 | **Mainstream practitioner** | **~55%** | estimated: weekly-work depth × discounts for interaction (×0.93), stability (×0.90), file exchange (×0.90) |
@@ -293,3 +293,10 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 - Fixed integration findings for default note-separator round-trip pagination, section-end endnotes, duplicate text-box layout work, dialog dirty-state routing, and canonical command-search ranking. Unsupported DOCX structures remain behind existing guarded-edit failures.
 - Validation: all six `cargo xtask ci` gates pass; **1,420 workspace tests passed, 0 failed, 1 ignored**. Linux GUI and CLI release builds pass. Release-mode Windows GNU and Apple Silicon compile checks pass; native runs, physical printing and Microsoft Word/Excel reference comparisons were unavailable. Version reports `0.5.0` (dev for GUI; `0.5.0` CLI).
 - Installed GUI/CLI binaries were backed up at `/home/shabir/.local/share/wordcraft/backups/2026-10-11-838a7d1` before installing the validated 0.5.0 Linux builds. At audit time, hosted FreeBSD and Windows ARM64 jobs for `838a7d1` were still in progress; packaging lint did not trigger for this push (the latest observed run on `863a82d` succeeded). See [the detailed upstream audit](docs/upstream-audit-2026-10-11.md).
+
+## Upstream synchronization follow-up (2026-10-11)
+
+- Integrated the next 20 upstream commits through `46d5e99b3e82828f95ec87da92b2e1fc1db03b78` using a second normal merge from the 2ffba93 integration, preserving prior custom chart transactions/formatting, DOCX package guards, atomic recovery/save behavior, printing, and CI hardening. A pre-merge backup branch is retained. No open PR was auto-merged.
+- Upstream additions include SmartArt types, Outline view, vertical section text, file Options panes, template/add-in Organizer, shape-wrap controls, accessibility updates, CJK font fallback, section geometry/layout work, and note/page-total behavior. Compatible changes were reconciled with fork-specific layout and DOCX models; where the upstream layout refactor could not safely be combined wholesale, the fork layout engine was retained and compatible fixes/tests were ported.
+- Integration verification: `cargo xtask ci` passed all six gates, including the full workspace and WASM checks; the workspace reports **1,496 passed, 0 failed, 1 ignored**. Linux GUI/CLI release build and available Windows GNU/macOS Apple Silicon release-mode compile checks passed. Three merge regressions found in tests (Options dispatch and localization coverage) were corrected. Hosted workflows and installation are tracked separately in the detailed audit.
+- Upstream audit details, conflict notes, issue/PR status and hosted run results are tracked in [docs/upstream-audit-2026-10-11.md](docs/upstream-audit-2026-10-11.md). No independent Microsoft Word rendering comparison or native printer/platform runtime test is implied.

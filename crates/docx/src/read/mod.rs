@@ -1,7 +1,7 @@
 //! DOCX → [`Document`].
 
 pub(crate) mod chart;
-mod diagram;
+pub(crate) mod diagram;
 mod drawing_color;
 mod embed;
 mod freeform;
@@ -35,6 +35,8 @@ const MAX_PARTS: usize = 50_000;
 /// Most graphic work (items plus path segments, see `story::graphic_work`) built for one file's
 /// charts and diagrams; later ones are left empty.
 const MAX_GRAPHIC_WORK: usize = 2_000_000;
+/// Longest attached-template path we keep (bytes); a longer one is not a real path.
+const MAX_TEMPLATE_PATH: usize = 32 * 1024;
 
 /// Whether a notes-part separator is the canonical default emitted by WordCraft's writer.
 fn canonical_note_separator(blocks: &Blocks, continuation: bool) -> bool {
@@ -82,6 +84,8 @@ pub(crate) struct Reader<'p> {
     pub comment_map: HashMap<String, u32>,
     pub comments_ended: HashSet<u32>,
     pub bookmarks: HashMap<String, String>,
+    /// Restrict Editing exception ranges (`w:permStart`): file id → model id.
+    pub perms: HashMap<String, u32>,
     /// Automatic display-equation number expected while reading the main body.
     pub equation_number: u32,
     /// Chart and diagram parts by path, parsed once.
@@ -152,6 +156,7 @@ fn read_impl(bytes: &[u8], preserve: bool) -> Result<Document, DocxError> {
         comment_map: HashMap::new(),
         comments_ended: HashSet::new(),
         bookmarks: HashMap::new(),
+        perms: HashMap::new(),
         equation_number: 0,
         graphic_parts: HashMap::new(),
         graphics: HashMap::new(),
@@ -672,6 +677,7 @@ impl Reader<'_> {
                 quick: flag(s, "w:qFormat").unwrap_or(false),
                 hidden: flag(s, "w:semiHidden").unwrap_or(false) || flag(s, "w:hidden").unwrap_or(false),
                 builtin: !s.attr("w:customStyle").is_some_and(|v| v == "1" || v == "true"),
+                locked: flag(s, "w:locked").unwrap_or(false),
                 ..Default::default()
             };
             if let Some(p) = s.child("w:pPr") {
@@ -856,9 +862,19 @@ impl Reader<'_> {
 
     fn read_settings(&mut self, path: &str) -> Result<(), DocxError> {
         let Some(root) = self.xml(path)? else { return Ok(()) };
+        let rels = self.pkg.rels(path);
         let s = &mut self.doc.settings;
         for k in root.els() {
             match k.name.as_str() {
+                // §17.15.1.6: the template, by a relationship (usually external) of the settings part.
+                "w:attachedTemplate" => {
+                    s.attached_template = k
+                        .attr("r:id")
+                        .and_then(|id| rels.by_id(id))
+                        .map(|r| r.target.trim().to_string())
+                        .filter(|t| !t.is_empty() && t.len() <= MAX_TEMPLATE_PATH);
+                }
+                "w:linkStyles" => s.link_styles = on_off(k),
                 "w:compat" => {
                     // Only Word's own setting: another `w:uri` names a different application's.
                     let mode = k
@@ -911,12 +927,7 @@ impl Reader<'_> {
                     }
                     s.endnote_pr = props::note_pr(k, false);
                 }
-                "w:documentProtection" => {
-                    let enforced = k.attr("w:enforcement").is_some_and(|v| !matches!(v, "0" | "false" | "off"));
-                    if enforced && let Some(e) = k.attr("w:edit") {
-                        s.protection = Some(e.to_string());
-                    }
-                }
+                "w:documentProtection" => read_protection(k, s),
                 _ => {}
             }
         }
@@ -1087,4 +1098,47 @@ impl Reader<'_> {
 
 fn default_level(i: usize) -> Level {
     Level { indent: 36.0 * (i as f32 + 1.0), text: String::new(), ..Level::default() }
+}
+
+/// The password hash attributes of `w:documentProtection` that are kept (ECMA-376 §17.15.1.29:
+/// the current `algorithmName`/`hashValue`/`saltValue`/`spinCount`, and the older transitional
+/// `crypt*`/`hash`/`salt` set).
+pub(crate) const PROTECTION_HASH_ATTRS: [&str; 16] = [
+    "w:algorithmName",
+    "w:hashValue",
+    "w:saltValue",
+    "w:spinCount",
+    "w:cryptProviderType",
+    "w:cryptAlgorithmClass",
+    "w:cryptAlgorithmType",
+    "w:cryptAlgorithmSid",
+    "w:cryptSpinCount",
+    "w:cryptProvider",
+    "w:algIdExt",
+    "w:algIdExtSource",
+    "w:cryptProviderTypeExt",
+    "w:cryptProviderTypeExtSource",
+    "w:hash",
+    "w:salt",
+];
+
+/// Restrict Editing (`w:documentProtection`, §17.15.1.29): the editing restriction, whether
+/// formatting is limited to unlocked styles, and the password hash. Only enforced protection is
+/// kept; a hostile attribute value can't be longer than a hash needs.
+fn read_protection(k: &El, s: &mut wordcraft_doc::Settings) {
+    let on = |v: &str| !matches!(v, "0" | "false" | "off");
+    if !k.attr("w:enforcement").is_some_and(on) {
+        return;
+    }
+    let edit = k.attr("w:edit").filter(|e| matches!(*e, "readOnly" | "comments" | "trackedChanges" | "forms"));
+    let formatting = k.attr("w:formatting").is_some_and(on);
+    if edit.is_none() && !formatting {
+        return;
+    }
+    s.protection = Some(edit.unwrap_or("none").to_string());
+    s.protect_formatting = formatting;
+    s.protect_hash = PROTECTION_HASH_ATTRS
+        .iter()
+        .filter_map(|n| k.attr(n).filter(|v| !v.is_empty() && v.len() <= 1024).map(|v| (n.to_string(), v.to_string())))
+        .collect();
 }

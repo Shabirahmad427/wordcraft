@@ -58,6 +58,11 @@ fn font_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// (family, style, legacy family) of each face the scan finds in the file at `path`.
+fn names(path: &Path) -> Vec<(String, String, String)> {
+    file_face_names(path).into_iter().map(|f| (f.family, f.style, f.legacy)).collect()
+}
+
 fn has(list: &[String], family: &str) -> bool {
     list.iter().any(|f| f == family)
 }
@@ -171,7 +176,7 @@ fn fallback_lookups_are_remembered_until_fonts_load() {
 #[test]
 fn the_scan_reads_names_without_loading_the_font() {
     let dir = font_dir("names");
-    assert_eq!(file_face_names(&dir.join("Sysfont-Regular.ttf")), [(FAMILY.to_string(), "Regular".to_string(), FAMILY.to_string())]);
+    assert_eq!(names(&dir.join("Sysfont-Regular.ttf")), [(FAMILY.to_string(), "Regular".to_string(), FAMILY.to_string())]);
     assert!(file_face_names(&dir.join("damaged.ttf")).is_empty());
     assert!(file_face_names(&dir.join("readme.txt")).is_empty());
     assert!(file_face_names(&dir.join("missing.ttf")).is_empty());
@@ -184,7 +189,7 @@ fn installed_weights_are_found_by_their_legacy_family_name() {
     let dir = font_dir("legacy");
     std::fs::write(dir.join("Sysfont-Semibold.ttf"), renamed("SourceSans3-Semibold.ttf")).unwrap();
     let semibold = format!("{FAMILY} Semibold");
-    assert_eq!(file_face_names(&dir.join("Sysfont-Semibold.ttf")), [(FAMILY.to_string(), "Semibold".to_string(), semibold.clone())]);
+    assert_eq!(names(&dir.join("Sysfont-Semibold.ttf")), [(FAMILY.to_string(), "Semibold".to_string(), semibold.clone())]);
     let db = || FontDb::with_font_dirs(vec![dir.clone()]);
     assert!(has(&db().families(), FAMILY) && has(&db().families(), &semibold));
     assert!(db().has_family(&semibold.to_uppercase()));
@@ -216,7 +221,7 @@ fn the_scan_lists_a_variable_fonts_named_instances_as_loading_it_does() {
     };
     let data = std::fs::read(path).unwrap();
     let loaded: Vec<(String, String, String)> = enumerate_faces(&data).into_iter().map(|f| (f.family, f.style, f.legacy)).collect();
-    assert_eq!(file_face_names(path), loaded);
+    assert_eq!(names(path), loaded);
     if loaded.len() > 1 {
         // Instances other than Regular, Bold and Italic have names of their own.
         assert!(loaded.iter().any(|(family, _, legacy)| family != legacy), "{loaded:?}");

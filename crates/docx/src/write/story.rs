@@ -439,6 +439,18 @@ impl Writer<'_> {
                 let id = self.bookmark_id(name);
                 w.empty("w:bookmarkEnd", &[("w:id", &id)]);
             }
+            InlineObject::PermStart { id, group, editor } => {
+                let id = id.to_string();
+                let mut a = vec![("w:id", id.as_str())];
+                if !group.is_empty() {
+                    a.push(("w:edGrp", group.as_str()));
+                }
+                if !editor.is_empty() {
+                    a.push(("w:ed", editor.as_str()));
+                }
+                w.empty("w:permStart", &a);
+            }
+            InlineObject::PermEnd { id } => w.empty("w:permEnd", &[("w:id", &id.to_string())]),
             InlineObject::CommentStart { id } => {
                 if self.doc.comments.contains_key(id) {
                     w.empty("w:commentRangeStart", &[("w:id", &id.to_string())]);
@@ -513,14 +525,16 @@ impl Writer<'_> {
             }
             // A chart or diagram read from a file: its frame from the object's size and position,
             // the graphic inside as read. Ones made some other way have nothing to write, except
-            // charts with a model (made or edited in WordCraft).
+            // charts and SmartArt with a model (made or edited in WordCraft): their parts are
+            // written from it.
             InlineObject::Graphic { w: gw, h: gh, alt, float, graphic } => {
                 // Existing package-backed charts always use their guarded source graph so chart
                 // edits keep synchronized workbook parts. Only new model-only charts use the
                 // upstream chart-spec writer.
-                let inner = match (graphic.chart.as_deref(), graphic.source.as_deref()) {
-                    (Some(spec), None) => self.chart_graphic(spec, rels),
-                    (_, Some(src)) => {
+                let inner = match (graphic.chart.as_deref(), graphic.smart_art.as_deref(), graphic.source.as_deref()) {
+                    // Package-backed content takes precedence so chart data transactions and
+                    // unsupported SmartArt relationships remain tied to their preserved source.
+                    (_, _, Some(src)) => {
                         let Some(inner) = self.embedded_xml(src, rels, None) else {
                             self.preservation_error =
                                 Some(crate::DocxError::Preservation("chart or diagram dependencies could not be written safely".into()));
@@ -528,11 +542,16 @@ impl Writer<'_> {
                         };
                         inner
                     }
-                    (None, None) => {
+                    (Some(spec), _, None) => self.chart_graphic(spec, rels),
+                    (None, Some(spec), None) => self.smart_art_graphic(spec, *gw, *gh, rels),
+                    (None, None, None) => {
                         self.preservation_error = Some(crate::DocxError::Preservation("chart or diagram source markup is missing".into()));
                         return;
                     }
                 };
+                if inner.is_empty() {
+                    return;
+                }
                 self.rev_open(w, props);
                 w.open("w:r", &[]);
                 self.rpr(w, props);
@@ -1292,6 +1311,9 @@ fn sectpr_body(w: &mut W, s: &SectionProps) {
         }
         if s.title_page {
             w.empty("w:titlePg", &[]);
+        }
+        if s.text_direction.is_turned() {
+            w.val("w:textDirection", s.text_direction.ooxml());
         }
         if s.rtl {
             w.empty("w:bidi", &[]);

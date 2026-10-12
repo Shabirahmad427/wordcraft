@@ -116,3 +116,62 @@ Hosted workflow verification for integration commit `838a7d1b50dadb76b0f274cea5a
 The in-progress hosted jobs had not reported results when this audit was updated. Synthetic
 fixtures and Linux rendering do not establish Microsoft Word/Excel interoperability, native
 printer compatibility, or full platform runtime behavior.
+
+## Follow-up upstream integration through `46d5e99` (2026-10-11)
+
+After the first push, upstream `main` advanced from `2ffba93b5189410a415970be179dcf481092d756` to
+`46d5e99b3e82828f95ec87da92b2e1fc1db03b78`: **20 additional commits** (39 commits total since
+`dba6e66d53733c2c0fd28355249d24eb3698187e`). Version metadata remains 0.5.0; this is source
+integration, not a new published release. A backup branch, `backup/pre-upstream-sync-46d5e99`,
+points to the fork before this second merge. The merge joins fork commit
+`2385c40af994e34f46f796519a0060447a2d29f6` with the upstream tip.
+
+New upstream changes cover style updates and Clippy cleanup, Windows FXC shader compilation,
+FreeBSD/Windows ARM64 CI, SmartArt types, Outline view, vertical section text, Options panes,
+Templates and Add-ins Organizer, shape text-wrap controls, paragraph dialog fixes, Chinese font
+names, accessibility, footnotes in cells and page-total fields, CJK font fallback, layout work
+(including mirrored margins, tall headers and endnote continuation), and editing fixes. Compatible
+functionality was integrated. The fork's layout implementation and data-preserving DOCX writer
+remained authoritative where the upstream model differed; compatible vertical layout, page-total,
+note and regression-test behavior was reconciled instead of replacing those subsystems.
+
+There were **24 content-conflict files**. Resolution retained the fork's chart package/cache/XLSX
+transaction path, chart formatting and edit UI, guarded DOCX package mutation, recovery and atomic
+save logic, printing and pinned-workflow security. Upstream SmartArt/model-only chart serialization
+and UI features were integrated alongside them. Tests exposed and the merge fixed three regressions:
+Backstage Options now dispatches to the upstream multi-pane page, Estonian covers “Update fields
+before printing”, and upstream Russian/Turkish command translations were added without replacing
+existing fork translations. No open PR was merged automatically.
+
+### Requested security and PR/issue review
+
+- Issues [#678](https://github.com/storytold/wordcraft/issues/678) and
+  [#679](https://github.com/storytold/wordcraft/issues/679) remain open upstream. The prior fork
+  mitigations remain: no-path image APIs return bytes without predictable temporary files, and unsafe
+  URL schemes/control characters are rejected at import/export/navigation boundaries. Regression
+  tests cover these paths; this is not an independent security audit.
+- DOCX PRs [#647](https://github.com/storytold/wordcraft/pull/647),
+  [#626](https://github.com/storytold/wordcraft/pull/626), and
+  [#617](https://github.com/storytold/wordcraft/pull/617) remain separate proposals and were not
+  merged automatically. Their omission-default, theme-precedence and TOC-result cases still warrant
+  fixture review; existing preservation safeguards were kept intact.
+- Chart issue [#685](https://github.com/storytold/wordcraft/issues/685) remains open. Imported charts
+  keep validated XLSX/cache synchronization; charts newly created from the document model still do
+  not generate embedded workbooks. This merge did not start unrelated chart development.
+
+### Verification for this merge
+
+- `cargo xtask ci` passed all six gates: fmt, Clippy, workspace tests, asset attribution, dependency
+  layers and WASM checks. The layout suite's 201 tests passed; Options, localization, DOCX, chart,
+  recovery and pagination regressions passed.
+- The complete workspace harness was rerun after CI and reported **1,496 passed, 0 failed, 1
+  ignored** (including integration tests; doc-test targets contained no tests).
+- Linux GUI and CLI release build passed. Release checks for `x86_64-pc-windows-gnu` and
+  `aarch64-apple-darwin` passed. These are cross-compilation checks, not native GUI or printer runs.
+- No Microsoft Word reference output or physical printer was available. Hosted FreeBSD/Windows ARM64
+  results and the exact test count will be added after the verified merge commit is pushed. Packaging
+  lint and release workflows are recorded separately because source pushes need not trigger them.
+
+The final merge hash, push result and hosted-run states will be filled in after the merge commit is
+pushed. The protected checkout and its `fix/failed-save-metadata` branch were not accessed or
+modified.

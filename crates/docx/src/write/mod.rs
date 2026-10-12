@@ -358,13 +358,17 @@ pub(crate) fn write_native(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, Do
         push_part(&mut entries, &mut overrides, "word/numbering.xml", numbering_xml(doc), &format!("{CT_WML}numbering+xml"), PartRels::default());
     }
     rels.add(rt::SETTINGS, "settings.xml", false);
+    // The attached template is an external relationship of the settings part (§17.15.1.6).
+    let mut settings_rels = PartRels::default();
+    let template = doc.settings.attached_template.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    let template_rel = template.map(|t| settings_rels.add(rt::ATTACHED_TEMPLATE, t, true));
     push_part(
         &mut entries,
         &mut overrides,
         "word/settings.xml",
-        settings_xml(doc, notes_part(doc, &wr, true), notes_part(doc, &wr, false)),
+        settings_xml(doc, notes_part(doc, &wr, true), notes_part(doc, &wr, false), template_rel.as_deref()),
         &format!("{CT_WML}settings+xml"),
-        PartRels::default(),
+        settings_rels,
     );
     rels.add(rt::THEME, "theme/theme1.xml", false);
     push_part(
@@ -710,6 +714,9 @@ fn style_xml(w: &mut W, st: &Style) {
     if st.quick {
         w.empty("w:qFormat", &[]);
     }
+    if st.locked {
+        w.empty("w:locked", &[]);
+    }
     if !st.para.is_empty() && st.kind != StyleKind::Character {
         w.open("w:pPr", &[]);
         props::ppr_inner(w, &st.para, false, None);
@@ -875,7 +882,9 @@ fn notes_part(doc: &Document, wr: &Writer<'_>, foot: bool) -> bool {
     !ids.is_empty() || !seps.is_empty()
 }
 
-fn settings_xml(doc: &Document, footnotes: bool, endnotes: bool) -> Vec<u8> {
+/// `w:settings`, its children in the schema's order (CT_Settings is a sequence). `template_rel`
+/// is the id of the attached template's relationship, when there is one.
+fn settings_xml(doc: &Document, footnotes: bool, endnotes: bool, template_rel: Option<&str>) -> Vec<u8> {
     let s = &doc.settings;
     let s_notes = (&doc.footnote_separators, &doc.endnote_separators);
     let mut w = W::new();
@@ -889,11 +898,31 @@ fn settings_xml(doc: &Document, footnotes: bool, endnotes: bool) -> Vec<u8> {
     if s.mirror_margins {
         w.empty("w:mirrorMargins", &[]);
     }
+    if let Some(id) = template_rel {
+        w.empty("w:attachedTemplate", &[("r:id", id)]);
+    }
+    if s.link_styles {
+        w.empty("w:linkStyles", &[]);
+    }
     if s.track_changes {
         w.empty("w:trackRevisions", &[]);
     }
     if let Some(p) = &s.protection {
-        w.empty("w:documentProtection", &[("w:edit", p), ("w:enforcement", "1")]);
+        let mut a: Vec<(&str, &str)> = Vec::new();
+        if p != "none" {
+            a.push(("w:edit", p));
+        }
+        if s.protect_formatting {
+            a.push(("w:formatting", "1"));
+        }
+        a.push(("w:enforcement", "1"));
+        // Only the hash attributes the reader keeps, each once.
+        for name in crate::read::PROTECTION_HASH_ATTRS {
+            if let Some((_, v)) = s.protect_hash.iter().find(|(k, _)| k == name) {
+                a.push((name, v));
+            }
+        }
+        w.empty("w:documentProtection", &a);
     }
     w.val("w:defaultTabStop", &crate::units::twips(s.default_tab.clamp(1.0, 1584.0)));
     if s.auto_hyphenation {

@@ -41,6 +41,8 @@ enum Phase {
     Result,
 }
 
+/// A buffered piece of a field's result. Objects are boxed: an inline object is much larger than
+/// a string.
 enum Item {
     Text(String),
     Obj(Box<InlineObject>),
@@ -83,6 +85,16 @@ fn enclosure(f: &FieldState) -> Option<wordcraft_doc::eq::Enclosure> {
 /// several paragraphs (citation managers' `ADDIN` fields: Zotero, Mendeley, EndNote).
 fn is_range_instr(instr: &str) -> bool {
     instr.trim_start().get(..5).is_some_and(|k| k.eq_ignore_ascii_case("ADDIN"))
+}
+
+/// The last paragraph of a block list: its last block, or inside a final table the last
+/// paragraph of its last cell (nested tables to [`MAX_TABLE_DEPTH`]).
+fn last_para_mut(out: &mut Blocks, depth: usize) -> Option<&mut Paragraph> {
+    match Arc::make_mut(out.last_mut()?) {
+        Block::Para(p) => Some(p),
+        Block::Table(t) if depth < MAX_TABLE_DEPTH => last_para_mut(&mut t.rows.last_mut()?.cells.last_mut()?.blocks, depth + 1),
+        Block::Table(_) => None,
+    }
 }
 
 /// The field that buffers content now: the innermost one that isn't a range field, unless it
@@ -199,7 +211,7 @@ impl Reader<'_> {
                         self.read_blocks(sc, c, rels, out, depth + 1);
                     }
                 }
-                "w:bookmarkStart" | "w:bookmarkEnd" | "w:commentRangeStart" | "w:commentRangeEnd" => {
+                "w:bookmarkStart" | "w:bookmarkEnd" | "w:commentRangeStart" | "w:commentRangeEnd" | "w:permStart" | "w:permEnd" => {
                     if let Some(o) = self.marker(e) {
                         sc.pending.push(o);
                     }
@@ -252,12 +264,13 @@ impl Reader<'_> {
         out.extend(inner);
     }
 
-    /// Markers left over at the end of a story go to its last paragraph.
+    /// Markers left over at the end of a story go to its last paragraph (after a final table:
+    /// the last paragraph of its last cell, so a bookmark around the table keeps its end).
     pub fn flush_pending(&mut self, sc: &mut StoryCtx, out: &mut Blocks) {
         if sc.pending.is_empty() {
             return;
         }
-        if let Some(Block::Para(p)) = out.last_mut().map(Arc::make_mut) {
+        if let Some(p) = last_para_mut(out, 0) {
             for o in sc.pending.drain(..) {
                 let props = p.runs.last().map(|r| r.props.clone()).unwrap_or_default();
                 p.text.push(wordcraft_doc::para::OBJ);
@@ -282,6 +295,21 @@ impl Reader<'_> {
             }
             "w:bookmarkEnd" => self.bookmarks.get(&id).map(|n| InlineObject::BookmarkEnd { name: n.clone() }),
             "w:commentRangeStart" => self.comment_id(&id).map(|id| InlineObject::CommentStart { id }),
+            "w:permStart" => {
+                // Bounded: a hostile file can't grow the map without end.
+                if self.perms.len() >= 100_000 {
+                    return None;
+                }
+                let n = self.perms.len() as u32;
+                let id = *self.perms.entry(id).or_insert(n);
+                let text = |a: &str| e.attr(a).filter(|v| v.len() <= 256).unwrap_or("").to_string();
+                let (group, editor) = (text("w:edGrp"), text("w:ed"));
+                if group.is_empty() && editor.is_empty() {
+                    return None;
+                }
+                Some(InlineObject::PermStart { id, group, editor })
+            }
+            "w:permEnd" => self.perms.get(&id).map(|id| InlineObject::PermEnd { id: *id }),
             "w:commentRangeEnd" => {
                 let cid = self.comment_id(&id)?;
                 self.comments_ended.insert(cid);
@@ -428,7 +456,7 @@ impl Reader<'_> {
                 self.read_inline_children(sc, pb, k, rels, ctx, depth + 1);
                 self.end_field(sc, pb);
             }
-            "w:bookmarkStart" | "w:bookmarkEnd" | "w:commentRangeStart" | "w:commentRangeEnd" => {
+            "w:bookmarkStart" | "w:bookmarkEnd" | "w:commentRangeStart" | "w:commentRangeEnd" | "w:permStart" | "w:permEnd" => {
                 if let Some(o) = self.marker(k) {
                     let props = self.run_props_none(ctx);
                     // Markers go straight into the paragraph (never into a field's cached result).
@@ -756,6 +784,20 @@ impl Reader<'_> {
             self.emit_obj(sc, pb, InlineObject::FieldEnd, &f.props);
             return;
         }
+        // A cached result holding a picture, chart or shape (`INCLUDEPICTURE`'s embedded
+        // picture) can't be a text result: keep the field as a range around it so the picture
+        // stays in the document and is saved again. The linked source is never read.
+        if !nested_in_instr && f.buf.iter().any(|(it, _)| matches!(it, Item::Obj(o) if o.frame().is_some())) {
+            self.emit_obj(sc, pb, InlineObject::FieldStart { instr: f.instr.trim().to_string(), locked: f.locked }, &f.props);
+            for (it, p) in f.buf {
+                match it {
+                    Item::Text(t) => self.emit_text(sc, pb, &t, &p),
+                    Item::Obj(o) => self.emit_obj(sc, pb, *o, &p),
+                }
+            }
+            self.emit_obj(sc, pb, InlineObject::FieldEnd, &f.props);
+            return;
+        }
         let mut result = String::new();
         for (it, _) in &f.buf {
             match it {
@@ -946,21 +988,25 @@ impl Reader<'_> {
             GraphicKind::Chart => gd.child("c:chart").and_then(|c| c.attr("r:id")).and_then(|id| super::part_of(rels, id, rt::CHART)),
             GraphicKind::Diagram => self.diagram_part(gd, rels),
         };
-        let Some(path) = part else { return Arc::new(Graphic { kind, items: Vec::new(), w, h, source, chart: None }) };
+        let Some(path) = part else { return Arc::new(Graphic { kind, items: Vec::new(), w, h, source, chart: None, smart_art: None }) };
         let key = (kind, path, w.to_bits(), h.to_bits());
         if let Some(g) = self.graphics.get(&key) {
             return g.clone();
         }
         let items = if self.graphic_budget == 0 { Vec::new() } else { self.graphic_items(kind, &key.1, w, h) };
         self.graphic_budget = self.graphic_budget.saturating_sub(graphic_work(&items));
-        // A chart that is exactly what WordCraft writes for its model can be edited (and is
-        // written from the model); any other stays as it was read.
+        // A chart or SmartArt that is exactly what WordCraft writes for its model can be edited
+        // (and is written from the model); any other stays as it was read.
         let chart = match kind {
             GraphicKind::Chart if !items.is_empty() => self.graphic_part(&key.1).and_then(|space| crate::chart_spec::spec_of(&space)).map(Arc::new),
             _ => None,
         };
-        let source = if chart.is_some() { None } else { source };
-        let g = Arc::new(Graphic { kind, items, w, h, source, chart });
+        let smart_art = match kind {
+            GraphicKind::Diagram if !items.is_empty() => self.smart_art_spec(gd, rels).map(Arc::new),
+            _ => None,
+        };
+        let source = if chart.is_some() || smart_art.is_some() { None } else { source };
+        let g = Arc::new(Graphic { kind, items, w, h, source, chart, smart_art });
         self.graphics.insert(key, g.clone());
         g
     }

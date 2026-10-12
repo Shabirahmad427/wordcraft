@@ -14,9 +14,11 @@ pub mod fields;
 pub mod hit;
 pub mod kinsoku;
 pub mod math;
+pub mod outline;
 pub mod para;
 mod table;
 mod textbox;
+mod vertical;
 pub mod wordart;
 
 use std::collections::{HashMap, HashSet};
@@ -45,6 +47,8 @@ pub enum ViewMode {
     Web,
     /// Draft/Outline: like web, page breaks shown as rules.
     Draft,
+    /// Outline: a continuous view showing document hierarchy.
+    Outline,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -60,6 +64,20 @@ pub struct LayoutOptions {
     /// Show field codes (`{ PAGE }`, shaded) instead of field results (View › Field Codes, Alt+F9).
     /// A field whose own `code` flag is set shows the other one.
     pub field_codes: bool,
+    pub outline: Option<outline::OutlineView>,
+    pub proof: ProofOptions,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ProofOptions {
+    pub grammar: bool,
+    pub spelling: wordcraft_proof::Options,
+}
+
+impl Default for ProofOptions {
+    fn default() -> Self {
+        Self { grammar: true, spelling: wordcraft_proof::Options::default() }
+    }
 }
 
 /// Something placed on a page (page coordinates, points, y down).
@@ -429,6 +447,39 @@ fn has_page_fields(p: &Paragraph) -> bool {
     })
 }
 
+fn has_total_fields(p: &Paragraph) -> bool {
+    p.objects
+        .iter()
+        .any(|o| matches!(o, InlineObject::Field { instr, .. } if matches!(fields::field_name(instr).as_str(), "NUMPAGES" | "SECTIONPAGES")))
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Totals {
+    pages: u32,
+    sections: Vec<u32>,
+}
+
+impl Totals {
+    fn first_guess(count: usize) -> Self {
+        Self { pages: 1, sections: vec![1; count] }
+    }
+    fn of(pages: &[Page], count: usize) -> Self {
+        let mut sections = vec![0u32; count];
+        for page in pages {
+            if let Some(total) = sections.get_mut(page.section) {
+                *total = total.saturating_add(1);
+            }
+        }
+        for total in &mut sections {
+            *total = (*total).max(1);
+        }
+        Self { pages: u32::try_from(pages.len()).unwrap_or(u32::MAX).max(1), sections }
+    }
+    fn section(&self, i: usize) -> u32 {
+        self.sections.get(i).copied().unwrap_or(1)
+    }
+}
+
 /// Walk state while paginating.
 struct Ctx<'a> {
     doc: &'a Document,
@@ -491,7 +542,7 @@ impl Ctx<'_> {
             field_codes: false,
             hide_deleted: false,
             table: None,
-            proofing: false,
+            proofing: None,
             exclusions: &[],
             eq_number: 0,
             grid: para::Grid::default(),
@@ -556,7 +607,7 @@ impl Ctx<'_> {
             field_codes: self.opts.field_codes,
             hide_deleted: self.opts.hide_deleted,
             table,
-            proofing: self.opts.proofing,
+            proofing: self.opts.proofing.then_some(self.opts.proof),
             exclusions,
             eq_number,
             grid: self.grid,
@@ -1878,27 +1929,112 @@ fn balance_final_columns(pb: &mut PageBuilder<'_>, doc: &Document, start_block: 
 
 /// Lay out the whole document.
 pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> DocLayout {
+    if opts.view == ViewMode::Outline {
+        return layout_outline(doc, cache, opts);
+    }
     let t0 = now_ms();
     let per_page = opts.view == ViewMode::Print
         && doc.sections().iter().any(|(_, section)| doc.note_options(section, false).num_restart == wordcraft_doc::section::NoteRestart::EachPage);
     let mut note_pages = HashMap::new();
     let mut result = DocLayout::default();
-    for _ in 0..if per_page { 3 } else { 1 } {
-        result = layout_with_note_pages(doc, cache, opts, &note_pages);
-        if !per_page {
-            break;
-        }
+    let mut totals = Totals::first_guess(doc.sections().len());
+    let needs_totals = doc.para_paths(StoryRef::Body).iter().filter_map(|path| doc.para(StoryRef::Body, path)).any(has_total_fields);
+    for _ in 0..if per_page || needs_totals { 4 } else { 1 } {
+        result = layout_with_note_pages(doc, cache, opts, &note_pages, &totals);
         let placed = footnote_pages(doc, &result.pages);
-        if placed == note_pages {
+        let found = Totals::of(&result.pages, doc.sections().len());
+        let note_stable = !per_page || placed == note_pages;
+        let totals_stable = !needs_totals || found == totals;
+        if note_stable && totals_stable {
             break;
         }
-        note_pages = placed;
+        if per_page {
+            note_pages = placed;
+        }
+        if needs_totals {
+            totals = found;
+        }
+        if !per_page && !needs_totals {
+            break;
+        }
     }
     result.ms = now_ms() - t0;
     result
 }
 
-fn layout_with_note_pages(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions, note_pages: &HashMap<u32, usize>) -> DocLayout {
+fn layout_outline(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> DocLayout {
+    let view = opts.outline.clone().unwrap_or_default();
+    let levels = outline::levels(doc);
+    let hidden = outline::hidden(&levels, &view);
+    let mut projected = doc.clone();
+    let mut source_blocks = Vec::new();
+    let mut blocks = Vec::new();
+    for (index, block) in doc.body.iter().enumerate() {
+        if hidden.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        let replacement = match &**block {
+            Block::Para(p) => {
+                let mut p = outline::outline_para(doc, p, view.plain);
+                p.props.indent_left = Some(outline::indent(&levels, index));
+                Arc::new(Block::Para(p))
+            }
+            _ => block.clone(),
+        };
+        source_blocks.push(index as u32);
+        blocks.push(replacement);
+    }
+    projected.body = blocks;
+    let mut draft = opts.clone();
+    draft.view = ViewMode::Draft;
+    draft.outline = None;
+    let mut result = layout(&projected, cache, &draft);
+    let projected_levels = source_blocks.iter().map(|i| levels.get(*i as usize).copied().unwrap_or(outline::BODY)).collect::<Vec<_>>();
+    for page in &mut result.pages {
+        let mut symbols = Vec::new();
+        page.items.retain_mut(|item| {
+            let Placed::Lines { story: StoryRef::Body, path, para, l0, x, y, .. } = item else { return true };
+            let Some(&compact) = path.0.first() else { return true };
+            let Some(&source) = source_blocks.get(compact as usize) else { return false };
+            path.0[0] = source;
+            if path.0.len() == 1 {
+                let level = projected_levels.get(compact as usize).copied().unwrap_or(outline::BODY);
+                if view.first_line_only && level == outline::BODY && *l0 > 0 {
+                    return false;
+                }
+                if *l0 == 0 {
+                    symbols.extend(outline::symbol_items(
+                        para,
+                        *x,
+                        *y,
+                        level,
+                        outline::has_children(&levels, source as usize),
+                        view.collapsed.contains(&(source as usize)),
+                    ));
+                }
+            }
+            true
+        });
+        page.items.extend(symbols);
+    }
+    result.index.clear();
+    for (pi, page) in result.pages.iter().enumerate() {
+        for (ii, item) in page.items.iter().enumerate() {
+            if let Placed::Lines { story, path, .. } = item {
+                result.index.entry((*story, path.clone())).or_default().push((pi, ii));
+            }
+        }
+    }
+    result
+}
+
+fn layout_with_note_pages(
+    doc: &Document,
+    cache: &mut LayoutCache,
+    opts: &LayoutOptions,
+    note_pages: &HashMap<u32, usize>,
+    totals: &Totals,
+) -> DocLayout {
     let has_multicolumn_notes = opts.view == ViewMode::Print
         && doc.sections().iter().any(|(_, section)| section.columns.count > 1)
         && doc
@@ -1908,7 +2044,7 @@ fn layout_with_note_pages(doc: &Document, cache: &mut LayoutCache, opts: &Layout
             .flat_map(|para| &para.objects)
             .any(|object| matches!(object, InlineObject::NoteRef { kind: wordcraft_doc::para::NoteKind::Footnote, .. }));
     if !has_multicolumn_notes {
-        let (result, _) = layout_pass(doc, cache, opts, note_pages, &[]);
+        let (result, _) = layout_pass(doc, cache, opts, note_pages, &[], totals);
         return result;
     }
     let mut reservations = Vec::new();
@@ -1920,7 +2056,7 @@ fn layout_with_note_pages(doc: &Document, cache: &mut LayoutCache, opts: &Layout
     let mut high_water: Vec<f32> = Vec::new();
     let mut stable = false;
     for _ in 0..24 {
-        let (result, actual) = layout_pass(doc, cache, opts, note_pages, &reservations);
+        let (result, actual) = layout_pass(doc, cache, opts, note_pages, &reservations, totals);
         for (i, height) in actual.iter().copied().enumerate() {
             if high_water.len() <= i {
                 high_water.resize(i + 1, 0.0);
@@ -1942,7 +2078,7 @@ fn layout_with_note_pages(doc: &Document, cache: &mut LayoutCache, opts: &Layout
         // bounded window. Any newly occupied page adds to the high-water map and gets another pass.
         for _ in 0..8 {
             let current = high_water.clone();
-            let (candidate, actual) = layout_pass(doc, cache, opts, note_pages, &current);
+            let (candidate, actual) = layout_pass(doc, cache, opts, note_pages, &current, totals);
             let covered = actual.iter().enumerate().all(|(i, height)| current.get(i).is_some_and(|reserved| *height <= *reserved + 0.1));
             for (i, height) in actual.iter().copied().enumerate() {
                 if high_water.len() <= i {
@@ -1965,6 +2101,7 @@ fn layout_pass(
     opts: &LayoutOptions,
     note_pages: &HashMap<u32, usize>,
     reserved_note_heights: &[f32],
+    totals: &Totals,
 ) -> (DocLayout, Vec<f32>) {
     let t0 = now_ms();
     let env = env_hash(doc, opts);
@@ -1986,8 +2123,8 @@ fn layout_pass(
         counters: Counters::default(),
         fields: FieldCtx {
             page: 1,
-            pages: 1,
-            section_pages: 1,
+            pages: totals.pages,
+            section_pages: totals.section(0),
             section: 1,
             notes: Arc::new(notes),
             title: doc.core.title.as_str().into(),
@@ -2057,8 +2194,27 @@ fn layout_pass(
     };
     let mut block = 0usize;
     let mut column_balance_skipped = Vec::new();
+    let even_odd_headers = ctx.doc.settings.even_odd_headers;
+    let turned: Vec<Option<SectionProps>> = sections
+        .iter()
+        .map(|(si, sect)| {
+            if web || !sect.text_direction.is_turned() {
+                return None;
+            }
+            let top = body_top_for(&mut ctx, sect, *si, &sections, false, even_odd_headers);
+            Some(vertical::unturned_sect(sect, top))
+        })
+        .collect();
+    let mut previous_turn = TextDirection::Horizontal;
     for (si, (end, sect)) in sections.iter().enumerate() {
-        let sect: &SectionProps = if web { sect_ref } else { sect };
+        let turn = if web { TextDirection::Horizontal } else { sect.text_direction };
+        let sect: &SectionProps = match turned.get(si) {
+            Some(Some(unturned)) => unturned,
+            _ if web => sect_ref,
+            _ => sect,
+        };
+        ctx.fields.section = u32::try_from(si).unwrap_or(u32::MAX).saturating_add(1);
+        ctx.fields.section_pages = totals.section(si);
         let start = if si == 0 { SectionStart::NextPage } else { sect.start };
         if !web && si > 0 && start == SectionStart::NextColumn && !pb.pages.is_empty() && pb.col + 1 >= pb.cols.len() {
             // Close the outgoing page while its section still owns alignment and note geometry.
@@ -2084,16 +2240,21 @@ fn layout_pass(
             pb.seps = NoteSeps::new(&mut ctx, &doc.footnote_separators, sect.text_width());
         }
         let even_odd = ctx.doc.settings.even_odd_headers;
-        let body_top = if web { sect.margin_top } else { body_top_for(&mut ctx, sect, si, &sections, false, even_odd) };
-        let first_top = if web || !sect.title_page { body_top } else { body_top_for(&mut ctx, sect, si, &sections, true, even_odd) };
-        pb.clearance_bottom = if web { sect.page_h - sect.margin_bottom } else { body_bottom_for(&mut ctx, sect, si, &sections, even_odd) };
+        let body_top = if web || turn.is_turned() { sect.margin_top } else { body_top_for(&mut ctx, sect, si, &sections, false, even_odd) };
+        let first_top =
+            if web || turn.is_turned() || !sect.title_page { body_top } else { body_top_for(&mut ctx, sect, si, &sections, true, even_odd) };
+        pb.clearance_bottom =
+            if web || turn.is_turned() { sect.page_h - sect.margin_bottom } else { body_bottom_for(&mut ctx, sect, si, &sections, even_odd) };
         let restart = sect.page_num_start;
         if sect.line_numbers.as_ref().is_some_and(|l| l.restart == wordcraft_doc::section::LineNumberRestart::Section) {
             pb.line_no = 0;
         }
         if web && si > 0 {
             // one long page
-        } else if pb.pages.is_empty() || matches!(start, SectionStart::NextPage | SectionStart::EvenPage | SectionStart::OddPage) {
+        } else if pb.pages.is_empty()
+            || turn != previous_turn
+            || matches!(start, SectionStart::NextPage | SectionStart::EvenPage | SectionStart::OddPage)
+        {
             if let Some(n) = restart {
                 pb.number = n.saturating_sub(1);
             }
@@ -2137,6 +2298,7 @@ fn layout_pass(
             pb.y = pb.top;
             pb.max_y = pb.top;
         }
+        previous_turn = turn;
         let last = (*end).min(doc.body.len().saturating_sub(1));
         let section_first_block = block;
         while block <= last {
@@ -2217,6 +2379,14 @@ fn layout_pass(
     ctx.grid = para::Grid::default();
     if !web {
         headers_footers(&mut ctx, &mut pages, &sections);
+        if doc.settings.mirror_margins {
+            mirror_even_pages(&mut pages, &sections);
+        }
+    }
+    for page in &mut pages {
+        if let Some((_, physical)) = sections.get(page.section) {
+            vertical::turn_page(page, physical.text_direction, physical);
+        }
     }
     // Evict paragraph layouts that weren't used this pass if the cache grew large.
     if ctx.cache.paras.len() > 4 * ctx.cache.used.len().max(1024) {
@@ -2855,7 +3025,7 @@ fn next_first_line(ctx: &mut Ctx, block: usize, width: f32) -> f32 {
                 field_codes: ctx.opts.field_codes,
                 hide_deleted: ctx.opts.hide_deleted,
                 table: None,
-                proofing: false,
+                proofing: None,
                 exclusions: &[],
                 eq_number: ctx.eq_count,
                 grid: ctx.grid,
@@ -2916,6 +3086,7 @@ fn place_table(ctx: &mut Ctx, pb: &mut PageBuilder, t: &wordcraft_doc::Table, bl
             match split {
                 Some((a, b)) => {
                     place(pb, &a);
+                    table_notes(ctx, pb, &a.items);
                     rest = Some(b);
                 }
                 // Like Word, a row that does not fit on an empty page, or under the header rows
@@ -2934,8 +3105,35 @@ fn place_table(ctx: &mut Ctx, pb: &mut PageBuilder, t: &wordcraft_doc::Table, bl
             }
             fresh = true;
         }
-        place(pb, rest.as_ref().unwrap_or(row));
+        let last = rest.as_ref().unwrap_or(row);
+        place(pb, last);
+        table_notes(ctx, pb, &last.items);
     }
+}
+
+/// Footnotes referenced by placed table-cell lines are added to the page note area as in body text.
+fn table_notes(ctx: &mut Ctx, pb: &mut PageBuilder, items: &[Placed]) {
+    if pb.web {
+        return;
+    }
+    let mut ids = Vec::new();
+    for item in items {
+        let Placed::Lines { story: StoryRef::Body, para, l0, l1, .. } = item else { continue };
+        let (Some(first), Some(last)) = (para.lines.get(*l0), para.lines.get(l1.saturating_sub(1))) else { continue };
+        for (cluster, id) in &para.notes {
+            if *cluster >= first.c0 && *cluster < last.c1 && !ids.contains(id) && !pb.notes.iter().any(|note| note.id == *id) {
+                ids.push(*id);
+            }
+        }
+    }
+    let before = pb.notes_h();
+    for id in ids {
+        let Some(part) = ctx.doc.parts.get(&id).filter(|part| part.kind == wordcraft_doc::PartKind::Footnote) else { continue };
+        let blocks = part.blocks.clone();
+        let BoxLayout { items, height, .. } = layout_box(ctx, StoryRef::Part(id), &blocks, &[], pb.sect.text_width(), None, 0, None);
+        pb.notes.push(NoteBox { id, items, h: height, cont: false });
+    }
+    pb.bottom -= pb.notes_h() - before;
 }
 
 /// Place floating table `tl` (`w:tblpPr`): at its own position, which takes no room in the text
@@ -3088,6 +3286,25 @@ fn headers_footers(ctx: &mut Ctx, pages: &mut [Page], sections: &[(usize, &Secti
     }
 }
 
+fn mirror_even_pages(pages: &mut [Page], sections: &[(usize, &SectionProps)]) {
+    for page in pages.iter_mut().filter(|page| page.number % 2 == 0) {
+        let Some((_, section)) = sections.get(page.section) else { continue };
+        let dx = section.margin_right - section.margin_left - section.gutter;
+        if !dx.is_finite() || dx.abs() < 0.001 {
+            continue;
+        }
+        let border_count = section
+            .page_borders
+            .as_ref()
+            .map(|b| [b.top, b.bottom, b.left, b.right].into_iter().flatten().filter(Border::is_visible).count())
+            .unwrap_or(0);
+        for item in page.items.iter_mut().skip(border_count).chain(page.header.iter_mut()).chain(page.footer.iter_mut()) {
+            item.translate(dx, 0.0);
+        }
+        page.body.x += dx;
+    }
+}
+
 /// Is an object floating (not laid out inline)?
 pub fn is_floating(o: &InlineObject) -> bool {
     o.is_floating()
@@ -3115,4 +3332,8 @@ mod tests_bidi;
 #[cfg(test)]
 mod tests_grid;
 #[cfg(test)]
+mod tests_pages;
+#[cfg(test)]
 mod tests_textbox;
+#[cfg(test)]
+mod tests_vertical;

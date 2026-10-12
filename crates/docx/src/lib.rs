@@ -17,6 +17,7 @@ mod package;
 mod preservation;
 mod preserved_xml;
 mod read;
+mod smart_art;
 mod units;
 mod write;
 mod xml;
@@ -31,10 +32,14 @@ pub use chart_mapping::{
     apply_chart_edit, document_has_chart, inspect_chart_data, prepare_chart_edit,
 };
 /// Render an in-memory chart model through the same chart drawing engine as imported charts.
-pub use chart_spec::chart_items;
+pub use chart_spec::{chart_items, chart_xml};
 
-pub use crypt::{DEFAULT_SPIN_COUNT, MAX_PASSWORD_CHARS, check_password, decrypt, encrypt, encrypt_with_spin_count, is_encrypted};
+pub use crypt::{
+    DEFAULT_SPIN_COUNT, MAX_PASSWORD_CHARS, PasswordCheck, check_password, check_protection_password, decrypt, encrypt, encrypt_with_spin_count,
+    is_encrypted, protection_hash,
+};
 pub use read::read;
+pub use smart_art::smart_art_items;
 pub use write::{write, write_as};
 
 /// What [`DocxError::PasswordRequired`] says.

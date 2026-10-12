@@ -587,7 +587,7 @@ fn right_tab_aligns_text_end() {
 fn lists_get_labels_and_indent() {
     let mut d = Document::from_text("one\ntwo\nthree");
     let id = d.numbering.add_list(wordcraft_doc::ListKind::Numbered);
-    d.format_paragraphs(&Pos::body(0, 0), &Pos::body(2, 0), &|p| p.numbering = Some(wordcraft_doc::props::NumRef { num: id, level: 0 })).unwrap();
+    d.format_paragraphs(&Pos::body(0, 0), &Pos::body(2, 5), &|p| p.numbering = Some(wordcraft_doc::props::NumRef { num: id, level: 0 })).unwrap();
     let l = lay(&d);
     let labels: Vec<String> = l.pages[0]
         .items
@@ -1142,11 +1142,7 @@ fn runs_differing_only_in_link_or_decoration_keep_their_own_style() {
 fn web_view_is_one_page() {
     let d = Document::from_text(&"text ".repeat(3000));
     let mut c = LayoutCache::new();
-    let l = layout(
-        &d,
-        &mut c,
-        &LayoutOptions { view: ViewMode::Web, web_width: 800.0, show_hidden: false, hide_deleted: false, proofing: false, field_codes: false },
-    );
+    let l = layout(&d, &mut c, &LayoutOptions { view: ViewMode::Web, web_width: 800.0, ..Default::default() });
     assert_eq!(l.pages.len(), 1);
     assert!(l.pages[0].h > 800.0);
 }
@@ -1242,7 +1238,8 @@ fn footnote_in_later_column_reflows_the_whole_page_without_losing_text() {
     let anchor = Pos::body(0, 900);
     doc.insert_object(&anchor, InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() }, &Default::default()).unwrap();
 
-    let first_pass = layout_pass(&doc, &mut LayoutCache::new(), &LayoutOptions::default(), &HashMap::new(), &[]).0;
+    let first_pass =
+        layout_pass(&doc, &mut LayoutCache::new(), &LayoutOptions::default(), &HashMap::new(), &[], &Totals::first_guess(doc.sections().len())).0;
     let first_anchor = first_pass.caret(&anchor).expect("first pass places the reference");
     assert_eq!(first_anchor.page, 0, "fixture should place the note on the first page: {first_anchor:?}");
     assert!(first_anchor.x > 300.0, "fixture should anchor in the second column: {first_anchor:?}");
@@ -3206,7 +3203,7 @@ fn oversized_graphic_draws_shrunk_with_its_items() {
         stroke: Some(Rgb::BLACK),
         stroke_width: 4.0,
     }];
-    let graphic = Graphic { kind: GraphicKind::Chart, items, w: 1000.0, h: 500.0, source: None, chart: None };
+    let graphic = Graphic { kind: GraphicKind::Chart, items, w: 1000.0, h: 500.0, source: None, chart: None, smart_art: None };
     let obj = InlineObject::Graphic { w: 1000.0, h: 500.0, alt: String::new(), float: Default::default(), graphic: Arc::new(graphic) };
     let mut d = Document::from_text("Chart");
     d.insert_object(&Pos::body(0, 0), obj, &Default::default()).unwrap();
@@ -3967,6 +3964,26 @@ fn rotated_canvas_draws_its_clipped_members_inside_the_turn() {
     }
 }
 
+#[test]
+fn mirror_indents_swap_sides_on_even_pages() {
+    // #512: with mirrored indents the left indent is the inside one, on the right of an even page.
+    let mut d = Document::from_text("odd page\neven page");
+    let last = Pos::body(1, 0);
+    d.format_paragraphs(&Pos::body(0, 0), &last, &|p| {
+        p.indent_left = Some(72.0);
+        p.mirror_indents = Some(true);
+    })
+    .unwrap();
+    d.format_paragraphs(&last, &last, &|p| p.page_break_before = Some(true)).unwrap();
+    let l = lay(&d);
+    assert_eq!(l.pages.len(), 2);
+    let odd = l.caret(&Pos::body(0, 0)).unwrap();
+    let even = l.caret(&last).unwrap();
+    assert_eq!(even.page, 1);
+    assert!((odd.x - 144.0).abs() < 0.5, "odd page: inside indent on the left, {odd:?}");
+    assert!((even.x - 72.0).abs() < 0.5, "even page: the left side has the outside indent (0), {even:?}");
+}
+
 /// Ten short paragraphs in a two-column section (`widths`: unequal columns), then one paragraph
 /// in a one-column section starting `start`.
 fn two_column_section(start: wordcraft_doc::section::SectionStart, widths: Vec<(f32, f32)>) -> Document {
@@ -4111,4 +4128,58 @@ fn endnotes_at_section_end_and_footnotes_below_text() {
     let below = top(&d);
     let text = lay(&d).caret(&Pos::body(1, 0)).unwrap();
     assert!(below > text.top + text.height && below < bottom - 100.0, "{below} {bottom} {text:?}");
+}
+
+/// #451: page totals in the body show the document's page count (the stale cached result is
+/// ignored), on every page, like the same fields in the footer.
+#[test]
+fn body_page_totals_count_every_page() {
+    let mut d = Document::from_text("Body-1\nBody-2\nBody-3");
+    let field = |instr: &str| InlineObject::Field { instr: instr.into(), result: "9".into(), locked: false, code: false };
+    for i in 0..3 {
+        let p = d.para_mut(StoryRef::Body, &Path::top(i)).unwrap();
+        p.props.page_break_before = Some(i > 0);
+        let n = p.len();
+        p.insert_object(n, field("NUMPAGES"), &Default::default()).unwrap();
+        let n = p.len();
+        p.insert_object(n, field("SECTIONPAGES"), &Default::default()).unwrap();
+    }
+    let mut fp = wordcraft_doc::Paragraph::new();
+    fp.insert_object(0, field("NUMPAGES"), &Default::default()).unwrap();
+    let id = d.add_part(wordcraft_doc::PartKind::Footer, vec![wordcraft_doc::para_block(fp)]);
+    d.last_section.footers.default = Some(id);
+    let l = lay(&d);
+    assert_eq!(l.pages.len(), 3);
+    let shown = |items: &[Placed]| -> Vec<String> {
+        items
+            .iter()
+            .flat_map(|it| if let Placed::Lines { para, .. } = it { para.shown.iter().map(|s| s.1.clone()).collect() } else { vec![] })
+            .collect()
+    };
+    for (i, p) in l.pages.iter().enumerate() {
+        assert_eq!(shown(&p.items), ["3", "3"], "body of page {}", i + 1);
+        assert_eq!(shown(&p.footer), ["3"], "footer of page {}", i + 1);
+    }
+    // One page: one pass, total 1.
+    let mut d1 = Document::from_text("Only");
+    let p = d1.para_mut(StoryRef::Body, &Path::top(0)).unwrap();
+    p.insert_object(4, field("NUMPAGES"), &Default::default()).unwrap();
+    assert_eq!(shown(&lay(&d1).pages[0].items), ["1"]);
+}
+
+/// #450: a footnote referenced in a table cell is placed at the bottom of its page, like one in
+/// a body paragraph.
+#[test]
+fn table_cell_footnotes_are_placed() {
+    let mut d = Document::from_text("After the table.");
+    d.insert_block(StoryRef::Body, &Path::top(0), wordcraft_doc::Block::Table(wordcraft_doc::Table::new(1, 1, 300.0))).unwrap();
+    let cell = Pos { story: StoryRef::Body, path: Path(vec![0, 0, 0, 0]), off: 0 };
+    d.para_mut(StoryRef::Body, &cell.path).unwrap().insert_text(0, "Table reference", &Default::default()).unwrap();
+    let id = footnote(&mut d, &Pos { off: "Table reference".len(), ..cell }, "Table note payload.");
+    let l = lay(&d);
+    assert_eq!(l.pages.len(), 1);
+    let c = l.caret(&d.start_of(StoryRef::Part(id))).expect("the cell's footnote is placed");
+    assert_eq!(c.page, 0);
+    let body = l.caret(&Pos::body(1, 0)).unwrap();
+    assert!(c.top > body.top + 100.0, "at the page bottom: {c:?} {body:?}");
 }
