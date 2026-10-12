@@ -1,15 +1,17 @@
 # Word 365 interoperability benchmark
 
-**Status: infrastructure established; genuine Word 365 corpus and application verification pending.**
+**Status: benchmark blocked pending a consented, provenance-documented corpus; no Microsoft Word 365 verification completed.**
 This report does not infer Office provenance from OOXML shape, filenames, metadata, or passing
 WordCraft tests.
 
 ## Corpus provenance
 
 No legally cleared, independently verified Microsoft Word 365-generated reference DOCX files were
-available in this environment. Microsoft Word is not runnable from this Linux checkout; LibreOffice
-is present but is not a substitute for Word and was not used as a Word reference. No proprietary
-documents were collected or added to Git. The Word 365 case count is **zero**.
+available for this benchmark. Private DOCX files exist in the machine's user folders, but none was
+selected, processed, or treated as a reference: their Word provenance and reuse permission have not
+been established. Microsoft Word and Wine are not available from this Linux checkout; LibreOffice is
+present but is not a substitute for Word and was not used as a Word reference. No private documents
+were copied, fingerprinted, or added to Git. The verified Word 365 case count is **zero**.
 
 WordCraft's source-generated fixtures remain useful for deterministic internal regressions. They are
 synthetic public-OOXML test packages, not documents produced by Word and not evidence that Word opens
@@ -20,6 +22,10 @@ sections, notes, comments and revisions, but they are not a licensed real-world 
 Reference documents supplied later must have documented provenance and a redistribution license (or
 remain outside the repository under `/corpus/`). Record whether the file was actually saved by Word,
 the Word product/channel/build, source or author permission, license, and the original archive SHA-256.
+The five required document classes and their pending fields are listed in
+[`examples/word365-corpus-manifest.template.json`](examples/word365-corpus-manifest.template.json).
+Every class is currently `blocked-no-consented-source`; this is a status record, not a completed
+benchmark.
 Do not publish a private manuscript, its PDF, or package fingerprints without the owner's permission.
 Word-produced reference files and screenshots remain uncommitted under the clean-room rules; store
 them locally in the ignored `/corpus/interop/` directory. Synthetic fixtures can be committed only
@@ -99,6 +105,10 @@ content loss, **S2** major layout/editing failure, **S3** cosmetic difference.
 ## Current verification
 
 - Word 365-generated reference files: **0**.
+- Five-document corpus: **blocked**; no user-selected source documents with verified provenance and
+  processing permission.
+- Source DOCX fingerprint / WordCraft unchanged round-trip / supported-edit pass: **not run** for
+  the five requested classes. Synthetic tests are not substituted.
 - Word 365 repair-warning/editability checks: **not run**.
 - Word PDF page/raster comparisons: **not run**.
 - WordCraft package fingerprint/allowlist utility: added with unit tests; no external corpus has yet
