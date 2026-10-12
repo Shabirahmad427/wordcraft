@@ -73,6 +73,44 @@ fn rendered_chart_is_disclosed_as_read_only_with_embedded_data_unchanged() {
         assert_eq!(saved.get(part), original.get(part), "read-only chart data changed in {part}");
     }
 }
+
+#[test]
+fn fixed_error_bars_render_after_docx_save_reopen_without_changing_package_parts() {
+    let mut files = fixture("scientific");
+    replace(
+        &mut files,
+        "word/charts/chart1.xml",
+        "</c:ser>",
+        r#"<c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="fixedVal"/><c:val val="2"/></c:errBars></c:ser>"#,
+    );
+    let input = archive(&files);
+    let document = wordcraft_docx::read(&input).unwrap();
+    let error_bar_count = |document: &wordcraft_doc::Document| {
+        document
+            .body
+            .iter()
+            .filter_map(|block| block.as_para())
+            .flat_map(|para| &para.objects)
+            .find_map(|object| match object {
+                InlineObject::Graphic { graphic, .. } if graphic.kind == wordcraft_doc::graphic::GraphicKind::Chart => Some(
+                    graphic
+                        .items
+                        .iter()
+                        .filter(|item| matches!(item, wordcraft_doc::graphic::GraphicItem::Path { segs, stroke: Some(_), .. } if segs.len() == 6))
+                        .count(),
+                ),
+                _ => None,
+            })
+            .unwrap_or(0)
+    };
+    assert_eq!(error_bar_count(&document), 2, "both category error ranges should be visible");
+    let saved = wordcraft_docx::write(&document).unwrap();
+    let output = unpack(&saved);
+    assert_eq!(output.get("word/charts/chart1.xml"), files.get("word/charts/chart1.xml"));
+    assert_eq!(output.get("word/embeddings/data.xlsx"), files.get("word/embeddings/data.xlsx"));
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    assert_eq!(error_bar_count(&reopened), 2, "error bars should be regenerated from preserved chart OOXML");
+}
 #[test]
 fn story_local_ids_are_rebound_for_body_and_header() {
     let mut files = fixture("scientific");

@@ -90,6 +90,19 @@ pub struct SeriesFormatSnapshot {
     pub marker_color_editable: bool,
     #[serde(default)]
     pub data_labels: Option<DataLabelSnapshot>,
+    #[serde(default)]
+    pub error_bars: Vec<ErrorBarSnapshot>,
+    pub diagnostic: Option<String>,
+}
+
+/// Read-only error-bar summary. Values are intentionally not editable in this phase.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrorBarSnapshot {
+    pub direction: String,
+    pub bar_type: Option<String>,
+    pub value_type: Option<String>,
+    pub renderable: bool,
     pub diagnostic: Option<String>,
 }
 
@@ -509,7 +522,11 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
             verify_number_cache(ser.child("c:val"), &values)?;
             SeriesDataMapping::CategoryValues { categories, values }
         };
-        mapped.push(SeriesMapping { name, data, formatting: inspect_series_format(ser, chart_kind, kind) });
+        let point_count = match &data {
+            SeriesDataMapping::CategoryValues { values, .. } => values.len(),
+            SeriesDataMapping::Scatter { y_values, .. } => y_values.len(),
+        };
+        mapped.push(SeriesMapping { name, data, formatting: inspect_series_format(ser, chart_kind, kind, point_count) });
     }
     if chart_kind == "scatter" {
         let mut sources = BTreeSet::new();
@@ -554,7 +571,7 @@ fn map_chart_inner(chart_xml: &[u8], chart_rels: &[Rel], workbook_part: &str, wo
     })
 }
 
-fn inspect_series_format(series: &El, chart_kind: &str, chart_type: &El) -> SeriesFormatSnapshot {
+fn inspect_series_format(series: &El, chart_kind: &str, chart_type: &El, point_count: usize) -> SeriesFormatSnapshot {
     let pie_varies = matches!(chart_kind, "pie" | "doughnut")
         && (chart_type.children("c:varyColors").count() != 1
             || chart_type.child("c:varyColors").and_then(|node| node.attr("val")).is_none_or(|value| !matches!(value, "0" | "false")));
@@ -582,6 +599,7 @@ fn inspect_series_format(series: &El, chart_kind: &str, chart_type: &El) -> Seri
     let marker_color_editable =
         marker_color.is_some() && !color_target.is_some_and(|target| marker_fill.is_some_and(|fill| std::ptr::eq(target, fill)));
     let data_labels = inspect_data_labels(series, chart_kind);
+    let error_bars = inspect_error_bars(series, chart_kind, point_count);
     let diagnostic = if pie_varies {
         Some("Pie and doughnut charts use per-slice colors; series color editing is read-only.".into())
     } else if !color_editable {
@@ -603,8 +621,104 @@ fn inspect_series_format(series: &El, chart_kind: &str, chart_type: &El) -> Seri
         marker_color,
         marker_color_editable,
         data_labels,
+        error_bars,
         diagnostic,
     }
+}
+
+fn inspect_error_bars(series: &El, chart_kind: &str, point_count: usize) -> Vec<ErrorBarSnapshot> {
+    let mut snapshots: Vec<ErrorBarSnapshot> = series.children("c:errBars").map(|bar| {
+        let direction = bar.child("c:errDir").and_then(|node| node.attr("val")).unwrap_or("unknown").to_string();
+        let bar_type = bar.child("c:errBarType").and_then(|node| node.attr("val")).map(str::to_string);
+        let value_type = bar.child("c:errValType").and_then(|node| node.attr("val")).map(str::to_string);
+        let mut diagnostic = None;
+        if !matches!(chart_kind, "bar" | "column" | "line" | "scatter") {
+            diagnostic = Some("Error bars are currently rendered only for bar, line, and scatter charts.".into());
+        } else if bar.children("c:errDir").count() != 1
+            || bar.children("c:errBarType").count() != 1
+            || bar.children("c:errValType").count() != 1
+            || bar.children("c:noEndCap").count() > 1
+        {
+            diagnostic = Some("The error-bar definition has duplicate or missing required properties.".into());
+        } else if !matches!(direction.as_str(), "x" | "y") || (direction == "x" && chart_kind != "scatter") {
+            diagnostic = Some("This error-bar direction is missing or unsupported for the chart type.".into());
+        } else if !matches!(bar_type.as_deref(), Some("both" | "plus" | "minus")) {
+            diagnostic = Some("The error-bar direction type is missing or unsupported.".into());
+        } else if point_count == 0 {
+            diagnostic = Some("The series has no mapped data points to validate against.".into());
+        } else {
+            match value_type.as_deref() {
+                Some("fixedVal") => {
+                    let value = (bar.children("c:val").count() == 1)
+                        .then(|| bar.child("c:val"))
+                        .flatten()
+                        .filter(|node| node.els().next().is_none())
+                        .and_then(|node| node.attr("val"))
+                        .and_then(|value| value.parse::<f64>().ok());
+                    if !value.is_some_and(|value| value.is_finite() && value >= 0.0) {
+                        diagnostic = Some("The fixed error-bar value is missing, negative, or non-finite.".into());
+                    }
+                }
+                Some("cust") => {
+                    let positive_needed = matches!(bar_type.as_deref(), Some("both" | "plus"));
+                    let negative_needed = matches!(bar_type.as_deref(), Some("both" | "minus"));
+                    let plus = bar.child("c:plus");
+                    let minus = bar.child("c:minus");
+                    let plus_ok = !positive_needed || valid_error_num_lit(plus, point_count);
+                    let minus_ok = !negative_needed || valid_error_num_lit(minus, point_count);
+                    let plus_count_ok = bar.children("c:plus").count() == usize::from(positive_needed);
+                    let minus_count_ok = bar.children("c:minus").count() == usize::from(negative_needed);
+                    if !plus_ok || !minus_ok || !plus_count_ok || !minus_count_ok {
+                        diagnostic = Some(if bar.find("c:f").is_some() {
+                            "Custom error-bar workbook ranges are retained but are not rendered until their cells can be verified against the embedded workbook.".into()
+                        } else {
+                            "Custom error-bar values are malformed or do not match the mapped series length.".into()
+                        });
+                    }
+                }
+                Some("percentage") => diagnostic = Some("Percentage error bars are preserved but not rendered yet.".into()),
+                Some("stdDev") => diagnostic = Some("Standard-deviation bars require statistical calculation that is not modeled yet.".into()),
+                Some("stdErr") => diagnostic = Some("Standard-error bars require statistical calculation that is not modeled yet.".into()),
+                _ => diagnostic = Some("The error-bar value type is missing or unsupported.".into()),
+            }
+        }
+        ErrorBarSnapshot { direction, bar_type, value_type, renderable: diagnostic.is_none(), diagnostic }
+    }).collect();
+    for direction in ["x", "y"] {
+        let indices: Vec<usize> = snapshots.iter().enumerate().filter_map(|(index, bar)| (bar.direction == direction).then_some(index)).collect();
+        if indices.len() > 1 {
+            for index in indices {
+                if let Some(bar) = snapshots.get_mut(index) {
+                    bar.renderable = false;
+                    bar.diagnostic = Some("Multiple error-bar definitions for the same axis are ambiguous.".into());
+                }
+            }
+        }
+    }
+    snapshots
+}
+
+fn valid_error_num_lit(source: Option<&El>, expected: usize) -> bool {
+    let Some(element) = source else { return false };
+    if element.els().count() != 1 || element.children("c:numLit").count() != 1 {
+        return false;
+    }
+    let Some(literal) = element.child("c:numLit") else { return false };
+    if literal.children("c:ptCount").count() != 1 {
+        return false;
+    }
+    let Some(count) = literal.child("c:ptCount").and_then(|node| node.attr("val")).and_then(|value| value.parse::<usize>().ok()) else {
+        return false;
+    };
+    if count != expected || literal.children("c:pt").count() != expected {
+        return false;
+    }
+    let mut seen = BTreeSet::new();
+    literal.children("c:pt").all(|point| {
+        let Some(index) = point.attr("idx").and_then(|value| value.parse::<usize>().ok()) else { return false };
+        let Some(value) = point.child("c:v").and_then(|node| node.text().trim().parse::<f64>().ok()) else { return false };
+        index < expected && seen.insert(index) && value.is_finite() && value >= 0.0
+    }) && seen.len() == expected
 }
 
 fn inspect_data_labels(series: &El, chart_kind: &str) -> Option<DataLabelSnapshot> {
@@ -1307,6 +1421,8 @@ pub struct ChartSeriesSnapshot {
     #[serde(default)]
     pub data_labels: Option<DataLabelSnapshot>,
     #[serde(default)]
+    pub error_bars: Vec<ErrorBarSnapshot>,
+    #[serde(default)]
     pub formatting_diagnostic: Option<String>,
     #[serde(default)]
     pub x_values: Vec<f64>,
@@ -1413,6 +1529,7 @@ pub fn inspect_chart_data(docx: &[u8], chart_part: &str) -> Result<ChartDataSnap
                     marker_color: series.formatting.marker_color,
                     marker_color_editable: series.formatting.marker_color_editable,
                     data_labels: series.formatting.data_labels,
+                    error_bars: series.formatting.error_bars,
                     formatting_diagnostic: series.formatting.diagnostic,
                     x_values,
                     values,
@@ -2827,6 +2944,22 @@ mod tests {
         format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:tx><c:strRef><c:f>Data!A1</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Series one</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>Data!B1:B3</c:f><c:strCache><c:ptCount val="3"/><c:pt idx="0"><c:v>Same</c:v></c:pt><c:pt idx="1"><c:v>Other</c:v></c:pt><c:pt idx="2"><c:v>Same</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>Data!C1:C3</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>42</c:v></c:pt><c:pt idx="2"><c:v>84</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>{second}<c:axId val="1"/></c:barChart></c:plotArea><c:legend><c:legendPos val="r"/></c:legend></c:chart><c:externalData r:id="book"/></c:chartSpace>"#)
             .replace("<c:barDir val=\"col\"/>", &format!("<c:barDir val=\"{direction}\"/>"))
             .replace("xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"", "xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"").into_bytes()
+    }
+
+    #[test]
+    fn error_bar_inspection_reports_renderable_and_unverified_sources() {
+        let xml = br#"<c:ser xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="fixedVal"/><c:val val="1.5"/></c:errBars><c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numRef><c:f>Data!B1:B3</c:f><c:numCache><c:ptCount val="3"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt><c:pt idx="2"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:plus><c:minus><c:numRef><c:f>Data!C1:C3</c:f><c:numCache><c:ptCount val="3"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt><c:pt idx="2"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:minus></c:errBars></c:ser>"#;
+        let series = xml::parse(xml).unwrap();
+        let snapshots = inspect_error_bars(&series, "line", 3);
+        assert_eq!(snapshots.len(), 2);
+        assert!(snapshots.iter().all(|bar| !bar.renderable && bar.diagnostic.as_deref().is_some_and(|reason| reason.contains("ambiguous"))));
+
+        let formula_only = br#"<c:ser xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numRef><c:f>Data!B1:B3</c:f></c:numRef></c:plus><c:minus><c:numLit><c:ptCount val="3"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt><c:pt idx="2"><c:v>1</c:v></c:pt></c:numLit></c:minus></c:errBars></c:ser>"#;
+        let series = xml::parse(formula_only).unwrap();
+        let snapshot = inspect_error_bars(&series, "scatter", 3);
+        assert_eq!(snapshot.len(), 1);
+        assert!(!snapshot[0].renderable);
+        assert!(snapshot[0].diagnostic.as_deref().is_some_and(|reason| reason.contains("embedded workbook")));
     }
 
     fn scatter_chart(series_two: bool) -> Vec<u8> {

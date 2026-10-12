@@ -66,6 +66,16 @@ fn editable_chart_fixture_with_data_labels() -> Vec<u8> {
     archive(&files)
 }
 
+fn chart_fixture_with_error_bars() -> Vec<u8> {
+    let mut files = unpack(&editable_chart_fixture());
+    let chart = String::from_utf8(files["word/charts/chart1.xml"].clone()).unwrap().replace(
+        "</c:ser>",
+        r#"<c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="fixedVal"/><c:val val="2"/></c:errBars></c:ser>"#,
+    );
+    files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+    archive(&files)
+}
+
 fn editable_line_chart_fixture() -> Vec<u8> {
     let mut files = unpack(&editable_chart_fixture());
     let chart = String::from_utf8(files["word/charts/chart1.xml"].clone())
@@ -565,6 +575,61 @@ fn chart_series_color_and_line_width_survive_undo_recovery_save_and_pdf() {
     let reopened_render = wordcraft_render::render_page(&reopened.doc, &reopened_layout.pages[0], 1.0, &Default::default()).to_straight();
     assert_eq!(changed_render, reopened_render);
     let pdf = directory.join("edited.pdf");
+    reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
+    assert!(std::fs::metadata(pdf).unwrap().len() > 100);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn read_only_error_bars_survive_undo_recovery_docx_reopen_and_pdf_export() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-chart-error-bars-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.docx");
+    let destination = directory.join("saved.docx");
+    let original = chart_fixture_with_error_bars();
+    let original_parts = unpack(&original);
+    std::fs::write(&source, &original).unwrap();
+    let error_bar_count = |session: &Session| {
+        session
+            .doc
+            .body
+            .iter()
+            .filter_map(|block| block.as_para())
+            .flat_map(|para| &para.objects)
+            .find_map(|object| match object {
+                InlineObject::Graphic { graphic, .. } if graphic.kind == wordcraft_doc::graphic::GraphicKind::Chart => Some(
+                    graphic
+                        .items
+                        .iter()
+                        .filter(|item| matches!(item, wordcraft_doc::graphic::GraphicItem::Path { segs, stroke: Some(_), .. } if segs.len() == 6))
+                        .count(),
+                ),
+                _ => None,
+            })
+            .unwrap_or(0)
+    };
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source})).unwrap();
+    let original_render_count = error_bar_count(&session);
+    assert_eq!(original_render_count, 2);
+    session.run("text.insert", &json!({"text": "temporary"})).unwrap();
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(error_bar_count(&session), original_render_count);
+
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let recovery_id = store.save(&unique_id(), session.document_id(), &Snapshot::capture(&session)).unwrap();
+    let mut recovered = Session::new(Document::new());
+    store.load(&recovery_id).unwrap().restore(&mut recovered);
+    assert_eq!(error_bar_count(&recovered), original_render_count);
+
+    session.run("file.save", &json!({"path": destination})).unwrap();
+    let saved_parts = unpack(&std::fs::read(&destination).unwrap());
+    assert_eq!(saved_parts["word/charts/chart1.xml"], original_parts["word/charts/chart1.xml"]);
+    assert_eq!(saved_parts["word/embeddings/data.xlsx"], original_parts["word/embeddings/data.xlsx"]);
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": destination})).unwrap();
+    assert_eq!(error_bar_count(&reopened), original_render_count);
+    let pdf = directory.join("preview.pdf");
     reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
     assert!(std::fs::metadata(pdf).unwrap().len() > 100);
     std::fs::remove_dir_all(directory).unwrap();

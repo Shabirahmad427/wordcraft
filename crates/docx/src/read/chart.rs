@@ -178,6 +178,24 @@ struct Series {
     /// The values as the file has them, for data labels (`values` become shares in a 100%
     /// stacked chart); empty when the series shows no labels.
     raw: Vec<Option<f64>>,
+    error_bars: Vec<ErrorBars>,
+}
+
+/// Error bars are read from the chart's own fixed value or numeric-literal cache. Formula-backed
+/// ranges are retained by the package-preservation layer and reported as unsupported until the
+/// chart/workbook relationship can be validated by the mapper.
+struct ErrorBars {
+    direction: ErrorDirection,
+    positive: Vec<f64>,
+    negative: Vec<f64>,
+    caps: bool,
+    diagnostic: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ErrorDirection {
+    X,
+    Y,
 }
 
 #[derive(Clone, Copy)]
@@ -244,7 +262,7 @@ impl Chart {
                 .and_then(|style| style.attr("val"))
                 .is_some_and(|style| matches!(style, "line" | "lineMarker" | "smooth" | "smoothMarker"));
         let date1904 = space.child("c:date1904").is_some_and(|d| d.attr("val").is_none_or(truthy));
-        let mut series = read_series(ty, scatter, scatter_markers, scatter_lines, theme);
+        let mut series = read_series(ty, scatter, matches!(kind, Kind::Bar | Kind::Line | Kind::Scatter), scatter_markers, scatter_lines, theme);
         if series.is_empty() {
             return None;
         }
@@ -359,11 +377,11 @@ impl Chart {
 }
 
 /// The series of a chart type element, within the chart's cell budget.
-fn read_series(ty: &El, scatter: bool, scatter_markers: bool, scatter_lines: bool, theme: &[Rgb]) -> Vec<Series> {
+fn read_series(ty: &El, scatter: bool, error_bars_supported: bool, scatter_markers: bool, scatter_lines: bool, theme: &[Rgb]) -> Vec<Series> {
     let mut budget = MAX_CELLS;
     let mut series = Vec::new();
     for ser in ty.children("c:ser").take(MAX_SERIES) {
-        let s = Series::parse(ser, scatter, scatter_markers, scatter_lines, theme, budget.min(MAX_POINTS));
+        let s = Series::parse(ser, scatter, error_bars_supported, scatter_markers, scatter_lines, theme, budget.min(MAX_POINTS));
         budget = budget.saturating_sub(s.values.len().max(s.xs.len()));
         series.push(s);
     }
@@ -543,7 +561,7 @@ fn text_size(space: &El) -> f32 {
 }
 
 impl Series {
-    fn parse(ser: &El, scatter: bool, scatter_markers: bool, scatter_lines: bool, theme: &[Rgb], cap: usize) -> Series {
+    fn parse(ser: &El, scatter: bool, error_bars_supported: bool, scatter_markers: bool, scatter_lines: bool, theme: &[Rgb], cap: usize) -> Series {
         let name = ser.child("c:tx").and_then(|t| t.find("c:v")).map(|v| label(v.text().trim())).unwrap_or_default();
         let sp = ser.child("c:spPr");
         let ln = sp.and_then(|p| p.child("a:ln"));
@@ -597,6 +615,14 @@ impl Series {
         let label_series_name = show_flag(ser.child("c:dLbls"), "c:showSerName");
         let label_position =
             ser.child("c:dLbls").and_then(|block| block.child("c:dLblPos")).and_then(|position| position.attr("val")).map(str::to_string);
+        let mut error_bars = parse_error_bars(ser, scatter, values.len(), xs.len());
+        if !error_bars_supported {
+            for error_bar in &mut error_bars {
+                error_bar.positive.clear();
+                error_bar.negative.clear();
+                error_bar.diagnostic = Some("Error bars are currently rendered only for bar, line, and scatter charts.".into());
+            }
+        }
         Series {
             name,
             color,
@@ -615,8 +641,166 @@ impl Series {
             label_series_name,
             label_position,
             raw: Vec::new(),
+            error_bars,
         }
     }
+}
+
+/// Parse only unambiguous fixed-value bars and custom numeric literals. Formula references are
+/// deliberately not rendered from their cache alone: without resolving the embedded workbook,
+/// a stale cache could display scientific uncertainty different from its source data.
+fn parse_error_bars(ser: &El, scatter: bool, y_count: usize, x_count: usize) -> Vec<ErrorBars> {
+    let mut parsed = Vec::new();
+    for node in ser.children("c:errBars") {
+        let direction = match node.child("c:errDir").and_then(|e| e.attr("val")) {
+            Some("y") => Some(ErrorDirection::Y),
+            Some("x") if scatter => Some(ErrorDirection::X),
+            Some("x") => None,
+            _ => None,
+        };
+        let direction_text = node.child("c:errDir").and_then(|e| e.attr("val")).unwrap_or("unknown");
+        let bar_type = node.child("c:errBarType").and_then(|e| e.attr("val"));
+        let value_type = node.child("c:errValType").and_then(|e| e.attr("val"));
+        let caps = !node.child("c:noEndCap").and_then(|e| e.attr("val")).is_some_and(truthy);
+        let point_count = if direction == Some(ErrorDirection::X) { x_count } else { y_count };
+        let rejected = |why: String| ErrorBars {
+            direction: direction.unwrap_or(ErrorDirection::Y),
+            positive: Vec::new(),
+            negative: Vec::new(),
+            caps,
+            diagnostic: Some(why),
+        };
+        let Some(direction) = direction else {
+            parsed.push(rejected(if direction_text == "x" {
+                "X error bars are supported only for scatter charts.".into()
+            } else {
+                "The error-bar direction is missing or unsupported.".into()
+            }));
+            continue;
+        };
+        if node.children("c:errDir").count() != 1
+            || node.children("c:errBarType").count() != 1
+            || node.children("c:errValType").count() != 1
+            || node.children("c:noEndCap").count() > 1
+        {
+            parsed.push(rejected("The error-bar definition has duplicate or missing required properties.".into()));
+            continue;
+        }
+        if !matches!(bar_type, Some("both" | "plus" | "minus")) {
+            parsed.push(rejected("The error-bar type is missing or unsupported.".into()));
+            continue;
+        }
+        if point_count == 0 {
+            parsed.push(rejected("Error bars cannot be validated because the series has no data points.".into()));
+            continue;
+        }
+        let (positive, negative) = match value_type {
+            Some("fixedVal") => {
+                if node.children("c:plus").count() != 0 || node.children("c:minus").count() != 0 {
+                    parsed.push(rejected("A fixed-value error-bar definition contains conflicting custom ranges.".into()));
+                    continue;
+                }
+                let value = (node.children("c:val").count() == 1)
+                    .then(|| node.child("c:val"))
+                    .flatten()
+                    .filter(|element| element.els().next().is_none())
+                    .and_then(|e| e.attr("val"))
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .filter(|v| v.is_finite() && *v >= 0.0);
+                let Some(value) = value else {
+                    parsed.push(rejected("The fixed error-bar value is missing, negative, or non-finite.".into()));
+                    continue;
+                };
+                let vals = vec![value; point_count];
+                (
+                    if matches!(bar_type, Some("both" | "plus")) { vals.clone() } else { vec![0.0; point_count] },
+                    if matches!(bar_type, Some("both" | "minus")) { vals } else { vec![0.0; point_count] },
+                )
+            }
+            Some("cust") => {
+                let positive_needed = matches!(bar_type, Some("both" | "plus"));
+                let negative_needed = matches!(bar_type, Some("both" | "minus"));
+                if node.children("c:val").count() != 0
+                    || node.children("c:plus").count() != usize::from(positive_needed)
+                    || node.children("c:minus").count() != usize::from(negative_needed)
+                {
+                    parsed.push(rejected("Custom error-bar ranges conflict with the declared direction type.".into()));
+                    continue;
+                }
+                let plus = if positive_needed { parse_error_literal(node.child("c:plus"), point_count) } else { Some(vec![0.0; point_count]) };
+                let minus = if negative_needed { parse_error_literal(node.child("c:minus"), point_count) } else { Some(vec![0.0; point_count]) };
+                match (plus, minus) {
+                    (Some(plus), Some(minus)) => (plus, minus),
+                    _ => {
+                        let formula = node.find("c:f").is_some();
+                        parsed.push(rejected(if formula {
+                            "Custom error bars use workbook formulas that have not been validated against the embedded workbook.".into()
+                        } else {
+                            "Custom error-bar values are malformed or do not match the series point count.".into()
+                        }));
+                        continue;
+                    }
+                }
+            }
+            Some("percentage") => {
+                parsed.push(rejected("Percentage error bars are preserved but not rendered yet.".into()));
+                continue;
+            }
+            Some("stdDev") => {
+                parsed.push(rejected("Standard-deviation error bars require statistics that are not modeled yet.".into()));
+                continue;
+            }
+            Some("stdErr") => {
+                parsed.push(rejected("Standard-error error bars require statistics that are not modeled yet.".into()));
+                continue;
+            }
+            _ => {
+                parsed.push(rejected("The error-bar value type is missing or unsupported.".into()));
+                continue;
+            }
+        };
+        parsed.push(ErrorBars { direction, positive, negative, caps, diagnostic: None });
+    }
+    // Multiple definitions for one direction can override or combine under OOXML rules. Do not
+    // guess: suppress those bars and keep a diagnostic instead.
+    for direction in [ErrorDirection::X, ErrorDirection::Y] {
+        let indices: Vec<usize> = parsed.iter().enumerate().filter_map(|(i, bar)| (bar.direction == direction).then_some(i)).collect();
+        if indices.len() > 1 {
+            for index in indices {
+                if let Some(bar) = parsed.get_mut(index) {
+                    bar.positive.clear();
+                    bar.negative.clear();
+                    bar.diagnostic = Some("Multiple error-bar definitions for the same axis are ambiguous.".into());
+                }
+            }
+        }
+    }
+    parsed
+}
+
+fn parse_error_literal(source: Option<&El>, expected: usize) -> Option<Vec<f64>> {
+    if source?.els().count() != 1 || source?.children("c:numLit").count() != 1 {
+        return None;
+    }
+    let literal = source?.child("c:numLit")?;
+    if literal.children("c:ptCount").count() != 1 {
+        return None;
+    }
+    let count = literal.child("c:ptCount")?.attr("val")?.parse::<usize>().ok()?;
+    let points: Vec<&El> = literal.children("c:pt").collect();
+    if count != expected || count > MAX_POINTS || points.len() != expected {
+        return None;
+    }
+    let mut values = vec![None; expected];
+    for point in points {
+        let index = point.attr("idx")?.parse::<usize>().ok()?;
+        let value = point.child("c:v")?.text().trim().parse::<f64>().ok().filter(|value| value.is_finite() && *value >= 0.0)?;
+        let slot = values.get_mut(index)?;
+        if slot.replace(value).is_some() {
+            return None;
+        }
+    }
+    values.into_iter().collect()
 }
 
 /// Category labels of a `c:cat` (string or number cache), capped. Numbers show in the cache's
@@ -1408,6 +1592,17 @@ impl Frame {
             None => self.plot.x,
         }
     }
+
+    fn val_data(&self, position: f32) -> f64 {
+        let t = if self.horiz { (position - self.plot.x) / self.plot.w } else { (self.plot.bottom() - position) / self.plot.h };
+        self.vs.lo + f64::from(t.clamp(0.0, 1.0)) * (self.vs.hi - self.vs.lo)
+    }
+
+    fn scat_x_data(&self, position: f32) -> Option<f64> {
+        let scale = self.xs?;
+        let t = ((position - self.plot.x) / self.plot.w).clamp(0.0, 1.0);
+        Some(scale.lo + f64::from(t) * (scale.hi - scale.lo))
+    }
 }
 
 /// The value scale and, for scatter charts, the x scale, with their ticks and tick texts.
@@ -1716,6 +1911,15 @@ fn bars(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, labels: &mut Vec<DataL
             let (p0, p1) = (p0.min(p1), p0.max(p1));
             let segs = if g.horiz { rect_segs(p0, a, p1, a + thick) } else { rect_segs(a, p0, a + thick, p1) };
             fill(out, segs, c.point_colour(j, i));
+            draw_series_error_bars(
+                out,
+                s,
+                i,
+                g,
+                c.series_colour(j),
+                if g.horiz { (g.val(v1), a + thick / 2.0) } else { (a + thick / 2.0, g.val(v1)) },
+                false,
+            );
             if let Some(text) = label_of(s, i, &c.cats) {
                 let mid = a + thick / 2.0;
                 let base = g.val(v0);
@@ -1768,6 +1972,11 @@ fn lines(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, labels: &mut Vec<Data
                 Some((g.cat_x(i), g.val(y)))
             })
             .collect();
+        for (i, point) in pts.iter().enumerate() {
+            if let Some((x, y)) = point {
+                draw_series_error_bars(out, s, i, g, c.series_colour(j), (*x, *y), false);
+            }
+        }
         for (i, p) in pts.iter().enumerate() {
             if let (Some((x, y)), Some(text)) = (p, label_of(s, i, &c.cats)) {
                 labels.push(DataLabel { x: *x, y: *y, text, inside: false, position: s.label_position.clone() });
@@ -1820,6 +2029,11 @@ fn draw_scatter(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, labels: &mut V
                     _ => None,
                 })
                 .collect();
+        for (i, point) in pts.iter().enumerate() {
+            if let Some((x, y)) = point {
+                draw_series_error_bars(out, s, i, g, c.series_colour(j), (*x, *y), true);
+            }
+        }
         for (i, p) in pts.iter().enumerate() {
             if let (Some((x, y)), Some(text)) = (p, label_of(s, i, &c.cats)) {
                 labels.push(DataLabel { x: *x, y: *y - s.marker_size / 2.0, text, inside: false, position: s.label_position.clone() });
@@ -1835,6 +2049,97 @@ fn draw_scatter(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, labels: &mut V
             }
         }
     }
+}
+
+/// Draw supported error ranges through the shared vector display list. `scatter` controls whether
+/// the X direction is a real numeric axis; ordinary Cartesian series only use Y errors.
+fn draw_series_error_bars(out: &mut Vec<GraphicItem>, series: &Series, point: usize, frame: &Frame, color: Rgb, center: (f32, f32), scatter: bool) {
+    for bar in &series.error_bars {
+        if bar.diagnostic.is_some() {
+            continue;
+        }
+        let positive = bar.positive.get(point).copied().unwrap_or(0.0);
+        let negative = bar.negative.get(point).copied().unwrap_or(0.0);
+        if bar.direction == ErrorDirection::X {
+            if !scatter || frame.xs.is_none() {
+                continue;
+            }
+            let scale = frame.xs;
+            if let Some(scale) = scale
+                && let Some(value) = frame.scat_x_data(center.0)
+            {
+                draw_error_range(
+                    out,
+                    center,
+                    frame.scat_x(bounded_error(value, negative, false, scale)),
+                    frame.scat_x(bounded_error(value, positive, true, scale)),
+                    true,
+                    bar.caps,
+                    frame.plot,
+                    color,
+                );
+            }
+        } else if scatter {
+            let value = frame.val_data(center.1);
+            let low = frame.val(bounded_error(value, negative, false, frame.vs));
+            let high = frame.val(bounded_error(value, positive, true, frame.vs));
+            draw_error_range(out, center, low, high, false, bar.caps, frame.plot, color);
+        } else if frame.horiz {
+            let value = frame.val_data(center.0);
+            let low = frame.val(bounded_error(value, negative, false, frame.vs));
+            let high = frame.val(bounded_error(value, positive, true, frame.vs));
+            draw_error_range(out, center, low, high, true, bar.caps, frame.plot, color);
+        } else {
+            let value = frame.val_data(center.1);
+            let low = frame.val(bounded_error(value, negative, false, frame.vs));
+            let high = frame.val(bounded_error(value, positive, true, frame.vs));
+            draw_error_range(out, center, low, high, false, bar.caps, frame.plot, color);
+        }
+    }
+}
+
+fn bounded_error(center: f64, delta: f64, positive: bool, scale: Scale) -> f64 {
+    let bound = if positive { scale.hi } else { scale.lo };
+    let available = if positive { bound - center } else { center - bound };
+    if !available.is_finite() || delta >= available {
+        bound
+    } else if positive {
+        center + delta
+    } else {
+        center - delta
+    }
+}
+
+fn draw_error_range(out: &mut Vec<GraphicItem>, center: (f32, f32), low: f32, high: f32, horizontal: bool, caps: bool, plot: Rect, color: Rgb) {
+    let (low, high) = if horizontal {
+        (low.clamp(plot.x, plot.right()), high.clamp(plot.x, plot.right()))
+    } else {
+        (low.clamp(plot.y, plot.bottom()), high.clamp(plot.y, plot.bottom()))
+    };
+    let mut segs = if horizontal {
+        vec![PathSeg::Move(low, center.1), PathSeg::Line(high, center.1)]
+    } else {
+        vec![PathSeg::Move(center.0, low), PathSeg::Line(center.0, high)]
+    };
+    if caps {
+        let half = 3.0;
+        if horizontal {
+            segs.extend([
+                PathSeg::Move(low, center.1 - half),
+                PathSeg::Line(low, center.1 + half),
+                PathSeg::Move(high, center.1 - half),
+                PathSeg::Line(high, center.1 + half),
+            ]);
+        } else {
+            segs.extend([
+                PathSeg::Move(center.0 - half, low),
+                PathSeg::Line(center.0 + half, low),
+                PathSeg::Move(center.0 - half, high),
+                PathSeg::Line(center.0 + half, high),
+            ]);
+        }
+    }
+    stroke(out, segs, color, 1.0);
 }
 
 fn draw_scatter_marker(out: &mut Vec<GraphicItem>, x: f32, y: f32, size: f32, marker: Marker, color: Rgb) {
@@ -2052,6 +2357,112 @@ mod tests {
             nc = cats.len(),
             nv = vals.len()
         )
+    }
+
+    #[test]
+    fn fixed_and_asymmetric_literal_error_bars_parse_and_draw_with_caps() {
+        let fixed = ser(0, "Fixed", Some("D04050"), &["A", "B"], &["4", "8"])
+            .replace("</c:ser>", r#"<c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="fixedVal"/><c:val val="1"/><c:noEndCap val="0"/></c:errBars></c:ser>"#);
+        let plot = format!(r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>{fixed}</c:barChart>"#);
+        let chart = Chart::parse(&space(&plot), &theme()).expect("chart");
+        let bars = chart.series[0].error_bars.first().expect("error bars");
+        assert_eq!(bars.positive, [1.0, 1.0]);
+        assert_eq!(bars.negative, [1.0, 1.0]);
+        assert!(bars.caps && bars.diagnostic.is_none());
+        let items = chart_items(&space(&plot), &theme(), 300.0, 200.0);
+        assert!(items.iter().any(|item| matches!(item, GraphicItem::Path { segs, stroke: Some(Rgb(0xD0, 0x40, 0x50)), .. } if segs.len() == 6)));
+
+        let asymmetric = ser(0, "Asymmetric", Some("D04050"), &["A", "B"], &["4", "8"])
+            .replace("</c:ser>", r#"<c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1.5</c:v></c:pt><c:pt idx="1"><c:v>2.5</c:v></c:pt></c:numLit></c:plus><c:minus><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>0.5</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt></c:numLit></c:minus></c:errBars></c:ser>"#);
+        let plot = format!(r#"<c:lineChart><c:grouping val="standard"/>{asymmetric}</c:lineChart>"#);
+        let chart = Chart::parse(&space(&plot), &theme()).expect("chart");
+        let bars = chart.series[0].error_bars.first().expect("error bars");
+        assert_eq!(bars.positive, [1.5, 2.5]);
+        assert_eq!(bars.negative, [0.5, 1.0]);
+        assert!(bars.diagnostic.is_none());
+        let items = chart_items(&space(&plot), &theme(), 300.0, 200.0);
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| matches!(item, GraphicItem::Path { segs, stroke: Some(Rgb(0xD0, 0x40, 0x50)), .. } if segs.len() == 6))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn scatter_error_bars_map_x_and_y_but_formula_and_malformed_values_are_read_only() {
+        let series = r#"<c:ser><c:xVal><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numLit></c:xVal><c:yVal><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>4</c:v></c:pt></c:numLit></c:yVal><c:errBars><c:errDir val="x"/><c:errBarType val="plus"/><c:errValType val="cust"/><c:plus><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>0.1</c:v></c:pt><c:pt idx="1"><c:v>0.2</c:v></c:pt></c:numLit></c:plus></c:errBars><c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numRef><c:f>Sheet1!$B$1:$B$2</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>0.1</c:v></c:pt><c:pt idx="1"><c:v>0.2</c:v></c:pt></c:numCache></c:numRef></c:plus><c:minus><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>0.1</c:v></c:pt><c:pt idx="1"><c:v>0.2</c:v></c:pt></c:numLit></c:minus></c:errBars></c:ser>"#;
+        let chart = Chart::parse(&space(&format!(r#"<c:scatterChart>{series}</c:scatterChart>"#)), &theme()).expect("chart");
+        assert!(chart.series[0].error_bars.first().is_some_and(|bar| bar.direction == ErrorDirection::X && bar.diagnostic.is_none()));
+        assert!(
+            chart.series[0]
+                .error_bars
+                .get(1)
+                .is_some_and(|bar| bar.direction == ErrorDirection::Y && bar.diagnostic.as_deref().is_some_and(|reason| reason.contains("workbook")))
+        );
+        let items = chart_items(&space(&format!(r#"<c:scatterChart>{series}</c:scatterChart>"#)), &theme(), 300.0, 200.0);
+        let rendered = items.iter().filter(|item| matches!(item, GraphicItem::Path { segs, stroke: Some(_), .. } if segs.len() == 6)).count();
+        assert_eq!(rendered, 2, "only the two validated X ranges render; the unverified formula range stays hidden");
+        let malformed = format!(
+            r#"<c:ser {NS}><c:val><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numLit></c:val><c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>-1</c:v></c:pt></c:numLit></c:plus><c:minus><c:numLit><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt></c:numLit></c:minus></c:errBars></c:ser>"#
+        );
+        let parsed = crate::xml::parse(malformed.as_bytes()).expect("xml");
+        let bars = parse_error_bars(&parsed, false, 2, 0);
+        assert!(
+            bars.first().and_then(|bar| bar.diagnostic.as_deref()).is_some_and(|reason| reason.contains("malformed")),
+            "{:?}",
+            bars.first().and_then(|bar| bar.diagnostic.as_deref())
+        );
+        for value_type in ["percentage", "stdDev", "stdErr"] {
+            let fragment = format!(
+                r#"<c:ser {NS}><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>2</c:v></c:pt></c:numLit></c:val><c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="{value_type}"/><c:val val="1"/></c:errBars></c:ser>"#
+            );
+            let element = crate::xml::parse(fragment.as_bytes()).expect("xml");
+            let rejected = parse_error_bars(&element, false, 1, 0);
+            assert!(rejected.first().is_some_and(|bar| bar.diagnostic.is_some() && bar.positive.is_empty()));
+        }
+    }
+
+    #[test]
+    fn multi_series_horizontal_bars_keep_error_ranges_on_their_own_series() {
+        let first = ser(0, "first", Some("CC0000"), &["A"], &["4"]);
+        let second = ser(1, "second", Some("00AA00"), &["A"], &["8"]).replace(
+            "</c:ser>",
+            r#"<c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="fixedVal"/><c:val val="1"/></c:errBars></c:ser>"#,
+        );
+        let plot = format!(r#"<c:barChart><c:barDir val="bar"/><c:grouping val="clustered"/>{first}{second}</c:barChart>"#);
+        let items = chart_items(&space(&plot), &theme(), 320.0, 200.0);
+        assert!(items.iter().any(|item| matches!(item, GraphicItem::Path { segs, stroke: Some(Rgb(0x00, 0xAA, 0x00)), .. } if segs.len() == 6)));
+        assert!(
+            !items.iter().any(|item| matches!(item, GraphicItem::Path { stroke: Some(Rgb(0xCC, 0x00, 0x00)), .. })),
+            "the first series has no error bars"
+        );
+    }
+
+    #[test]
+    fn error_ranges_respect_explicit_axis_bounds_and_chart_clipping() {
+        let series = ser(0, "bounded", Some("336699"), &["A"], &["8"]).replace(
+            "</c:ser>",
+            r#"<c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="fixedVal"/><c:val val="50"/></c:errBars></c:ser>"#,
+        );
+        let plot = format!(
+            r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>{series}<c:axId val="1"/></c:barChart><c:valAx><c:scaling><c:min val="0"/><c:max val="10"/></c:scaling></c:valAx>"#
+        );
+        let items = chart_items(&space(&plot), &theme(), 200.0, 140.0);
+        let error_paths: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                GraphicItem::Path { segs, stroke: Some(Rgb(0x33, 0x66, 0x99)), .. } if segs.len() == 6 => Some(segs),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(error_paths.len(), 1);
+        for segment in error_paths.into_iter().flat_map(|segments| segments.iter()) {
+            if let PathSeg::Move(x, y) | PathSeg::Line(x, y) = segment {
+                assert!((0.0..=200.0).contains(x) && (0.0..=140.0).contains(y), "segment escaped chart bounds: {x}, {y}");
+            }
+        }
     }
 
     fn filled(items: &[GraphicItem]) -> Vec<(Rgb, f32, f32)> {

@@ -119,10 +119,29 @@ labels, duplicate/unknown structures, and unsupported positions remain unchanged
 Only existing label-property `@val` attributes are spliced; chart cache and embedded XLSX bytes
 remain unchanged. Text style, custom number format and separator XML are preserved, while preview
 uses the renderer's supported default text style and separator. Placement and text extents are
-approximations and may clip on dense charts. Dash patterns and error bars remain read-only; error
-bars have no rendering model. Synthetic tests cover package edits, custom-label rejection, rendering,
-UI request generation, workbook preservation and existing chart families. No independent Word or
-Excel application comparison is available.
+approximations and may clip on dense charts. Dash patterns remain read-only. Synthetic tests cover
+package edits, custom-label rejection, rendering, UI request generation, workbook preservation and
+existing chart families. No independent Word or Excel application comparison is available.
+
+### Read-only error bars
+
+The chart reader and shared preview/PDF display list render a constrained subset of `c:errBars`
+for column and horizontal bar, line, and scatter charts. Supported forms are nonnegative finite
+`fixedVal` magnitudes and asymmetric `cust` data held directly in dense `c:numLit` point arrays
+whose point count and indices exactly match the plotted series. `errDir` Y is supported for the
+Cartesian families; scatter supports both X and Y. `both`, `plus`, and `minus` direction types,
+and optional end caps, are represented. Extents are clipped to the chart's existing numeric axis
+range. The renderer uses the series color and a simple vector stroke; custom error-bar line styles
+are preserved in OOXML but are not yet reflected in preview.
+
+Error-bar data is read-only: chart edits do not rewrite it. Percentage, standard-deviation and
+standard-error values, malformed or sparse literal arrays, duplicate definitions, unsupported
+directions, and formula-backed `c:numRef` ranges are preserved but not drawn. Formula-backed custom
+ranges are not shown because their cached values are not yet checked against embedded workbook
+cells. `chart.inspectData` reports per-series renderability and a reason in `errorBars`; the Chart
+Design view displays that status. Synthetic parser, rendering, save/reopen and package-preservation
+tests are available; this is not a Word rendering comparison. X/Y workbook-reference validation,
+custom styling, statistical calculation and Word/Excel interoperability still need broader work.
 
 Undo and recovery retain the opaque object and graph bytes. Recovery holds the current edited package parts in the model and retains the exact initially opened package independently. Removing a chart can leave preserved orphan parts in that save; preservation does not synchronize embedded workbook data with edits to nearby tables. Graphs shared with regenerated document parts, or colliding with custom XML graph output, can be rejected rather than rewritten unsafely.
 

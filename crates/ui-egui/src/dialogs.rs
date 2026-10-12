@@ -437,6 +437,16 @@ struct ChartSeriesForm {
     original_data_label_position: Option<String>,
     data_labels_editable: bool,
     data_labels_diagnostic: Option<String>,
+    error_bars: Vec<ChartErrorBarForm>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+struct ChartErrorBarForm {
+    direction: String,
+    bar_type: Option<String>,
+    value_type: Option<String>,
+    renderable: bool,
+    diagnostic: Option<String>,
 }
 
 /// The Table Properties dialog's fields. Lengths are in the interface unit
@@ -1220,6 +1230,19 @@ impl Dialog {
                             .and_then(|labels| labels.get("diagnostic"))
                             .and_then(Value::as_str)
                             .map(str::to_string),
+                        error_bars: series
+                            .get("errorBars")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .map(|bar| ChartErrorBarForm {
+                                direction: bar.get("direction").and_then(Value::as_str).unwrap_or("unknown").to_string(),
+                                bar_type: bar.get("barType").and_then(Value::as_str).map(str::to_string),
+                                value_type: bar.get("valueType").and_then(Value::as_str).map(str::to_string),
+                                renderable: bar.get("renderable").and_then(Value::as_bool).unwrap_or(false),
+                                diagnostic: bar.get("diagnostic").and_then(Value::as_str).map(str::to_string),
+                            })
+                            .collect(),
                         categories: series
                             .get("categories")
                             .and_then(Value::as_array)
@@ -1951,6 +1974,27 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                                     ui.label(tl!(tl!("Data labels are read-only for this OOXML structure.")));
                                 }
                             });
+                            for error_bar in &series.error_bars {
+                                let axis = if error_bar.direction == "x" {
+                                    "X"
+                                } else if error_bar.direction == "y" {
+                                    "Y"
+                                } else {
+                                    "unknown axis"
+                                };
+                                if error_bar.renderable {
+                                    ui.label(format!(
+                                        "Error bars ({axis}): {} {}",
+                                        error_bar.bar_type.as_deref().unwrap_or("unknown"),
+                                        error_bar.value_type.as_deref().unwrap_or("unknown")
+                                    ));
+                                } else {
+                                    ui.label(format!(
+                                        "Error bars ({axis}) are preserved but not rendered: {}",
+                                        error_bar.diagnostic.as_deref().unwrap_or("unsupported structure")
+                                    ));
+                                }
+                            }
                             ui.horizontal(|ui| {
                                 ui.label(format!("{} {}", tl!(tl!("Series")), series_index + 1));
                                 let label = ui.label(tl!(tl!("Series name")));
