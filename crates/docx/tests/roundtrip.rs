@@ -18,6 +18,21 @@ fn rt(doc: &Document) -> Document {
     wordcraft_docx::read(&bytes).expect("read")
 }
 
+#[test]
+fn export_rejects_xml_forbidden_text_instead_of_silently_discarding_it() {
+    let doc = Document::from_text("Before\u{1}after");
+    for flavor in [
+        wordcraft_docx::Flavor::Document,
+        wordcraft_docx::Flavor::MacroDocument,
+        wordcraft_docx::Flavor::Template,
+        wordcraft_docx::Flavor::MacroTemplate,
+    ] {
+        let error = wordcraft_docx::write_as(&doc, flavor).expect_err("XML cannot represent U+0001");
+        assert!(error.to_string().contains("forbidden by XML 1.0"), "{error}");
+    }
+    assert!(doc.body.first().and_then(|block| block.as_para()).is_some_and(|p| p.plain_text().contains('\u{1}')));
+}
+
 fn paras(doc: &Document) -> Vec<&Paragraph> {
     doc.body.iter().filter_map(|b| b.as_para()).collect()
 }
@@ -1431,7 +1446,7 @@ fn builtin_stylesheet_survives() {
 fn hostile_model_values_still_write() {
     let mut d = Document::new();
     let mut p = Paragraph::with_text(
-        "x\u{1}\u{FFFE}y<&>\"'",
+        "xy<&>\"'",
         CharProps { size: Some(f32::NAN), spacing: Some(f32::INFINITY), font: Some("A\"B<".into()), ..Default::default() },
     );
     p.props.indent_left = Some(f32::NEG_INFINITY);

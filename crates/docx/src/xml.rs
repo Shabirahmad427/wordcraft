@@ -408,7 +408,7 @@ fn attach(stack: &mut [El], root: &mut Option<El>, el: El) {
 }
 
 /// Is `c` allowed in XML 1.0 text?
-fn xml_char_ok(c: char) -> bool {
+pub(crate) fn xml_char_ok(c: char) -> bool {
     matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
 }
 

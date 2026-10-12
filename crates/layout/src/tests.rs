@@ -1505,7 +1505,8 @@ fn footnote_in_later_column_reflows_the_whole_page_without_losing_text() {
         wordcraft_doc::PartKind::Footnote,
         vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text(&note_text, Default::default()))],
     );
-    let anchor = Pos::body(0, 900);
+    // Keep the reference in column two on both bundled fonts and native macOS fonts.
+    let anchor = Pos::body(0, 650);
     doc.insert_object(&anchor, InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() }, &Default::default()).unwrap();
 
     let first_pass =

@@ -1,11 +1,13 @@
 # File-format parity with Microsoft Word
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** trivial (symbol-font text exported as Unicode, #776; previously trivial: text-box margins, Resize shape to fit text and freeforms in groups, #743; previously trivial: formatted paste from the system clipboard's HTML and RTF, #687; previously trivial: independent complex-script formatting inheritance and round-trip regression tests; previously trivial: import/export fixes for TXT, RTF, ODT, HTML and LaTeX, #433–#440; previously major: first version; every format Word reads or writes, measured from the readers and writers on origin/main) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4, plus Word for Windows' extra formats
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (shared DOCX output validation and XML-forbidden character refusal; Word reference comparison remains pending) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4, plus Word for Windows' extra formats
 
 Every format Word opens or saves, what WordCraft does with it, and how it's tested. Fidelity is the
 share of a typical real-world file's content and formatting that survives (read: shows correctly;
 write: Word opens it showing the same). Summary in [`target-app-parity.md`](target-app-parity.md);
 the work items are in [`gaps.md`](gaps.md).
+
+The shared writer checks the final DOCX package graph and XML for all four Word package flavors. It refuses XML-forbidden characters in the document model instead of silently omitting them; page and column break markers in paragraph text are encoded as OOXML elements. This is synthetic package-integrity coverage, not a Word 365 opening or layout result. See [the cross-platform audit](cross-platform-audit-2026-10-12.md).
 
 **Dimension: ~60% (estimated), 179–290 h to full** (the sum of the rows below). The weighted table
 gives ~64%; we discount it to ~60% because DOCX fidelity has never been checked on real-world
@@ -162,6 +164,7 @@ raise readiness estimates. No Word-derived files are fixtures.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Final DOCX export package validation and explicit refusal of XML-forbidden model text, with synthetic four-flavor regression; Word 365 evidence remains pending |
 | 2026-10-12 | trivial | Paste keeps the formatting of HTML and RTF on the system clipboard; Paste Special lists them and pictures (#687, #833) |
 | 2026-10-12 | trivial | ODT page size, orientation and margins read back from `styles.xml` on open, so they survive a save and reopen (#810) |
 | 2026-10-12 | minor | RTF reads 8-bit text in the document's or the font's code page (`\ansicpg`, `\fcharset`, `\cpg`) instead of always Windows-1252; a `.doc`/`.docx`/`.rtf` whose content is another of these formats opens by signature. Found on a private corpus of real Russian documents: 38 of 44 `.doc` files were RTF, all now open with their Cyrillic text |

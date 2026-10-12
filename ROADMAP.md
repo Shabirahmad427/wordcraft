@@ -1,5 +1,11 @@
 # WordCraft roadmap
 
+## Cross-platform shared-core audit (2026-10-12)
+
+- Audited the shared Rust document path and hosted regression coverage from fork commit `9d023894`; the five ranked remaining gaps are in [the cross-platform audit](docs/cross-platform-audit-2026-10-12.md). The Word 365 reference corpus still has zero verified pairs, so no new application-level compatibility claim is made.
+- DOCX export now validates every completed package and rejects XML-forbidden model characters instead of silently dropping them. Synthetic regression covers all four Word package flavors. Document Regressions now requests shared DOCX/engine tests on Linux, macOS and Windows and a Linux GUI/CLI release build; hosted results remain to be verified.
+- The native macOS gate exposed a font-sensitive two-column footnote test fixture; its anchor was moved within column two and the test passes with both bundled-only and system-font resolution. No layout algorithm or parity claim changed.
+
 ## Phase 7E — visual regression and performance evidence (2026-10-12)
 
 - Added bounded PNG comparison, complete numbered-page set comparison, page geometry/count assertions, changed-pixel bounds and red-highlighted diagnostic images. The reviewed two-page baseline is a synthetic academic document rendered with bundled open fonts; comparison reports never overwrite expected images.

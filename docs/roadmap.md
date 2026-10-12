@@ -1,12 +1,14 @@
 # WordCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** interoperability benchmark commands and report added; real Word corpus remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** cross-platform architecture/testing audit and shared DOCX export guard; real Word corpus remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 Forward-looking plan. The summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is
 [`gaps.md`](gaps.md); the numbers are in [`target-app-parity.md`](target-app-parity.md). Hours are
 Opus 5.5 agent wall-clock.
 
 ## Current focus (toward beta, ~150–230 h)
+
+The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current five-gap evidence priority and distinguishes native runtime results from cross-builds.
 
 1. **Merge or close the ~45 open PRs** before starting overlapping work: many close catalog gaps
    (Clipboard pane #264, Manage Styles #270, Group #267), fix field bugs (Hebrew RTL #20, IME
@@ -73,6 +75,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added five-gap cross-platform audit; DOCX export safety improved in shared Rust, while native and Word 365 comparisons remain pending |
 | 2026-10-12 | minor | M1: reproducible package fingerprint/allowlist benchmark added; Word 365 corpus and visual comparison remain pending |
 | 2026-10-11 | trivial | M7: formatting revisions landed (#41) |
 | 2026-10-11 | trivial | Omitted `w:pPrDefault` stays omitted across saves; explicit empty/default properties and later spacing edits remain writable. Synthetic preservation checks only; readiness estimates unchanged |

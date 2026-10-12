@@ -1,6 +1,6 @@
 # Layout and pagination parity with Microsoft Word
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (safe final-page balancing for complete paragraphs; complex layouts report stable-flow fallback; no Word reference comparison) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** trivial (two-column footnote regression fixture now survives bundled and native macOS font metrics; no Word reference comparison) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 A document only "opens correctly" if its pages break where Word breaks them: the same lines, the
 same page count, footnotes and pictures on the same pages. This checklist covers line breaking,
@@ -76,6 +76,7 @@ font can't match Word's metrics.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | trivial | Moved the synthetic two-column footnote anchor earlier so its page/column precondition holds with bundled and native macOS fonts; layout behavior unchanged |
 | 2026-10-11 | minor | Upstream #354 adds contour-based Tight/Through wrapping and left/right/largest-side wrap selection; no independent Word page comparison |
 | 2026-10-11 | trivial | Upstream #441–#445 fixes group resize/orientation and erasing rotated ink |
 | 2026-10-10 | minor | Tall default/inherited/first/even header and footer stories reserve body clearance; NextColumn starts in the following column and rolls over at the final column. Internal tests added; Word comparison outstanding |

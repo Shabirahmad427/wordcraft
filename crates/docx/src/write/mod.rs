@@ -129,8 +129,40 @@ pub fn write(doc: &Document) -> Result<Vec<u8>, DocxError> {
 
 /// Write a package of the given flavour (`.docx`, `.docm`, `.dotx`, `.dotm`).
 pub fn write_as(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {
+    reject_unrepresentable_xml_text(doc)?;
     let generated = write_native(doc, flavor)?;
-    crate::preservation::write(doc, flavor, &generated).map(|preserved| preserved.unwrap_or(generated))
+    let output = crate::preservation::write(doc, flavor, &generated)?.unwrap_or(generated);
+    let package = crate::package::Package::open(&output)?;
+    crate::preservation::validate(&package)?;
+    Ok(output)
+}
+
+// `xml::esc` omits characters forbidden by XML 1.0. Reject them before writing so a save cannot
+// silently change text, names, field instructions, or other strings held in the document model.
+fn reject_unrepresentable_xml_text(doc: &Document) -> Result<(), DocxError> {
+    let value = serde_json::to_value(doc).map_err(|e| DocxError::Preservation(format!("cannot inspect document text: {e}")))?;
+    let mut pending = vec![(&value, false)];
+    while let Some((value, paragraph_text)) = pending.pop() {
+        match value {
+            serde_json::Value::String(text) => {
+                if text.chars().any(|c| !crate::xml::xml_char_ok(c) && !(paragraph_text && matches!(c, '\u{c}' | '\u{e}'))) {
+                    return Err(DocxError::Preservation("document contains characters forbidden by XML 1.0".into()));
+                }
+            }
+            serde_json::Value::Array(items) => pending.extend(items.iter().map(|item| (item, false))),
+            serde_json::Value::Object(items) => {
+                let paragraph = items.contains_key("text") && items.contains_key("runs");
+                for (key, value) in items {
+                    if key.chars().any(|c| !crate::xml::xml_char_ok(c)) {
+                        return Err(DocxError::Preservation("document contains characters forbidden by XML 1.0".into()));
+                    }
+                    pending.push((value, paragraph && key == "text"));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn write_native(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {

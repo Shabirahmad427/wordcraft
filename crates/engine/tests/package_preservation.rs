@@ -101,3 +101,20 @@ fn malformed_import_does_not_replace_the_open_document() {
     assert!(session.dirty);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn forbidden_xml_text_failed_save_keeps_document_and_destination() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-invalid-xml-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("writing.docx");
+    let original_bytes = b"existing destination";
+    std::fs::write(&path, original_bytes).unwrap();
+    let mut session = Session::new(Document::from_text("Before\u{1}after"));
+    let before = session.doc.clone();
+    let previous_path = session.path.clone();
+    assert!(session.run("file.save", &json!({"path":path})).is_err());
+    assert_eq!(session.doc, before);
+    assert_eq!(session.path, previous_path);
+    assert_eq!(std::fs::read(&path).unwrap(), original_bytes);
+    std::fs::remove_dir_all(directory).unwrap();
+}
