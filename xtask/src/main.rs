@@ -10,6 +10,7 @@ mod layers;
 mod parity;
 mod stats;
 mod version;
+mod visual;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -28,6 +29,8 @@ commands:
                   fingerprint package parts and relationships
   interop compare <original.docx> <roundtrip.docx> <case.json> <report.json>
                   enforce a per-case allowlist of changed package parts
+  visual compare <expected.png> <actual.png> <policy.json> <report.json>
+                  compare page rasters; requires explicit tolerances, never updates baselines
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   parity          recompute the Word feature-parity summary in docs/parity-checklist.md
   ico <out.ico> <in.png>...
@@ -47,6 +50,7 @@ fn main() -> ExitCode {
         Some("parity") => parity::run(&root()),
         Some("ico") => ico::run(&rest),
         Some("interop") => interop::run(&args[1..]),
+        Some("visual") => visual::run(&args[1..]),
         Some("version") => version::run(&root(), &rest),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");

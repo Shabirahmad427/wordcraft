@@ -5,6 +5,11 @@ The reproducible package-integrity benchmark and current Word-reference evidence
 are synthetic; package-preservation results are not Microsoft Word rendering or editability
 verification.
 
+Reproducible internal raster comparisons and large-document pipeline timings are documented in
+[the benchmark guide](performance-benchmarks.md). The raster comparator requires an explicit
+per-case policy and never rewrites baselines. Existing image, floating object, rotated text-box,
+table, chart, equation and multipage tests remain synthetic; issue #963 remains unverified.
+
 ## Opening-path consistency and visual regression coverage
 
 Desktop launch arguments (including file association), File → Open, recent files, drops and file

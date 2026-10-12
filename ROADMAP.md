@@ -1,5 +1,13 @@
 # WordCraft roadmap
 
+## Phase 7E — visual regression and performance evidence (2026-10-12)
+
+- Added `cargo xtask visual compare`, a bounded PNG page-raster comparator that reports geometry, mean RGBA error, changed-pixel percentage and maximum channel error against a required explicit policy. It never updates expected images; dimension mismatch or threshold violations fail with a report.
+- Added `scripts/benchmark-synthetic-documents.sh` to create a source-generated academic-style DOCX and measure CLI generation, import/layout, page raster and PDF export wall time and peak RSS. A scale-1 smoke run produced 45 pages, 3,012 words, 8 tables, 8 embedded-workbook charts, 8 vector figure shapes, 12 footnotes, 8 endnotes and an equation. Linux medians: generation 0.03 s/26,460 KiB, load 0.04 s/29,456 KiB, raster page 1 0.04 s/30,156 KiB, PDF export 0.05 s/28,076 KiB. See [performance benchmark methodology and limits](docs/performance-benchmarks.md).
+- Validation: `cargo xtask ci` passed all six gates. The final default-feature workspace suite passed **2,089 tests, 0 failed, 2 ignored**; two new comparator tests plus a baseline-overwrite guard were added. Linux release GUI/CLI builds and Windows GNU/macOS ARM64 release compile checks passed. The sandbox-only test attempt failed because its seccomp policy denies existing loopback control-server tests; the full CI and final workspace runs outside that restriction passed.
+- Visual tests remain synthetic and deterministic within their configured environment; no Word-derived baseline exists. Word 365 reference comparisons remain blocked (zero consented, provenance-verified files). Issue #963 remains open and unverified: the reporter's source file and exact steps are unavailable; generated UI/CLI fixtures continue to pass without establishing the reporter's root cause.
+- Hosted checks on code commit `6535bb260c8e150ae0669f6be61dd57cac4ba588`: Printing, Packaging lint and Windows ARM64 succeeded; FreeBSD run `38306533331` was still in progress at the audit. Older FreeBSD run `38303638307` was canceled, not a failure. Documentation-only commits through `d155a52` did not trigger these path-filtered workflows.
+
 ## v0.6.1 stabilization — integrity issue follow-up (2026-10-12)
 
 - Reproduced issue #965 with a synthetic CLI sequence and changed image insertion so scripted commands leave the caret after the inserted picture; interactive insertion and clipboard paste continue to select it. Regression verifies the picture survives follow-up typing and DOCX save/reopen.

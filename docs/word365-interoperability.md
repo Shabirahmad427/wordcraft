@@ -120,6 +120,13 @@ content loss, **S2** major layout/editing failure, **S3** cosmetic difference.
 
 ## Current verification
 
+Phase 7E added the explicit-policy raster comparator (`cargo xtask visual compare`) and a synthetic
+CLI performance harness. Its 2026-10-12 smoke run covered 45 pages, 8 tables, 8 workbook-backed
+charts, 8 vector figure shapes, 12 footnotes, 8 endnotes and an equation; measured stage medians and
+the exact invocation are in [the performance benchmark report](performance-benchmarks.md). These
+results are internal-only. The synthetic UI/CLI image and vertical-textbox checks described above
+continue to pass, but do not reproduce issue #963 or constitute Word reference evidence.
+
 - Word 365-generated reference files: **0**.
 - Five-document corpus: **blocked**; no user-selected source documents with verified provenance and
   processing permission.
