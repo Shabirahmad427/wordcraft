@@ -685,6 +685,12 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
     if cfg!(target_arch = "wasm32") {
         return dirs;
     }
+    // Regression and controlled-render runs can isolate resolution to WordCraft's bundled open
+    // fonts (or an explicitly selected directory set) instead of inheriting machine-specific
+    // fonts. Unset keeps normal native system-font discovery unchanged.
+    if let Some(override_dirs) = std::env::var_os("WORDCRAFT_FONT_DIRS") {
+        return font_dirs_from_override(&override_dirs);
+    }
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     if cfg!(target_os = "macos") {
         dirs.extend(["/System/Library/Fonts", "/Library/Fonts"].map(Into::into));
@@ -715,6 +721,10 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
         }
     }
     dirs
+}
+
+fn font_dirs_from_override(value: &std::ffi::OsStr) -> Vec<std::path::PathBuf> {
+    if value.is_empty() { Vec::new() } else { std::env::split_paths(value).collect() }
 }
 
 /// One face found in a font file.

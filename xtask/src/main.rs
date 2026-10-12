@@ -8,6 +8,7 @@ mod ico;
 mod interop;
 mod layers;
 mod parity;
+mod perf;
 mod stats;
 mod version;
 mod visual;
@@ -31,6 +32,12 @@ commands:
                   enforce a per-case allowlist of changed package parts
   visual compare <expected.png> <actual.png> <policy.json> <report.json>
                   compare page rasters; requires explicit tolerances, never updates baselines
+  visual compare-pages <expected-dir> <actual-dir> <policy.json> <report.json> <diff-dir>
+                  compare numbered page sets, check page counts and write changed-page diffs
+  perf summarize <metrics.tsv> <summary.json>
+                  summarize benchmark samples with median, MAD and peak RSS
+  perf compare <baseline.json> <current.json> <report.json>
+                  write advisory performance deltas; never fails on timing changes
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   parity          recompute the Word feature-parity summary in docs/parity-checklist.md
   ico <out.ico> <in.png>...
@@ -51,6 +58,7 @@ fn main() -> ExitCode {
         Some("ico") => ico::run(&rest),
         Some("interop") => interop::run(&args[1..]),
         Some("visual") => visual::run(&args[1..]),
+        Some("perf") => perf::run(&args[1..]),
         Some("version") => version::run(&root(), &rest),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");

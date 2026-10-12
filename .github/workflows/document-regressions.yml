@@ -1,0 +1,109 @@
+# Synthetic WordCraft-only raster and performance evidence; no secrets or private documents.
+name: Document regressions
+
+on:
+  pull_request:
+    paths:
+      - 'Cargo*'
+      - 'apps/wordcraft-cli/**'
+      - 'assets/app-icon/**'
+      - 'assets/fonts/**'
+      - 'crates/doc/**'
+      - 'crates/docx/**'
+      - 'crates/engine/**'
+      - 'crates/fonts/**'
+      - 'crates/layout/**'
+      - 'crates/render/**'
+      - 'crates/pdf/**'
+      - 'xtask/**'
+      - 'scripts/benchmark-synthetic-documents.sh'
+      - 'scripts/render-visual-fixture.sh'
+      - 'scripts/run-performance-suite.sh'
+      - 'scripts/run-visual-regression.sh'
+      - 'tests/visual/**'
+      - 'ATTRIBUTION.md'
+      - '.github/workflows/document-regressions.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo*'
+      - 'apps/wordcraft-cli/**'
+      - 'assets/app-icon/**'
+      - 'assets/fonts/**'
+      - 'crates/doc/**'
+      - 'crates/docx/**'
+      - 'crates/engine/**'
+      - 'crates/fonts/**'
+      - 'crates/layout/**'
+      - 'crates/render/**'
+      - 'crates/pdf/**'
+      - 'xtask/**'
+      - 'scripts/benchmark-synthetic-documents.sh'
+      - 'scripts/render-visual-fixture.sh'
+      - 'scripts/run-performance-suite.sh'
+      - 'scripts/run-visual-regression.sh'
+      - 'tests/visual/**'
+      - 'ATTRIBUTION.md'
+      - '.github/workflows/document-regressions.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: document-regressions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  visual:
+    name: Visual regression (Linux bundled fonts)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build CLI and regression tooling
+        run: cargo build --release --locked -p wordcraft-cli -p xtask
+      - name: Compare reviewed page goldens
+        env:
+          WORDCRAFT_FONT_DIRS: ${{ runner.temp }}/empty-fonts
+        run: ./scripts/run-visual-regression.sh target/release/wordcraft-cli "$RUNNER_TEMP/wordcraft-visual"
+      - name: Preserve visual diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visual-regression-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wordcraft-visual
+          if-no-files-found: ignore
+          retention-days: 30
+
+  performance:
+    name: Synthetic performance trend (advisory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build CLI and regression tooling
+        run: cargo build --release --locked -p wordcraft-cli -p xtask
+      - name: Measure 45-page and larger academic workloads
+        env:
+          BENCH_REPEATS: '3'
+          WORDCRAFT_FONT_DIRS: ${{ runner.temp }}/empty-fonts
+        run: ./scripts/run-performance-suite.sh target/release/wordcraft-cli "$RUNNER_TEMP/wordcraft-performance"
+      - name: Preserve performance samples and summaries
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: performance-regression-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wordcraft-performance
+          if-no-files-found: ignore
+          retention-days: 30

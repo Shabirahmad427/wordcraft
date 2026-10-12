@@ -4,6 +4,13 @@ use std::path::{Path, PathBuf};
 
 use super::*;
 
+#[test]
+fn explicit_font_directory_override_is_split_and_empty_override_disables_system_scan() {
+    let paths = std::env::join_paths([PathBuf::from("open-fonts"), PathBuf::from("extra-fonts")]).unwrap();
+    assert_eq!(font_dirs_from_override(&paths), vec![PathBuf::from("open-fonts"), PathBuf::from("extra-fonts")]);
+    assert!(font_dirs_from_override(std::ffi::OsStr::new("")).is_empty());
+}
+
 const FAMILY: &str = "Sysfont Sans3";
 
 /// A bundled Source Sans 3 file renamed [`FAMILY`] (as long as the original name).

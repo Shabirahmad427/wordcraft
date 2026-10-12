@@ -1,0 +1,23 @@
+{
+  "schema": "wordcraft.synthetic-visual-baseline/v1",
+  "provenance": "synthetic-wordcraft-output",
+  "referenceApplication": null,
+  "generatorBaseCommit": "f71d7796e7255f78b59685fc73004af29e982eb4",
+  "capturedOn": "2026-10-12",
+  "host": "Linux Mint 22.3 x86_64; CI consumer: Ubuntu 24.04 x86_64",
+  "renderScalePixelsPerPoint": 1,
+  "fontConfiguration": {
+    "WORDCRAFT_FONT_DIRS": "empty directory; system fonts excluded",
+    "documentThemeFont": "bundled Source Sans 3",
+    "otherFonts": "WordCraft bundled open-source Source Serif 4, Inter, JetBrains Mono",
+    "proprietaryFontsUsed": false
+  },
+  "fixture": {
+    "pages": 2,
+    "features": ["academic pagination", "OMML equations", "table", "embedded-workbook chart", "vector illustration", "embedded PNG figure", "vertical text box", "footnote", "explicit page break"],
+    "source": "scripts/render-visual-fixture.sh",
+    "microsoftWordGenerated": false
+  },
+  "policy": "../../policy.json",
+  "review": "PNG files were visually inspected; output is an internal WordCraft golden only."
+}

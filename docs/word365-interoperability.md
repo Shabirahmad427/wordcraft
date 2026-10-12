@@ -127,6 +127,16 @@ the exact invocation are in [the performance benchmark report](performance-bench
 results are internal-only. The synthetic UI/CLI image and vertical-textbox checks described above
 continue to pass, but do not reproduce issue #963 or constitute Word reference evidence.
 
+Phase 7E.2 adds reviewed, two-page Linux page-raster goldens for an original synthetic document
+covering equations, a table, embedded-workbook chart, vector art, a PNG figure, vertical textbox,
+footnote and page break. The checked-in PNGs use only WordCraft's bundled open fonts through the
+`WORDCRAFT_FONT_DIRS` isolation override. Full page sets are compared with explicit tolerances,
+page-count assertions, changed-pixel bounds and archived diff images. A separate advisory benchmark
+workflow measures all-page rasterization, layout/load, PDF export and peak process RSS for 45-page
+and 133-page synthetic academic documents. It reports medians and MAD without timing-based CI
+failure. These baselines remain WordCraft-only evidence; neither the fixtures nor the visual tests
+represent Microsoft Word output.
+
 - Word 365-generated reference files: **0**.
 - Five-document corpus: **blocked**; no user-selected source documents with verified provenance and
   processing permission.

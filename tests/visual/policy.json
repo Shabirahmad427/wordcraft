@@ -1,0 +1,5 @@
+{
+  "maxMeanAbsoluteChannelError": 0.45,
+  "maxChangedPixelPercent": 1.0,
+  "changedChannelThreshold": 24
+}
