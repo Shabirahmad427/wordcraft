@@ -49,6 +49,7 @@ These PR statuses were checked individually. Only merged commits on upstream `ma
 
 ## Verification and hosted checks
 
+- On stabilization commit `15e0285b871a0629e27507e31f5074420c1cb668`, Packaging lint run `38294095437` and the three-platform Printing run `38294038895` succeeded; Printing passed on Linux, Windows and macOS. Manually dispatched FreeBSD run `38294085311` and Windows ARM64 run `38294085725` were still in progress at the last query (12+ minutes); GitHub reported no failure or cancellation. Recheck before treating those two as complete.
 - The latest checks visible on the fork before this merge were for `f052ddf9e1804b138ec251bf09b82cb30743d237`: FreeBSD and Windows ARM64 both succeeded. These do not validate this merge.
 - Packaging lint last visible for the earlier integration commit `14c9c6c04e1cd0e1e38ea4a3995d71a611c0084f` succeeded. Its paired FreeBSD run was cancelled; Windows ARM64 succeeded. Cancellation is not a test failure.
 - On pushed commit `7a1f763b4bc9ea4bf321e04e10066632b45c7194`, Packaging lint run `38287099819` succeeded. Printing run `38287099297`, FreeBSD run `38287743422`, and Windows ARM64 run `38287746843` were still in progress at the last query. The older FreeBSD cancellation at `14c9c6c` was a canceled run, not a failed build. Recheck the final pushed commit before treating these hosted checks as complete.
