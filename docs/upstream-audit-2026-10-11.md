@@ -104,4 +104,15 @@ layout state, UI dispatch and locale catalogs.
 - The only raster difference discovered during integration was caused by canonical default note separator XML being read back as a custom separator. The reader now normalizes only the exact writer-generated default; styled/custom separator content remains retained. Added a DOCX round-trip test; academic, long-note and NextColumn raster regressions pass.
 - Two additional merge regressions were corrected: text-box bodies are now laid out once for content and overflow reporting, and configured section-end endnotes are placed at their section boundary. UI dialog routing/dirty-state and command search were reconciled with the merged catalog. Russian/Turkish catalogs translate the merged command labels while intentionally retaining English fallback for other untranslated strings.
 
-Hosted workflow statuses for FreeBSD, Windows ARM64 and packaging are checked after the push and recorded with the final pushed commit. Synthetic fixtures and Linux rendering do not establish Microsoft Word/Excel interoperability, native printer compatibility, or full platform runtime behavior.
+Hosted workflow verification for integration commit `838a7d1b50dadb76b0f274cea5a73d8be8edc3e2`:
+
+| Workflow | Result at audit time | Run |
+|---|---|---|
+| FreeBSD 14 build + test | In progress (not failed or canceled) | [38190479182](https://github.com/Shabirahmad427/wordcraft/actions/runs/38190479182) |
+| Windows ARM64 package | In progress (not failed or canceled) | [38190479170](https://github.com/Shabirahmad427/wordcraft/actions/runs/38190479170) |
+| Packaging lint | Not triggered by this push; latest observed run succeeded on `863a82d` | [38166237852](https://github.com/Shabirahmad427/wordcraft/actions/runs/38166237852) |
+| Release | Not triggered by this non-tag push | — |
+
+The in-progress hosted jobs had not reported results when this audit was updated. Synthetic
+fixtures and Linux rendering do not establish Microsoft Word/Excel interoperability, native
+printer compatibility, or full platform runtime behavior.
