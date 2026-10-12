@@ -134,24 +134,23 @@ and optional end caps, are represented. Extents are clipped to the chart's exist
 range. The renderer uses the series color and a simple vector stroke; custom error-bar line styles
 are preserved in OOXML but are not yet reflected in preview.
 
-The Chart Design → Edit Chart Data view additionally edits an existing, validated fixed magnitude or
-dense custom `c:numLit` positive/negative arrays. Custom arrays must have exactly one finite,
-nonnegative value per plotted point with unique complete point indexes. Scatter charts expose X and Y
-error bars independently. Apply routes through `chart.editData`, so one edit is atomic and participates
-in Undo/redo, recovery, guarded DOCX save and rendering refresh. Error-bar-only transactions splice
-only the existing numeric XML values; embedded XLSX cells, chart data caches, direction, caps, axis
-identifiers and unrelated XML remain unchanged. Cancel discards the local draft.
+The Chart Design → Edit Chart Data view edits an existing, validated fixed magnitude or custom
+positive/negative values. Dense `c:numLit` arrays must have exactly one finite, nonnegative value per
+plotted point with complete indexes. Workbook-backed `c:numRef` arrays are editable only for
+contiguous one-column A1 ranges that map to literal numeric cells and agree exactly with the chart
+cache. Their transaction updates those cells and corresponding `c:numCache` points together,
+preserves formulas, relationships and unrelated XML, then validates the resulting package before
+returning output. Scatter charts expose X and Y uncertainty independently. Apply routes through
+`chart.editData`, so each edit is an atomic Undo/redo unit and participates in recovery, guarded DOCX
+save and rendering refresh. Cancel discards the local draft.
 
 Percentage, standard-deviation and standard-error forms, malformed or sparse arrays, duplicate
-definitions, unsupported directions, and formula-backed `c:numRef` ranges remain read-only. A
-constrained read-only mapper now resolves contiguous single-column A1 ranges against the chart's
-embedded workbook and verifies numeric literal cells, point count/order and cached values. It rejects
-external/missing worksheets, formula cells, malformed or ambiguous references, and ranges that
-overlap plotted or other uncertainty cells. Validated asymmetric positive/negative ranges (including
-scatter X/Y) feed the shared preview/PDF error-bar renderer. The mapped cell addresses and values
-are exposed in `chart.inspectData`; these workbook-backed bars are deliberately not editable yet.
-This is synthetic-fixture verification, not a Word or Excel rendering comparison. Editing formula
-ranges, custom styling, statistical calculations and application interoperability remain outstanding.
+definitions, unsupported directions, formula cells, external references, and ambiguous ranges remain
+read-only. `chart.inspectData` reports exact uncertainty-cell references when mapped and diagnostics
+otherwise. Synthetic parser, transaction, engine command, preview/PDF, Undo/redo, recovery,
+save/reopen, rejection and package-preservation tests cover this subset. This is synthetic-fixture
+verification, not a Word or Excel rendering comparison. Custom styling, statistical calculations,
+complex ranges and application interoperability remain outstanding.
 
 Undo and recovery retain the opaque object and graph bytes. Recovery holds the current edited package parts in the model and retains the exact initially opened package independently. Removing a chart can leave preserved orphan parts in that save; preservation does not synchronize embedded workbook data with edits to nearby tables. Graphs shared with regenerated document parts, or colliding with custom XML graph output, can be rejected rather than rewritten unsafely.
 

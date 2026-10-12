@@ -95,7 +95,8 @@ pub struct SeriesFormatSnapshot {
     pub diagnostic: Option<String>,
 }
 
-/// Validated error-bar data. Only existing fixed values and dense literal arrays are editable.
+/// Validated error-bar data. Existing fixed values, dense literal arrays and verified workbook
+/// ranges are editable through the package transaction.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ErrorBarSnapshot {
@@ -858,7 +859,6 @@ fn map_error_bar_sources(
             continue;
         }
         let mut valid = true;
-        let mut has_workbook_ranges = false;
         for (local, target_values, target_refs) in [
             ("plus", &mut snapshot.positive, &mut snapshot.positive_references),
             ("minus", &mut snapshot.negative, &mut snapshot.negative_references),
@@ -880,7 +880,6 @@ fn map_error_bar_sources(
                 break;
             }
             let resolved = (|| {
-                has_workbook_ranges = true;
                 let range = ref_formula(source, "custom error-bar values")?;
                 if range.cells.len() != point_count {
                     return Err(inconsistent("custom error-bar range length does not match plotted data points"));
@@ -932,9 +931,7 @@ fn map_error_bar_sources(
                         .collect();
                     snapshot.renderable = true;
                     snapshot.diagnostic = None;
-                    // Workbook-backed edits are enabled only after the read-only/rendering phase
-                    // has passed its end-to-end regressions.
-                    snapshot.editable = false;
+                    snapshot.editable = true;
                 }
                 Err(Reason::Unsupported(reason) | Reason::Ambiguous(reason) | Reason::Inconsistent(reason)) => {
                     snapshot.diagnostic = Some(reason);
@@ -952,7 +949,7 @@ fn map_error_bar_sources(
             }
             snapshot.renderable = true;
             snapshot.diagnostic = None;
-            snapshot.editable = !has_workbook_ranges;
+            snapshot.editable = true;
         } else {
             snapshot.renderable = false;
             snapshot.positive.clear();
@@ -1846,7 +1843,8 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
     let chart_bytes = apply_data_label_changes(&chart_bytes, &fresh, changes)?;
     let chart_bytes = apply_error_bar_changes(&chart_bytes, &fresh, changes)?;
     let chart_bytes = apply_axis_changes(&chart_bytes, &fresh, changes)?;
-    let cell_edits = build_cell_edits(&fresh, changes, &mut expected)?;
+    let mut cell_edits = build_cell_edits(&fresh, changes, &mut expected)?;
+    build_error_bar_cell_edits(&fresh, changes, &mut expected, &mut cell_edits)?;
     for (index, change) in changes.series.iter().enumerate() {
         let expected_series =
             expected.series.get_mut(index).ok_or_else(|| transaction_error("chart series mapping changed during formatting edit"))?;
@@ -2287,6 +2285,60 @@ fn build_cell_edits(
     Ok(edits)
 }
 
+fn build_error_bar_cell_edits(
+    mapping: &ChartMapping,
+    changes: &ChartDataChanges,
+    expected: &mut ChartMapping,
+    edits: &mut BTreeMap<TextTarget, CellEdit>,
+) -> Result<(), DocxError> {
+    for (series_index, (series, change)) in mapping.series.iter().zip(&changes.series).enumerate() {
+        let Some(requested_bars) = change.error_bars.as_ref() else { continue };
+        let expected_series = expected.series.get_mut(series_index).ok_or_else(|| transaction_error("error-bar series mapping changed"))?;
+        for requested in requested_bars {
+            let source = series
+                .formatting
+                .error_bars
+                .iter()
+                .find(|bar| bar.direction == requested.direction)
+                .ok_or_else(|| transaction_error("error-bar mapping became stale"))?;
+            let target = expected_series
+                .formatting
+                .error_bars
+                .iter_mut()
+                .find(|bar| bar.direction == requested.direction)
+                .ok_or_else(|| transaction_error("expected error-bar mapping disappeared"))?;
+            for (requested_values, source_refs, target_refs) in [
+                (requested.positive.as_ref(), &source.positive_references, &mut target.positive_references),
+                (requested.negative.as_ref(), &source.negative_references, &mut target.negative_references),
+            ] {
+                let Some(values) = requested_values else { continue };
+                let refs = source_refs;
+                if refs.is_empty() {
+                    continue;
+                }
+                if refs.len() != values.len() || target_refs.len() != refs.len() {
+                    return Err(transaction_error("workbook-backed error-bar mapping length changed"));
+                }
+                for ((reference, value), expected_reference) in refs.iter().zip(values).zip(target_refs.iter_mut()) {
+                    if reference.worksheet_part != expected_reference.worksheet_part || reference.address != expected_reference.address {
+                        return Err(transaction_error("stale error-bar cell mapping"));
+                    }
+                    let cell = MappedCell {
+                        worksheet: reference.worksheet.clone(),
+                        worksheet_part: reference.worksheet_part.clone(),
+                        address: reference.address.clone(),
+                        value: reference.value,
+                        source: CellSource::Number,
+                    };
+                    add_value_edit(edits, &cell, *value)?;
+                    expected_reference.value = *value;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn add_text_edit(edits: &mut BTreeMap<TextTarget, CellEdit>, cell: &MappedCell<String>, value: &str) -> Result<(), DocxError> {
     insert_cell_edit(
         edits,
@@ -2524,11 +2576,32 @@ fn apply_error_bar_changes(chart: &[u8], mapping: &ChartMapping, changes: &Chart
                             .filter(|_| wrappers.len() == 1)
                             .ok_or_else(|| transaction_error("custom error-bar side changed after validation"))?;
                         let literals = child_indices(&nodes, wrapper, CHART_NS, "numLit");
-                        let literal = *literals
-                            .first()
-                            .filter(|_| literals.len() == 1)
-                            .ok_or_else(|| transaction_error("custom error-bar literal changed after validation"))?;
-                        let points = child_indices(&nodes, literal, CHART_NS, "pt");
+                        let references = child_indices(&nodes, wrapper, CHART_NS, "numRef");
+                        let container = if literals.len() == 1 && references.is_empty() {
+                            *literals.first().ok_or_else(|| transaction_error("custom error-bar literal disappeared"))?
+                        } else if literals.is_empty() && references.len() == 1 {
+                            let series = mapping.series.get(series_index).ok_or_else(|| transaction_error("error-bar series mapping disappeared"))?;
+                            let snapshot = series
+                                .formatting
+                                .error_bars
+                                .iter()
+                                .find(|bar| bar.direction == error_change.direction)
+                                .ok_or_else(|| transaction_error("error-bar source mapping disappeared"))?;
+                            let source_refs = if local == "plus" { &snapshot.positive_references } else { &snapshot.negative_references };
+                            if source_refs.len() != values.len() {
+                                return Err(transaction_error("formula-backed error-bar range is not fully mapped"));
+                            }
+                            child_index(
+                                &nodes,
+                                *references.first().ok_or_else(|| transaction_error("error-bar numeric reference disappeared"))?,
+                                CHART_NS,
+                                "numCache",
+                            )
+                            .ok_or_else(|| transaction_error("formula-backed error-bar cache is missing"))?
+                        } else {
+                            return Err(transaction_error("custom error-bar source is ambiguous"));
+                        };
+                        let points = child_indices(&nodes, container, CHART_NS, "pt");
                         if points.len() != values.len() {
                             return Err(transaction_error("custom error-bar point count changed after validation"));
                         }
@@ -3550,12 +3623,73 @@ mod tests {
         let snapshot = inspect_chart_data(&docx, "word/charts/chart1.xml").unwrap();
         let error = &snapshot.series[0].error_bars[0];
         assert!(error.renderable);
-        assert!(!error.editable);
+        assert!(error.editable);
         assert_eq!(error.positive, vec![1.0, 2.0, 3.0]);
         assert_eq!(error.negative, vec![0.5, 1.0, 1.5]);
         assert_eq!(error.positive_references.iter().map(|cell| cell.address.as_str()).collect::<Vec<_>>(), ["E1", "E2", "E3"]);
         assert_eq!(error.negative_references.iter().map(|cell| cell.address.as_str()).collect::<Vec<_>>(), ["F1", "F2", "F3"]);
         assert_eq!(Package::open(&docx).unwrap().get("word/charts/chart1.xml"), Some(chart.as_slice()));
+
+        let plan = prepare_chart_edit(&docx, "word/charts/chart1.xml").unwrap();
+        let rejected = apply_chart_edit(
+            &docx,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges {
+                    error_bars: Some(vec![ErrorBarChanges {
+                        direction: "y".into(),
+                        positive: Some(vec![1.0, -1.0, 3.0]),
+                        negative: Some(vec![0.5, 1.0, 1.5]),
+                        ..Default::default()
+                    }]),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        );
+        assert!(rejected.is_err());
+        assert_eq!(inspect_chart_data(&docx, "word/charts/chart1.xml").unwrap().series[0].error_bars[0].positive, [1.0, 2.0, 3.0]);
+        let edited = apply_chart_edit(
+            &docx,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges {
+                    error_bars: Some(vec![ErrorBarChanges {
+                        direction: "y".into(),
+                        positive: Some(vec![1.25, 2.5, 3.75]),
+                        negative: Some(vec![0.25, 0.75, 1.25]),
+                        ..Default::default()
+                    }]),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let edited_snapshot = inspect_chart_data(&edited, "word/charts/chart1.xml").unwrap();
+        let edited_error = &edited_snapshot.series[0].error_bars[0];
+        assert_eq!(edited_error.positive, [1.25, 2.5, 3.75]);
+        assert_eq!(edited_error.negative, [0.25, 0.75, 1.25]);
+        assert_eq!(edited_error.positive_references[0].value, 1.25);
+        let edited_package = Package::open(&edited).unwrap();
+        let source_package = Package::open(&docx).unwrap();
+        for (part, bytes) in source_package.entries() {
+            if !matches!(part, "word/charts/chart1.xml" | "word/embeddings/book.xlsx") {
+                assert_eq!(edited_package.get(part), Some(bytes), "unrelated DOCX part changed: {part}");
+            }
+        }
+        let edited_xlsx = Package::open(edited_package.get("word/embeddings/book.xlsx").unwrap()).unwrap();
+        let original_xlsx = Package::open(source_package.get("word/embeddings/book.xlsx").unwrap()).unwrap();
+        for (part, bytes) in original_xlsx.entries() {
+            if part != "xl/worksheets/sheet1.xml" {
+                assert_eq!(edited_xlsx.get(part), Some(bytes), "unrelated XLSX part changed: {part}");
+            }
+        }
+        let sheet = String::from_utf8_lossy(edited_xlsx.get("xl/worksheets/sheet1.xml").unwrap());
+        assert!(sheet.contains("<c r=\"E1\"><v>1.25</v></c>"));
+        let chart_after = String::from_utf8_lossy(edited_package.get("word/charts/chart1.xml").unwrap());
+        assert!(chart_after.contains("<c:v>1.25</c:v>"));
+        assert!(chart_after.contains("<c:v>0.25</c:v>"));
 
         let bad_chart = String::from_utf8(chart)
             .unwrap()
@@ -3565,6 +3699,71 @@ mod tests {
         let rejected = &inspect_chart_data(&bad, "word/charts/chart1.xml").unwrap().series[0].error_bars[0];
         assert!(!rejected.renderable);
         assert!(rejected.diagnostic.as_deref().is_some_and(|reason| reason.contains("cache")));
+    }
+
+    #[test]
+    fn edits_scatter_x_and_y_workbook_error_ranges_in_one_transaction() {
+        let mk_bar = |direction: &str, plus_col: &str, minus_col: &str, plus: [f64; 3], minus: [f64; 3]| {
+            let cache = |values: [f64; 3]| {
+                values.iter().enumerate().map(|(i, value)| format!(r#"<c:pt idx="{i}"><c:v>{value}</c:v></c:pt>"#)).collect::<String>()
+            };
+            format!(
+                r#"<c:errBars><c:errDir val="{direction}"/><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numRef><c:f>Data!{plus_col}1:{plus_col}3</c:f><c:numCache><c:ptCount val="3"/>{}</c:numCache></c:numRef></c:plus><c:minus><c:numRef><c:f>Data!{minus_col}1:{minus_col}3</c:f><c:numCache><c:ptCount val="3"/>{}</c:numCache></c:numRef></c:minus></c:errBars>"#,
+                cache(plus),
+                cache(minus)
+            )
+        };
+        let x_bar = mk_bar("x", "G", "H", [0.1, 0.2, 0.3], [0.05, 0.1, 0.15]);
+        let y_bar = mk_bar("y", "I", "J", [1.0, 2.0, 3.0], [0.5, 1.0, 1.5]);
+        let chart = String::from_utf8(scatter_chart(false)).unwrap().replacen("</c:ser>", &format!("{x_bar}{y_bar}</c:ser>"), 1).into_bytes();
+        let mut xlsx = Package::open(&scatter_workbook()).unwrap().entries().map(|(n, b)| (n.to_string(), b.to_vec())).collect::<BTreeMap<_, _>>();
+        let sheet = String::from_utf8(xlsx["xl/worksheets/sheet1.xml"].clone()).unwrap();
+        let sheet = sheet
+            .replace(
+                r#"<row r="1">"#,
+                r#"<row r="1"><c r="G1"><v>0.1</v></c><c r="H1"><v>0.05</v></c><c r="I1"><v>1</v></c><c r="J1"><v>0.5</v></c>"#,
+            )
+            .replace(r#"<row r="2">"#, r#"<row r="2"><c r="G2"><v>0.2</v></c><c r="H2"><v>0.1</v></c><c r="I2"><v>2</v></c><c r="J2"><v>1</v></c>"#)
+            .replace(
+                r#"<row r="3">"#,
+                r#"<row r="3"><c r="G3"><v>0.3</v></c><c r="H3"><v>0.15</v></c><c r="I3"><v>3</v></c><c r="J3"><v>1.5</v></c>"#,
+            );
+        xlsx.insert("xl/worksheets/sheet1.xml".into(), sheet.into_bytes());
+        let docx = docx_with_error_bars(&chart, Some(&zip(&xlsx)));
+        let plan = prepare_chart_edit(&docx, "word/charts/chart1.xml").unwrap();
+        let output = apply_chart_edit(
+            &docx,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges {
+                    error_bars: Some(vec![
+                        ErrorBarChanges {
+                            direction: "x".into(),
+                            positive: Some(vec![0.11, 0.22, 0.33]),
+                            negative: Some(vec![0.04, 0.08, 0.12]),
+                            ..Default::default()
+                        },
+                        ErrorBarChanges {
+                            direction: "y".into(),
+                            positive: Some(vec![1.1, 2.2, 3.3]),
+                            negative: Some(vec![0.4, 0.8, 1.2]),
+                            ..Default::default()
+                        },
+                    ]),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let snapshot = inspect_chart_data(&output, "word/charts/chart1.xml").unwrap();
+        assert_eq!(snapshot.series[0].error_bars[0].positive, [0.11, 0.22, 0.33]);
+        assert_eq!(snapshot.series[0].error_bars[1].negative, [0.4, 0.8, 1.2]);
+        let package = Package::open(&output).unwrap();
+        let workbook = Package::open(package.get("word/embeddings/book.xlsx").unwrap()).unwrap();
+        let sheet = String::from_utf8_lossy(workbook.get("xl/worksheets/sheet1.xml").unwrap());
+        assert!(sheet.contains("<c r=\"G1\"><v>0.11</v></c>"));
+        assert!(sheet.contains("<c r=\"J3\"><v>1.2</v></c>"));
     }
 
     #[test]

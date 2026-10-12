@@ -76,6 +76,25 @@ fn chart_fixture_with_error_bars() -> Vec<u8> {
     archive(&files)
 }
 
+fn chart_fixture_with_workbook_error_bars() -> Vec<u8> {
+    let mut files = unpack(&editable_chart_fixture());
+    let chart = String::from_utf8(files["word/charts/chart1.xml"].clone())
+        .unwrap()
+        .replace(
+            "</c:ser>",
+            r#"<c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numRef><c:f>'Scientific data'!$E$2:$E$3</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numCache></c:numRef></c:plus><c:minus><c:numRef><c:f>'Scientific data'!$F$2:$F$3</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>0.5</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:minus></c:errBars></c:ser>"#,
+        );
+    files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+    let mut workbook = unpack(&files["word/embeddings/data.xlsx"]);
+    let sheet = String::from_utf8(workbook["xl/worksheets/sheet1.xml"].clone())
+        .unwrap()
+        .replace(r#"<c r="B2"><v>42</v></c>"#, r#"<c r="B2"><v>42</v></c><c r="E2"><v>1</v></c><c r="F2"><v>0.5</v></c>"#)
+        .replace(r#"<c r="B3"><v>84</v></c>"#, r#"<c r="B3"><v>84</v></c><c r="E3"><v>2</v></c><c r="F3"><v>1</v></c>"#);
+    workbook.insert("xl/worksheets/sheet1.xml".into(), sheet.into_bytes());
+    files.insert("word/embeddings/data.xlsx".into(), archive(&workbook));
+    archive(&files)
+}
+
 fn editable_line_chart_fixture() -> Vec<u8> {
     let mut files = unpack(&editable_chart_fixture());
     let chart = String::from_utf8(files["word/charts/chart1.xml"].clone())
@@ -691,6 +710,69 @@ fn fixed_error_bar_edit_refreshes_and_survives_undo_recovery_save_and_reopen() {
     let reopened_snapshot =
         reopened.run("chart.inspectData", &json!({"documentId": reopened.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
     assert_eq!(reopened_snapshot["series"][0]["errorBars"][0]["fixedValue"], 4.5);
+    let pdf = directory.join("edited.pdf");
+    reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
+    assert!(std::fs::metadata(pdf).unwrap().len() > 100);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn workbook_error_bar_edit_is_atomic_undoable_recoverable_and_round_trips() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-workbook-error-edit-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source_path = directory.join("source.docx");
+    let saved_path = directory.join("edited.docx");
+    let original = chart_fixture_with_workbook_error_bars();
+    std::fs::write(&source_path, &original).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source_path})).unwrap();
+    let document_id = session.document_id();
+    let before = wordcraft_docx::write(&session.doc).unwrap();
+    let before_parts = unpack(&before);
+    let snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(snapshot["series"][0]["errorBars"][0]["editable"], true);
+    assert_eq!(snapshot["series"][0]["errorBars"][0]["positiveReferences"][0]["address"], "E2");
+    let before_layout = session.layout();
+    let before_pixels = wordcraft_render::render_page(&session.doc, &before_layout.pages[0], 1.0, &Default::default()).to_straight();
+    session
+        .run(
+            "chart.editData",
+            &json!({
+                "documentId": document_id, "chartPart": "word/charts/chart1.xml", "expected": snapshot,
+                "series": [{"errorBars": [{"direction":"y", "positive":[1.25, 2.5], "negative":[0.25, 0.75]}]}]
+            }),
+        )
+        .unwrap();
+    let edited = wordcraft_docx::write(&session.doc).unwrap();
+    let edited_parts = unpack(&edited);
+    let edited_workbook = unpack(&edited_parts["word/embeddings/data.xlsx"]);
+    let sheet = String::from_utf8_lossy(&edited_workbook["xl/worksheets/sheet1.xml"]);
+    assert!(sheet.contains(r#"<c r="E2"><v>1.25</v></c>"#));
+    assert!(sheet.contains(r#"<c r="F3"><v>0.75</v></c>"#));
+    for (part, bytes) in &before_parts {
+        if !matches!(part.as_str(), "word/charts/chart1.xml" | "word/embeddings/data.xlsx") {
+            assert_eq!(edited_parts.get(part), Some(bytes), "unrelated package content changed: {part}");
+        }
+    }
+    let after_layout = session.layout();
+    let after_pixels = wordcraft_render::render_page(&session.doc, &after_layout.pages[0], 1.0, &Default::default()).to_straight();
+    assert_ne!(before_pixels, after_pixels, "the chart preview must reflect workbook-backed uncertainty changes");
+
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let recovery_id = store.save(&unique_id(), document_id, &Snapshot::capture(&session)).unwrap();
+    let mut recovered = Session::new(Document::new());
+    store.load(&recovery_id).unwrap().restore(&mut recovered);
+    assert_eq!(wordcraft_docx::write(&recovered.doc).unwrap(), edited);
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), before);
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), edited);
+    session.run("file.save", &json!({"path": saved_path})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": directory.join("edited.docx")})).unwrap();
+    let reopened_snapshot =
+        reopened.run("chart.inspectData", &json!({"documentId": reopened.document_id(), "chartPart":"word/charts/chart1.xml"})).unwrap();
+    assert_eq!(reopened_snapshot["series"][0]["errorBars"][0]["positive"], json!([1.25, 2.5]));
     let pdf = directory.join("edited.pdf");
     reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
     assert!(std::fs::metadata(pdf).unwrap().len() > 100);
