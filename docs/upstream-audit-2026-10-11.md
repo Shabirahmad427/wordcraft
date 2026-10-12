@@ -172,6 +172,22 @@ existing fork translations. No open PR was merged automatically.
   results and the exact test count will be added after the verified merge commit is pushed. Packaging
   lint and release workflows are recorded separately because source pushes need not trigger them.
 
-The final merge hash, push result and hosted-run states will be filled in after the merge commit is
-pushed. The protected checkout and its `fix/failed-save-metadata` branch were not accessed or
-modified.
+The merge commit is `14c9c6c04e1cd0e1e38ea4a3995d71a611c0084f`, with parents fork
+`2385c40af994e34f46f796519a0060447a2d29f6` and upstream
+`46d5e99b3e82828f95ec87da92b2e1fc1db03b78`. It was pushed normally to
+`Shabirahmad427/wordcraft:main` (fast-forward from `2385c40`); no force push. A Linux release backup
+was made before installation at `/home/shabir/.local/share/wordcraft/backups/2026-10-12-14c9c6c`.
+The protected checkout and its `fix/failed-save-metadata` branch were not accessed or modified.
+
+Hosted checks for the pushed merge:
+
+| Workflow | Result | Run |
+|---|---|---|
+| Packaging lint | Success | [38192354469](https://github.com/Shabirahmad427/wordcraft/actions/runs/38192354469) |
+| FreeBSD 14 build + test | In progress at last check; not a failure or cancellation | [38192443180](https://github.com/Shabirahmad427/wordcraft/actions/runs/38192443180) |
+| Windows ARM64 package + install test | In progress at last check; not a failure or cancellation | [38192445712](https://github.com/Shabirahmad427/wordcraft/actions/runs/38192445712) |
+| Release publishing | Not triggered; merge push is not a release tag | — |
+
+Older runs canceled after a newer push are recorded as canceled, not failed. The run IDs above are
+the explicit workflow-dispatch checks for this merge because those workflows run on a schedule,
+release branch, packaging PR changes or manual dispatch, not ordinary `main` pushes.
