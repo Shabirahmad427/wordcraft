@@ -9,8 +9,8 @@
 - Backup branch: `backup/pre-upstream-sync-2026-10-12-1d7daa4`.
 - Merge commit: `d976573cd452dd821beb90466b7a2cdc7ae34e18` (181 upstream commits; follow-up fixes are in the delivery commit).
 - No unresolved index conflicts remain. The merge has resolution differences in 57 files (`git show --remerge-diff`); overlapping areas included document I/O, save/printing, DOCX import/export, layout, citations, app services, and the chart-preservation writer. Follow-up compatibility edits restore fork behaviors while adapting to upstream APIs. The complete local CI suite passed after fixing a print-preview test that still set the removed legacy range state and adding the WASM browser-file error path required by password-protected open commands.
-- Verification: all six `cargo xtask ci` gates passed (fmt, Clippy, workspace tests, assets, layers, WASM). The Linux GUI and CLI release build passed. Windows GNU GUI/CLI cross-target checks passed. The macOS arm64 cross-target check passed after removing an obsolete call to a print-worker join function; current print submission is synchronous. Installed targets were Linux x86_64, Windows GNU x86_64, macOS arm64 and WASM. WASM had a pre-existing unused-mut warning plus non-fatal warnings in speech/UI code; Clippy with `-D warnings` passed.
-- The installed application was not replaced; the validated source/build version is WordCraft `0.6.1`. No private DOCX files were opened or processed. The Word 365 benchmark remains blocked pending genuine, provenance-documented reference files and an available Word verification environment.
+- Verification: all six `cargo xtask ci` gates passed (fmt, Clippy, workspace tests, assets, layers, WASM). A separate workspace rerun passed 2,079 tests with 0 failures and 2 ignored. The Linux GUI and CLI release build passed. Windows GNU GUI/CLI and macOS arm64 GUI/CLI cross-target checks passed. The macOS check exposed an obsolete call to a print-worker join function; it was removed because current print submission is synchronous. Installed Rust targets were Linux x86_64, Windows GNU x86_64, macOS arm64 and WASM. WASM checks emit existing non-fatal unused/dead-code warnings; Clippy with `-D warnings` passed.
+- The installed application was not replaced: `~/.local/bin/wordcraft --version` remains `wordcraft 0.5.0 (dev)`. The validated source/build version is WordCraft `0.6.1`. No private DOCX files were opened or processed. The Word 365 benchmark remains blocked pending genuine, provenance-documented reference files and an available Word verification environment.
 
 ## Requested GitHub issue review
 
@@ -41,8 +41,8 @@ These PR statuses were checked individually. Only merged commits on upstream `ma
 
 - The latest checks visible on the fork before this merge were for `f052ddf9e1804b138ec251bf09b82cb30743d237`: FreeBSD and Windows ARM64 both succeeded. These do not validate this merge.
 - Packaging lint last visible for the earlier integration commit `14c9c6c04e1cd0e1e38ea4a3995d71a611c0084f` succeeded. Its paired FreeBSD run was cancelled; Windows ARM64 succeeded. Cancellation is not a test failure.
-- The fork `main` at `1d7daa4098e85c9cf928696623ba38868deb8e02` had no check runs/status entries when queried. Hosted FreeBSD, Windows ARM64 and packaging lint for this merge are pending until the validated merge is pushed; record their actual conclusions after the normal push.
-- Local six-gate/workspace and release-build outcomes are recorded in the delivery note after the final run. Microsoft Word/365 was not used; interoperability remains unverified.
+- On pushed commit `7a1f763b4bc9ea4bf321e04e10066632b45c7194`, Packaging lint run `38287099819` succeeded. Printing run `38287099297`, FreeBSD run `38287743422`, and Windows ARM64 run `38287746843` were still in progress at the last query. The older FreeBSD cancellation at `14c9c6c` was a canceled run, not a failed build. Recheck the final pushed commit before treating these hosted checks as complete.
+- No physical printer was available for device-level print verification. Microsoft Word/365 was not used; interoperability remains unverified.
 
 ## Remaining high-priority follow-up
 

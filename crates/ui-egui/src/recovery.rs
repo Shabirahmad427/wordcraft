@@ -429,24 +429,24 @@ mod native {
                 a,
             );
             h.get_by_label("Compare Recovery Versions").click();
-            h.run();
+            h.run_steps(2);
             assert!(h.state().session.doc.plain_text(StoryRef::Body).contains("Current unsaved"));
             assert!(matches!(&h.state().dialog, Some(crate::dialogs::Dialog::Recovery { state }) if state.compared));
             h.get_by_label("Restore Recovery Version").click();
-            h.run();
+            h.run_steps(2);
             assert!(matches!(h.state().dialog, Some(crate::dialogs::Dialog::SaveChanges { .. })));
             h.get_by_label("Cancel").click();
-            h.run();
+            h.run_steps(2);
             assert!(h.state().session.doc.plain_text(StoryRef::Body).contains("Current unsaved"));
             h.state_mut().run("file.recover", json!({})).unwrap();
             if let Some(crate::dialogs::Dialog::Recovery { state }) = &mut h.state_mut().dialog {
                 state.selected = id;
             }
-            h.run();
+            h.run_steps(2);
             h.get_by_label("Restore Recovery Version").click();
-            h.run();
+            h.run_steps(2);
             h.get_by_label("Don't Save").click();
-            h.run();
+            h.run_steps(2);
             assert_eq!(h.state().session.doc.plain_text(StoryRef::Body), "Recovered draft");
             assert!(h.state().session.dirty && h.state().session.path.is_none());
             assert!(store.list().unwrap().len() >= 2, "current writing checkpointed before restore");
