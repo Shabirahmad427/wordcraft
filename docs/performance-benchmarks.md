@@ -109,25 +109,27 @@ On 2026-10-12, the final release CLI was measured on Linux x86_64 (kernel 6.8.0-
 Rust 1.98.1, 24 reported processors, GNU `/usr/bin/time`, and isolated bundled open fonts. The
 benchmark ran three load/layout, all-page raster and PDF-export repetitions per workload; generation
 ran once. The actual page counts were exactly 45 and 133. Times below are medians; MAD is included
-to show run-to-run spread. RSS is the maximum peak among process samples. `layout-core` comes from
-the CLI's internal layout timer and therefore has no separate RSS measurement.
+to show run-to-run spread. RSS is the median of the process peak measurements. Full summaries also
+include maximum RSS and minimum/maximum wall time. `layout-core` comes from the CLI's internal
+layout timer and therefore has no separate RSS measurement.
 
-| Workload | Stage | Median wall time | MAD | Peak RSS |
+| Workload | Stage | Median wall time | MAD | Median peak RSS |
 |---|---|---:|---:|---:|
-| 45 pages | Generate DOCX | 0.040 s | — | 26,500 KiB |
-| 45 pages | Load and layout | 0.030 s | 0.000 s | 28,628 KiB |
-| 45 pages | Layout core | 0.029 s | 0.003 s | n/a |
-| 45 pages | Rasterize all pages | 1.850 s | 0.040 s | 29,684 KiB |
-| 45 pages | Export PDF | 0.060 s | 0.000 s | 27,192 KiB |
-| 133 pages | Generate DOCX | 0.060 s | — | 50,224 KiB |
-| 133 pages | Load and layout | 0.080 s | 0.010 s | 39,500 KiB |
-| 133 pages | Layout core | 0.042 s | 0.004 s | n/a |
-| 133 pages | Rasterize all pages | 10.360 s | 0.030 s | 40,536 KiB |
-| 133 pages | Export PDF | 0.090 s | 0.000 s | 38,172 KiB |
+| 45 pages | Generate DOCX | 0.030 s | — | 26,772 KiB |
+| 45 pages | Load and layout | 0.030 s | 0.000 s | 28,424 KiB |
+| 45 pages | Layout core | 0.022 s | 0.001 s | n/a |
+| 45 pages | Rasterize all pages | 1.820 s | 0.010 s | 29,696 KiB |
+| 45 pages | Export PDF | 0.040 s | 0.000 s | 27,532 KiB |
+| 133 pages | Generate DOCX | 0.060 s | — | 50,400 KiB |
+| 133 pages | Load and layout | 0.110 s | 0.010 s | 39,916 KiB |
+| 133 pages | Layout core | 0.041 s | 0.000 s | n/a |
+| 133 pages | Rasterize all pages | 10.550 s | 0.040 s | 40,884 KiB |
+| 133 pages | Export PDF | 0.110 s | 0.010 s | 38,372 KiB |
 
-The local metric files and full summaries were generated under `/tmp/wordcraft-performance-final3`;
-CI preserves equivalent raw metrics and summaries as run artifacts. These are single-host reference
-measurements, not performance limits or comparisons against Microsoft Word. In particular,
+The local metric files and full summaries were generated under `/tmp/wordcraft-performance-commit-41db640`;
+the recorded source commit is `41db640e243f2246521009bb57cfada995610b15`. CI preserves equivalent
+raw metrics and summaries as run artifacts. These are single-host reference measurements, not
+performance limits or comparisons against Microsoft Word. In particular,
 all-page raster duration grows with the number of separate CLI processes and is sensitive to host
 scheduling.
 
