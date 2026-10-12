@@ -807,7 +807,27 @@ mod tests {
                 .all(|classification| matches!(classification, crate::chart_mapping::Classification::Mappable(_)))
         );
         assert!(crate::chart_mapping::document_has_chart(&reopened, "word/charts/chart1.xml"));
-        assert!(crate::chart_mapping::prepare_chart_edit(&docx, "word/charts/chart1.xml").is_ok());
+        let plan = crate::chart_mapping::prepare_chart_edit(&docx, "word/charts/chart1.xml").expect("inserted chart should get an edit plan");
+        let updated = crate::chart_mapping::apply_chart_edit(
+            &docx,
+            &plan,
+            &crate::chart_mapping::ChartDataChanges {
+                series: vec![
+                    crate::chart_mapping::SeriesChanges { values: Some(vec![8.0, 9.0, 10.0, 11.0]), ..Default::default() },
+                    Default::default(),
+                    Default::default(),
+                ],
+                ..Default::default()
+            },
+        )
+        .expect("the existing transaction should edit an inserted chart");
+        let snapshot = crate::chart_mapping::inspect_chart_data(&updated, "word/charts/chart1.xml").expect("edited chart should remain mappable");
+        assert_eq!(snapshot.series[0].values, vec![8.0, 9.0, 10.0, 11.0]);
+        assert!(
+            crate::chart_mapping::inspect_document(&crate::read::read(&updated).expect("edited chart package should reopen"))
+                .iter()
+                .all(|classification| matches!(classification, crate::chart_mapping::Classification::Mappable(_)))
+        );
     }
 
     #[test]
