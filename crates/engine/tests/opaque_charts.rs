@@ -636,6 +636,68 @@ fn read_only_error_bars_survive_undo_recovery_docx_reopen_and_pdf_export() {
 }
 
 #[test]
+fn fixed_error_bar_edit_refreshes_and_survives_undo_recovery_save_and_reopen() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-chart-error-edit-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.docx");
+    let destination = directory.join("edited.docx");
+    let original = chart_fixture_with_error_bars();
+    std::fs::write(&source, &original).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source})).unwrap();
+    let document_id = session.document_id();
+    let before = wordcraft_docx::write(&session.doc).unwrap();
+    let before_parts = unpack(&before);
+    let snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(snapshot["series"][0]["errorBars"][0]["fixedValue"], 2.0);
+    assert_eq!(snapshot["series"][0]["errorBars"][0]["editable"], true);
+    let before_layout = session.layout();
+    let before_pixels = wordcraft_render::render_page(&session.doc, &before_layout.pages[0], 1.0, &Default::default()).to_straight();
+    session
+        .run(
+            "chart.editData",
+            &json!({
+                "documentId": document_id,
+                "chartPart": "word/charts/chart1.xml",
+                "expected": snapshot,
+                "series": [{"errorBars":[{"direction":"y", "fixedValue":4.5}] }]
+            }),
+        )
+        .unwrap();
+    let edited = wordcraft_docx::write(&session.doc).unwrap();
+    let edited_parts = unpack(&edited);
+    assert_eq!(edited_parts["word/embeddings/data.xlsx"], before_parts["word/embeddings/data.xlsx"]);
+    let edited_snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(edited_snapshot["series"][0]["errorBars"][0]["fixedValue"], 4.5);
+    let edited_layout = session.layout();
+    let edited_pixels = wordcraft_render::render_page(&session.doc, &edited_layout.pages[0], 1.0, &Default::default()).to_straight();
+    assert_ne!(before_pixels, edited_pixels);
+
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let recovery_id = store.save(&unique_id(), document_id, &Snapshot::capture(&session)).unwrap();
+    let mut recovered = Session::new(Document::new());
+    store.load(&recovery_id).unwrap().restore(&mut recovered);
+    let recovered_snapshot =
+        recovered.run("chart.inspectData", &json!({"documentId": recovered.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(recovered_snapshot["series"][0]["errorBars"][0]["fixedValue"], 4.5);
+
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), before);
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), edited);
+    session.run("file.save", &json!({"path": destination})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": directory.join("edited.docx")})).unwrap();
+    let reopened_snapshot =
+        reopened.run("chart.inspectData", &json!({"documentId": reopened.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(reopened_snapshot["series"][0]["errorBars"][0]["fixedValue"], 4.5);
+    let pdf = directory.join("edited.pdf");
+    reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
+    assert!(std::fs::metadata(pdf).unwrap().len() > 100);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn data_label_edits_refresh_render_and_survive_undo_recovery_docx_and_pdf() {
     let directory = std::env::temp_dir().join(format!("wordcraft-data-labels-{}", unique_id()));
     std::fs::create_dir_all(&directory).unwrap();

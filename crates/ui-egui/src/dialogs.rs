@@ -446,6 +446,13 @@ struct ChartErrorBarForm {
     bar_type: Option<String>,
     value_type: Option<String>,
     renderable: bool,
+    editable: bool,
+    fixed_value: String,
+    original_fixed_value: Option<f64>,
+    positive: Vec<String>,
+    original_positive: Vec<f64>,
+    negative: Vec<String>,
+    original_negative: Vec<f64>,
     diagnostic: Option<String>,
 }
 
@@ -1240,6 +1247,39 @@ impl Dialog {
                                 bar_type: bar.get("barType").and_then(Value::as_str).map(str::to_string),
                                 value_type: bar.get("valueType").and_then(Value::as_str).map(str::to_string),
                                 renderable: bar.get("renderable").and_then(Value::as_bool).unwrap_or(false),
+                                editable: bar.get("editable").and_then(Value::as_bool).unwrap_or(false),
+                                fixed_value: bar.get("fixedValue").and_then(Value::as_f64).map(|value| value.to_string()).unwrap_or_default(),
+                                original_fixed_value: bar.get("fixedValue").and_then(Value::as_f64),
+                                positive: bar
+                                    .get("positive")
+                                    .and_then(Value::as_array)
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(Value::as_f64)
+                                    .map(|value| value.to_string())
+                                    .collect(),
+                                original_positive: bar
+                                    .get("positive")
+                                    .and_then(Value::as_array)
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(Value::as_f64)
+                                    .collect(),
+                                negative: bar
+                                    .get("negative")
+                                    .and_then(Value::as_array)
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(Value::as_f64)
+                                    .map(|value| value.to_string())
+                                    .collect(),
+                                original_negative: bar
+                                    .get("negative")
+                                    .and_then(Value::as_array)
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(Value::as_f64)
+                                    .collect(),
                                 diagnostic: bar.get("diagnostic").and_then(Value::as_str).map(str::to_string),
                             })
                             .collect(),
@@ -1787,6 +1827,55 @@ fn chart_series_changes(chart_kind: &str, series: &[ChartSeriesForm], original: 
             if !data_labels.is_empty() {
                 changes.insert("dataLabels".into(), Value::Object(data_labels));
             }
+            let mut error_changes = Vec::new();
+            if series.error_bars.len() != original.error_bars.len() {
+                return None;
+            }
+            for (bar, old_bar) in series.error_bars.iter().zip(&original.error_bars) {
+                if !bar.editable {
+                    if bar.fixed_value != old_bar.fixed_value || bar.positive != old_bar.positive || bar.negative != old_bar.negative {
+                        return None;
+                    }
+                    continue;
+                }
+                if bar.direction != old_bar.direction || bar.value_type != old_bar.value_type || bar.bar_type != old_bar.bar_type {
+                    return None;
+                }
+                let mut item = serde_json::Map::new();
+                item.insert("direction".into(), json!(bar.direction));
+                match bar.value_type.as_deref() {
+                    Some("fixedVal") if bar.fixed_value != old_bar.fixed_value => {
+                        let value = bar.fixed_value.trim().parse::<f64>().ok().filter(|value| value.is_finite() && *value >= 0.0)?;
+                        item.insert("fixedValue".into(), json!(value));
+                    }
+                    Some("cust") => {
+                        if bar.positive != old_bar.positive {
+                            let values: Option<Vec<f64>> = bar
+                                .positive
+                                .iter()
+                                .map(|value| value.trim().parse::<f64>().ok().filter(|value| value.is_finite() && *value >= 0.0))
+                                .collect();
+                            item.insert("positive".into(), json!(values?));
+                        }
+                        if bar.negative != old_bar.negative {
+                            let values: Option<Vec<f64>> = bar
+                                .negative
+                                .iter()
+                                .map(|value| value.trim().parse::<f64>().ok().filter(|value| value.is_finite() && *value >= 0.0))
+                                .collect();
+                            item.insert("negative".into(), json!(values?));
+                        }
+                    }
+                    Some("fixedVal") => {}
+                    _ => return None,
+                }
+                if item.len() > 1 {
+                    error_changes.push(Value::Object(item));
+                }
+            }
+            if !error_changes.is_empty() {
+                changes.insert("errorBars".into(), Value::Array(error_changes));
+            }
             if chart_kind == "scatter" {
                 if series.x_values.len() != original.x_values.len() || series.values.len() != original.values.len() {
                     return None;
@@ -1974,7 +2063,7 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                                     ui.label(tl!(tl!("Data labels are read-only for this OOXML structure.")));
                                 }
                             });
-                            for error_bar in &series.error_bars {
+                            for error_bar in &mut series.error_bars {
                                 let axis = if error_bar.direction == "x" {
                                     "X"
                                 } else if error_bar.direction == "y" {
@@ -1982,17 +2071,59 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                                 } else {
                                     "unknown axis"
                                 };
-                                if error_bar.renderable {
-                                    ui.label(format!(
-                                        "Error bars ({axis}): {} {}",
-                                        error_bar.bar_type.as_deref().unwrap_or("unknown"),
-                                        error_bar.value_type.as_deref().unwrap_or("unknown")
-                                    ));
+                                if error_bar.editable {
+                                    ui.separator();
+                                    ui.label(format!("Error bars ({axis}) · {}", error_bar.bar_type.as_deref().unwrap_or("unknown")));
+                                    match error_bar.value_type.as_deref() {
+                                        Some("fixedVal") => {
+                                            ui.horizontal(|ui| {
+                                                ui.label(tl!(tl!("Fixed magnitude")));
+                                                ui.add_sized(
+                                                    [100.0, 22.0],
+                                                    egui::TextEdit::singleline(&mut error_bar.fixed_value).id_salt((
+                                                        "chart_error_fixed",
+                                                        series_index,
+                                                        &error_bar.direction,
+                                                    )),
+                                                );
+                                            });
+                                        }
+                                        Some("cust") => {
+                                            for side in 0..2 {
+                                                let (label, values) = if side == 0 {
+                                                    ("Positive", &mut error_bar.positive)
+                                                } else {
+                                                    ("Negative", &mut error_bar.negative)
+                                                };
+                                                if values.is_empty() {
+                                                    continue;
+                                                }
+                                                ui.label(tl!(tl!(label)));
+                                                ui.horizontal_wrapped(|ui| {
+                                                    for (point, value) in values.iter_mut().enumerate() {
+                                                        ui.add_sized(
+                                                            [72.0, 22.0],
+                                                            egui::TextEdit::singleline(value).id_salt((
+                                                                "chart_error_literal",
+                                                                series_index,
+                                                                &error_bar.direction,
+                                                                label,
+                                                                point,
+                                                            )),
+                                                        );
+                                                    }
+                                                });
+                                            }
+                                        }
+                                        _ => {}
+                                    }
                                 } else {
-                                    ui.label(format!(
-                                        "Error bars ({axis}) are preserved but not rendered: {}",
-                                        error_bar.diagnostic.as_deref().unwrap_or("unsupported structure")
-                                    ));
+                                    let reason = error_bar.diagnostic.as_deref().unwrap_or(if error_bar.renderable {
+                                        "this error-bar value source is preserved but not editable"
+                                    } else {
+                                        "unsupported error-bar structure"
+                                    });
+                                    ui.label(format!("Error bars ({axis}) are read-only: {}", reason));
                                 }
                             }
                             ui.horizontal(|ui| {
@@ -4152,6 +4283,68 @@ mod tests {
         let locked = ChartSeriesForm { data_labels_editable: false, ..ChartSeriesForm::default() };
         let invalid = ChartSeriesForm { data_label_value: true, original_data_label_value: Some(false), ..locked.clone() };
         assert_eq!(chart_series_changes("column", &[invalid], &[locked]), None);
+    }
+
+    #[test]
+    fn error_bar_controls_emit_only_validated_changed_values() {
+        let original = ChartSeriesForm {
+            error_bars: vec![ChartErrorBarForm {
+                direction: "y".into(),
+                bar_type: Some("both".into()),
+                value_type: Some("cust".into()),
+                renderable: true,
+                editable: true,
+                positive: vec!["1".into(), "2".into()],
+                original_positive: vec![1.0, 2.0],
+                negative: vec!["0.5".into(), "1".into()],
+                original_negative: vec![0.5, 1.0],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let changed = ChartSeriesForm {
+            error_bars: vec![ChartErrorBarForm { positive: vec!["1.25".into(), "2.25".into()], ..original.error_bars[0].clone() }],
+            ..original.clone()
+        };
+        assert_eq!(
+            chart_series_changes("column", &[changed], std::slice::from_ref(&original)),
+            Some(vec![json!({"errorBars":[{"direction":"y", "positive":[1.25,2.25]}]})])
+        );
+        let invalid = ChartSeriesForm {
+            error_bars: vec![ChartErrorBarForm { positive: vec!["NaN".into(), "2".into()], ..original.error_bars[0].clone() }],
+            ..original.clone()
+        };
+        assert_eq!(chart_series_changes("column", &[invalid], &[original]), None);
+
+        let fixed = ChartSeriesForm {
+            error_bars: vec![ChartErrorBarForm {
+                direction: "x".into(),
+                bar_type: Some("both".into()),
+                value_type: Some("fixedVal".into()),
+                renderable: true,
+                editable: true,
+                fixed_value: "2.5".into(),
+                original_fixed_value: Some(1.0),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            chart_series_changes(
+                "scatter",
+                std::slice::from_ref(&fixed),
+                &[ChartSeriesForm {
+                    error_bars: vec![ChartErrorBarForm { fixed_value: "1".into(), ..fixed.error_bars[0].clone() }],
+                    ..ChartSeriesForm::default()
+                }]
+            ),
+            Some(vec![json!({"errorBars":[{"direction":"x", "fixedValue":2.5}]})])
+        );
+        let locked = ChartSeriesForm {
+            error_bars: vec![ChartErrorBarForm { editable: false, positive: vec!["3".into()], ..fixed.error_bars[0].clone() }],
+            ..ChartSeriesForm::default()
+        };
+        assert_eq!(chart_series_changes("scatter", std::slice::from_ref(&locked), std::slice::from_ref(&locked)), Some(vec![json!({})]));
     }
 
     #[test]

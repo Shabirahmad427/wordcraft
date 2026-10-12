@@ -123,7 +123,7 @@ approximations and may clip on dense charts. Dash patterns remain read-only. Syn
 package edits, custom-label rejection, rendering, UI request generation, workbook preservation and
 existing chart families. No independent Word or Excel application comparison is available.
 
-### Read-only error bars
+### Error-bar reading and constrained editing
 
 The chart reader and shared preview/PDF display list render a constrained subset of `c:errBars`
 for column and horizontal bar, line, and scatter charts. Supported forms are nonnegative finite
@@ -134,14 +134,22 @@ and optional end caps, are represented. Extents are clipped to the chart's exist
 range. The renderer uses the series color and a simple vector stroke; custom error-bar line styles
 are preserved in OOXML but are not yet reflected in preview.
 
-Error-bar data is read-only: chart edits do not rewrite it. Percentage, standard-deviation and
-standard-error values, malformed or sparse literal arrays, duplicate definitions, unsupported
-directions, and formula-backed `c:numRef` ranges are preserved but not drawn. Formula-backed custom
-ranges are not shown because their cached values are not yet checked against embedded workbook
-cells. `chart.inspectData` reports per-series renderability and a reason in `errorBars`; the Chart
-Design view displays that status. Synthetic parser, rendering, save/reopen and package-preservation
-tests are available; this is not a Word rendering comparison. X/Y workbook-reference validation,
-custom styling, statistical calculation and Word/Excel interoperability still need broader work.
+The Chart Design → Edit Chart Data view additionally edits an existing, validated fixed magnitude or
+dense custom `c:numLit` positive/negative arrays. Custom arrays must have exactly one finite,
+nonnegative value per plotted point with unique complete point indexes. Scatter charts expose X and Y
+error bars independently. Apply routes through `chart.editData`, so one edit is atomic and participates
+in Undo/redo, recovery, guarded DOCX save and rendering refresh. Error-bar-only transactions splice
+only the existing numeric XML values; embedded XLSX cells, chart data caches, direction, caps, axis
+identifiers and unrelated XML remain unchanged. Cancel discards the local draft.
+
+Percentage, standard-deviation and standard-error forms, malformed or sparse arrays, duplicate
+definitions, unsupported directions, and formula-backed `c:numRef` ranges remain read-only. Custom
+formula ranges are not editable because their referenced workbook cells have not been mapped and
+verified. `chart.inspectData` reports editability and a specific diagnostic in `errorBars`; the Chart
+Design view displays the reason when a structure cannot be edited. Synthetic parser, transaction,
+UI, preview/PDF, Undo/redo, recovery, save/reopen and package-preservation tests cover this subset.
+This is not a Word or Excel rendering comparison; formula-range mapping, custom styling editing,
+statistical calculation and application interoperability remain outstanding.
 
 Undo and recovery retain the opaque object and graph bytes. Recovery holds the current edited package parts in the model and retains the exact initially opened package independently. Removing a chart can leave preserved orphan parts in that save; preservation does not synchronize embedded workbook data with edits to nearby tables. Graphs shared with regenerated document parts, or colliding with custom XML graph output, can be rejected rather than rewritten unsafely.
 

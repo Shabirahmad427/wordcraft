@@ -95,7 +95,7 @@ pub struct SeriesFormatSnapshot {
     pub diagnostic: Option<String>,
 }
 
-/// Read-only error-bar summary. Values are intentionally not editable in this phase.
+/// Validated error-bar data. Only existing fixed values and dense literal arrays are editable.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ErrorBarSnapshot {
@@ -103,7 +103,29 @@ pub struct ErrorBarSnapshot {
     pub bar_type: Option<String>,
     pub value_type: Option<String>,
     pub renderable: bool,
+    #[serde(default)]
+    pub editable: bool,
+    #[serde(default)]
+    pub fixed_value: Option<f64>,
+    #[serde(default)]
+    pub positive: Vec<f64>,
+    #[serde(default)]
+    pub negative: Vec<f64>,
+    #[serde(default)]
+    pub caps: bool,
     pub diagnostic: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ErrorBarChanges {
+    pub direction: String,
+    #[serde(default)]
+    pub fixed_value: Option<f64>,
+    #[serde(default)]
+    pub positive: Option<Vec<f64>>,
+    #[serde(default)]
+    pub negative: Option<Vec<f64>>,
 }
 
 /// Editable only when the source has one plain per-series `c:dLbls` block with explicit
@@ -632,6 +654,10 @@ fn inspect_error_bars(series: &El, chart_kind: &str, point_count: usize) -> Vec<
         let bar_type = bar.child("c:errBarType").and_then(|node| node.attr("val")).map(str::to_string);
         let value_type = bar.child("c:errValType").and_then(|node| node.attr("val")).map(str::to_string);
         let mut diagnostic = None;
+        let mut fixed_value = None;
+        let mut positive = Vec::new();
+        let mut negative = Vec::new();
+        let caps = bar.child("c:noEndCap").and_then(|node| node.attr("val")).is_none_or(|value| !matches!(value, "1" | "true"));
         if !matches!(chart_kind, "bar" | "column" | "line" | "scatter") {
             diagnostic = Some("Error bars are currently rendered only for bar, line, and scatter charts.".into());
         } else if bar.children("c:errDir").count() != 1
@@ -655,8 +681,12 @@ fn inspect_error_bars(series: &El, chart_kind: &str, point_count: usize) -> Vec<
                         .filter(|node| node.els().next().is_none())
                         .and_then(|node| node.attr("val"))
                         .and_then(|value| value.parse::<f64>().ok());
-                    if !value.is_some_and(|value| value.is_finite() && value >= 0.0) {
+                    if bar.children("c:plus").count() != 0 || bar.children("c:minus").count() != 0
+                        || !value.is_some_and(|value| value.is_finite() && value >= 0.0)
+                    {
                         diagnostic = Some("The fixed error-bar value is missing, negative, or non-finite.".into());
+                    } else {
+                        fixed_value = value;
                     }
                 }
                 Some("cust") => {
@@ -668,12 +698,19 @@ fn inspect_error_bars(series: &El, chart_kind: &str, point_count: usize) -> Vec<
                     let minus_ok = !negative_needed || valid_error_num_lit(minus, point_count);
                     let plus_count_ok = bar.children("c:plus").count() == usize::from(positive_needed);
                     let minus_count_ok = bar.children("c:minus").count() == usize::from(negative_needed);
-                    if !plus_ok || !minus_ok || !plus_count_ok || !minus_count_ok {
+                    if bar.children("c:val").count() != 0 || !plus_ok || !minus_ok || !plus_count_ok || !minus_count_ok {
                         diagnostic = Some(if bar.find("c:f").is_some() {
                             "Custom error-bar workbook ranges are retained but are not rendered until their cells can be verified against the embedded workbook.".into()
                         } else {
                             "Custom error-bar values are malformed or do not match the mapped series length.".into()
                         });
+                    } else {
+                        if positive_needed {
+                            positive = error_num_lit_values(plus).unwrap_or_default();
+                        }
+                        if negative_needed {
+                            negative = error_num_lit_values(minus).unwrap_or_default();
+                        }
                     }
                 }
                 Some("percentage") => diagnostic = Some("Percentage error bars are preserved but not rendered yet.".into()),
@@ -682,7 +719,9 @@ fn inspect_error_bars(series: &El, chart_kind: &str, point_count: usize) -> Vec<
                 _ => diagnostic = Some("The error-bar value type is missing or unsupported.".into()),
             }
         }
-        ErrorBarSnapshot { direction, bar_type, value_type, renderable: diagnostic.is_none(), diagnostic }
+        let renderable = diagnostic.is_none();
+        let editable = renderable && matches!(value_type.as_deref(), Some("fixedVal" | "cust"));
+        ErrorBarSnapshot { direction, bar_type, value_type, renderable, editable, fixed_value, positive, negative, caps, diagnostic }
     }).collect();
     for direction in ["x", "y"] {
         let indices: Vec<usize> = snapshots.iter().enumerate().filter_map(|(index, bar)| (bar.direction == direction).then_some(index)).collect();
@@ -690,12 +729,24 @@ fn inspect_error_bars(series: &El, chart_kind: &str, point_count: usize) -> Vec<
             for index in indices {
                 if let Some(bar) = snapshots.get_mut(index) {
                     bar.renderable = false;
+                    bar.editable = false;
                     bar.diagnostic = Some("Multiple error-bar definitions for the same axis are ambiguous.".into());
                 }
             }
         }
     }
     snapshots
+}
+
+fn error_num_lit_values(source: Option<&El>) -> Option<Vec<f64>> {
+    let literal = source?.child("c:numLit")?;
+    let mut values = vec![f64::NAN; literal.child("c:ptCount")?.attr("val")?.parse().ok()?];
+    for point in literal.children("c:pt") {
+        let index = point.attr("idx")?.parse::<usize>().ok()?;
+        let value = point.child("c:v")?.text().trim().parse::<f64>().ok()?;
+        *values.get_mut(index)? = value;
+    }
+    values.iter().all(|value| value.is_finite()).then_some(values)
 }
 
 fn valid_error_num_lit(source: Option<&El>, expected: usize) -> bool {
@@ -1366,6 +1417,8 @@ pub struct SeriesChanges {
     #[serde(default)]
     pub data_labels: Option<DataLabelChanges>,
     #[serde(default)]
+    pub error_bars: Option<Vec<ErrorBarChanges>>,
+    #[serde(default)]
     pub x_values: Option<Vec<f64>>,
     pub values: Option<Vec<f64>>,
 }
@@ -1575,6 +1628,7 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
     let chart_bytes = update_chart_caches(chart, &fresh, changes)?;
     let chart_bytes = apply_series_format_changes(&chart_bytes, &fresh, changes)?;
     let chart_bytes = apply_data_label_changes(&chart_bytes, &fresh, changes)?;
+    let chart_bytes = apply_error_bar_changes(&chart_bytes, &fresh, changes)?;
     let chart_bytes = apply_axis_changes(&chart_bytes, &fresh, changes)?;
     let cell_edits = build_cell_edits(&fresh, changes, &mut expected)?;
     for (index, change) in changes.series.iter().enumerate() {
@@ -1611,6 +1665,22 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
             }
             if let Some(value) = &label_changes.position {
                 labels.position = Some(value.clone());
+            }
+        }
+        if let Some(error_changes) = &change.error_bars {
+            for error_change in error_changes {
+                let Some(error_bar) = expected_series.formatting.error_bars.iter_mut().find(|bar| bar.direction == error_change.direction) else {
+                    return Err(transaction_error("error-bar direction disappeared during the edit"));
+                };
+                if let Some(value) = error_change.fixed_value {
+                    error_bar.fixed_value = Some(value);
+                }
+                if let Some(values) = &error_change.positive {
+                    error_bar.positive.clone_from(values);
+                }
+                if let Some(values) = &error_change.negative {
+                    error_bar.negative.clone_from(values);
+                }
             }
         }
     }
@@ -1774,6 +1844,59 @@ fn validate_changes(mapping: &ChartMapping, changes: &ChartDataChanges) -> Resul
                 };
                 if snapshot.position.is_none() || !supported.contains(&position) {
                     return Err(transaction_error("data-label position is absent or unsupported for this chart family"));
+                }
+            }
+        }
+        if let Some(error_changes) = &change.error_bars {
+            if error_changes.is_empty() {
+                return Err(transaction_error("error-bar change list is empty"));
+            }
+            let mut directions = BTreeSet::new();
+            for error_change in error_changes {
+                any = true;
+                if !directions.insert(error_change.direction.as_str()) {
+                    return Err(transaction_error("duplicate error-bar changes for one direction are ambiguous"));
+                }
+                let Some(snapshot) = source.formatting.error_bars.iter().find(|bar| bar.direction == error_change.direction) else {
+                    return Err(transaction_error("requested error-bar definition is missing"));
+                };
+                if !snapshot.editable {
+                    return Err(transaction_error(snapshot.diagnostic.clone().unwrap_or_else(|| "this error-bar definition is read-only".into())));
+                }
+                match snapshot.value_type.as_deref() {
+                    Some("fixedVal") => {
+                        if error_change.fixed_value.is_none() || error_change.positive.is_some() || error_change.negative.is_some() {
+                            return Err(transaction_error("fixed error bars accept only one fixed magnitude"));
+                        }
+                        if !error_change.fixed_value.is_some_and(|value| value.is_finite() && value >= 0.0) {
+                            return Err(transaction_error("error-bar magnitudes must be finite and nonnegative"));
+                        }
+                    }
+                    Some("cust") => {
+                        if error_change.fixed_value.is_some() {
+                            return Err(transaction_error("custom error bars accept literal positive/negative arrays only"));
+                        }
+                        let positive_required = matches!(snapshot.bar_type.as_deref(), Some("both" | "plus"));
+                        let negative_required = matches!(snapshot.bar_type.as_deref(), Some("both" | "minus"));
+                        if positive_required != error_change.positive.is_some() || negative_required != error_change.negative.is_some() {
+                            return Err(transaction_error("custom error values must match the existing plus/minus definition"));
+                        }
+                        let expected_count = match &source.data {
+                            SeriesDataMapping::CategoryValues { values, .. } => values.len(),
+                            SeriesDataMapping::Scatter { y_values, .. } if snapshot.direction == "x" => y_values.len(),
+                            SeriesDataMapping::Scatter { x_values, .. } if snapshot.direction == "x" => x_values.len(),
+                            SeriesDataMapping::Scatter { y_values, .. } => y_values.len(),
+                        };
+                        for values in [error_change.positive.as_ref(), error_change.negative.as_ref()].into_iter().flatten() {
+                            if values.len() != expected_count {
+                                return Err(transaction_error("custom error-bar point count must match the mapped series"));
+                            }
+                            if values.iter().any(|value| !value.is_finite() || *value < 0.0) {
+                                return Err(transaction_error("error-bar magnitudes must be finite and nonnegative"));
+                            }
+                        }
+                    }
+                    _ => return Err(transaction_error("error-bar value source is unsupported")),
                 }
             }
         }
@@ -2143,6 +2266,90 @@ fn apply_data_label_changes(chart: &[u8], mapping: &ChartMapping, changes: &Char
         }
     }
     Ok(current)
+}
+
+fn apply_error_bar_changes(chart: &[u8], mapping: &ChartMapping, changes: &ChartDataChanges) -> Result<Vec<u8>, DocxError> {
+    let mut current = chart.to_vec();
+    for (series_index, change) in changes.series.iter().enumerate() {
+        let Some(error_changes) = change.error_bars.as_ref() else { continue };
+        for error_change in error_changes {
+            let nodes = preserved_xml::inspect(&current)?;
+            let series = chart_series_nodes(&nodes, &mapping.chart_kind)?;
+            let series = *series.get(series_index).ok_or_else(|| transaction_error("error-bar series index is out of range"))?;
+            let bars = child_indices(&nodes, series, CHART_NS, "errBars");
+            let bar = bars
+                .into_iter()
+                .find(|bar| {
+                    child_index(&nodes, *bar, CHART_NS, "errDir")
+                        .and_then(|node| nodes.get(node))
+                        .and_then(|node| node.attrs.get(&qualified("", "val")))
+                        .is_some_and(|direction| direction == &error_change.direction)
+                })
+                .ok_or_else(|| transaction_error("error-bar target changed after validation"))?;
+            let value_type = child_index(&nodes, bar, CHART_NS, "errValType")
+                .and_then(|node| nodes.get(node))
+                .and_then(|node| node.attrs.get(&qualified("", "val")))
+                .map(String::as_str);
+            match value_type {
+                Some("fixedVal") => {
+                    let value = error_change.fixed_value.ok_or_else(|| transaction_error("fixed error-bar value is missing"))?;
+                    let values = child_indices(&nodes, bar, CHART_NS, "val");
+                    let value_node =
+                        *values.first().filter(|_| values.len() == 1).ok_or_else(|| transaction_error("fixed error-bar target is ambiguous"))?;
+                    current = set_xml_attribute(&current, &nodes, value_node, "val", &format_number(value))?;
+                }
+                Some("cust") => {
+                    let mut splices = Vec::new();
+                    for (local, requested) in [("plus", error_change.positive.as_ref()), ("minus", error_change.negative.as_ref())] {
+                        let Some(values) = requested else { continue };
+                        let wrappers = child_indices(&nodes, bar, CHART_NS, local);
+                        let wrapper = *wrappers
+                            .first()
+                            .filter(|_| wrappers.len() == 1)
+                            .ok_or_else(|| transaction_error("custom error-bar side changed after validation"))?;
+                        let literals = child_indices(&nodes, wrapper, CHART_NS, "numLit");
+                        let literal = *literals
+                            .first()
+                            .filter(|_| literals.len() == 1)
+                            .ok_or_else(|| transaction_error("custom error-bar literal changed after validation"))?;
+                        let points = child_indices(&nodes, literal, CHART_NS, "pt");
+                        if points.len() != values.len() {
+                            return Err(transaction_error("custom error-bar point count changed after validation"));
+                        }
+                        let mut ordered = Vec::with_capacity(points.len());
+                        for point in points {
+                            let index = nodes
+                                .get(point)
+                                .and_then(|node| node.attrs.get(&qualified("", "idx")))
+                                .and_then(|index| index.parse::<usize>().ok())
+                                .ok_or_else(|| transaction_error("custom error-bar point index is malformed"))?;
+                            ordered.push((index, point));
+                        }
+                        ordered.sort_by_key(|(index, _)| *index);
+                        for (expected_index, (index, point)) in ordered.into_iter().enumerate() {
+                            if index != expected_index {
+                                return Err(transaction_error("custom error-bar points are not a complete ordered range"));
+                            }
+                            let values_nodes = child_indices(&nodes, point, CHART_NS, "v");
+                            let value_node = *values_nodes
+                                .first()
+                                .filter(|_| values_nodes.len() == 1)
+                                .ok_or_else(|| transaction_error("custom error-bar numeric literal is ambiguous"))?;
+                            let value = *values.get(expected_index).ok_or_else(|| transaction_error("custom error-bar value is missing"))?;
+                            add_text_node_splice(&current, &nodes, value_node, &format_number(value), &mut splices)?;
+                        }
+                    }
+                    current = apply_splices(&current, splices)?;
+                }
+                _ => return Err(transaction_error("error-bar source became unsupported after validation")),
+            }
+        }
+    }
+    Ok(current)
+}
+
+fn format_number(value: f64) -> String {
+    if value == 0.0 { "0".into() } else { value.to_string() }
 }
 
 fn marker_attribute_node(nodes: &[Element], series_index: usize, child: &str) -> Result<Option<usize>, DocxError> {
@@ -3024,6 +3231,142 @@ mod tests {
         );
         files.insert("word/embeddings/book.xlsx".into(), embedded);
         zip(&files)
+    }
+
+    fn docx_with_error_bars(chart_xml: &[u8], workbook_bytes: Option<&[u8]>) -> Vec<u8> {
+        let base = docx_fixture(false, false, false, false);
+        let mut files = Package::open(&base).unwrap().entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        files.insert("word/charts/chart1.xml".into(), chart_xml.to_vec());
+        if let Some(workbook) = workbook_bytes {
+            files.insert("word/embeddings/book.xlsx".into(), workbook.to_vec());
+        }
+        zip(&files)
+    }
+
+    fn chart_with_error_bars(base: Vec<u8>, error_bars: &str, series_close: &str) -> Vec<u8> {
+        String::from_utf8(base).unwrap().replacen(series_close, &format!("{error_bars}{series_close}"), 1).into_bytes()
+    }
+
+    #[test]
+    fn fixed_and_custom_error_bar_edits_are_atomic_and_leave_embedded_xlsx_unchanged() {
+        let fixed_xml = chart_with_error_bars(
+            chart(false),
+            r#"<c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="fixedVal"/><c:val val="1.5"/><c:noEndCap val="1"/></c:errBars>"#,
+            "</c:ser>",
+        );
+        let source = docx_with_error_bars(&fixed_xml, None);
+        let original_package = Package::open(&source).unwrap();
+        let original_xlsx = original_package.get("word/embeddings/book.xlsx").unwrap().to_vec();
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let snapshot = inspect_chart_data(&source, "word/charts/chart1.xml").unwrap();
+        let fixed = snapshot.series[0].error_bars.first().unwrap();
+        assert!(fixed.editable && fixed.renderable);
+        assert_eq!(fixed.fixed_value, Some(1.5));
+        assert!(!fixed.caps);
+        let output = apply_chart_edit(
+            &source,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges {
+                    error_bars: Some(vec![ErrorBarChanges { direction: "y".into(), fixed_value: Some(2.25), ..Default::default() }]),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let updated = Package::open(&output).unwrap();
+        assert_eq!(updated.get("word/embeddings/book.xlsx"), Some(original_xlsx.as_slice()));
+        let updated_snapshot = inspect_chart_data(&output, "word/charts/chart1.xml").unwrap();
+        assert_eq!(updated_snapshot.series[0].error_bars[0].fixed_value, Some(2.25));
+        let chart_bytes = updated.get("word/charts/chart1.xml").unwrap();
+        assert!(String::from_utf8_lossy(chart_bytes).contains(r#"<c:noEndCap val="1"/>"#));
+        assert!(String::from_utf8_lossy(chart_bytes).contains(r#"<c:val val="2.25"/>"#));
+
+        let custom_xml = chart_with_error_bars(
+            chart(false),
+            r#"<c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numLit><c:ptCount val="3"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt><c:pt idx="2"><c:v>3</c:v></c:pt></c:numLit></c:plus><c:minus><c:numLit><c:ptCount val="3"/><c:pt idx="0"><c:v>0.5</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt><c:pt idx="2"><c:v>1.5</c:v></c:pt></c:numLit></c:minus></c:errBars>"#,
+            "</c:ser>",
+        );
+        let source = docx_with_error_bars(&custom_xml, None);
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let snapshot = inspect_chart_data(&source, "word/charts/chart1.xml").unwrap();
+        let custom = snapshot.series[0].error_bars.first().unwrap();
+        assert!(custom.editable);
+        assert_eq!(custom.positive, [1.0, 2.0, 3.0]);
+        assert_eq!(custom.negative, [0.5, 1.0, 1.5]);
+        let output = apply_chart_edit(
+            &source,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges {
+                    error_bars: Some(vec![ErrorBarChanges {
+                        direction: "y".into(),
+                        positive: Some(vec![1.25, 2.25, 3.25]),
+                        negative: Some(vec![0.25, 0.75, 1.25]),
+                        ..Default::default()
+                    }]),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let updated = inspect_chart_data(&output, "word/charts/chart1.xml").unwrap();
+        assert_eq!(updated.series[0].error_bars[0].positive, [1.25, 2.25, 3.25]);
+        assert_eq!(updated.series[0].error_bars[0].negative, [0.25, 0.75, 1.25]);
+        assert_eq!(Package::open(&output).unwrap().get("word/embeddings/book.xlsx"), Some(original_xlsx.as_slice()));
+    }
+
+    #[test]
+    fn scatter_x_and_y_error_bars_edit_independently_and_invalid_edits_are_rejected() {
+        let xml = chart_with_error_bars(
+            scatter_chart(false),
+            r#"<c:errBars><c:errDir val="x"/><c:errBarType val="both"/><c:errValType val="cust"/><c:plus><c:numLit><c:ptCount val="3"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt><c:pt idx="2"><c:v>1</c:v></c:pt></c:numLit></c:plus><c:minus><c:numLit><c:ptCount val="3"/><c:pt idx="0"><c:v>2</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt><c:pt idx="2"><c:v>2</c:v></c:pt></c:numLit></c:minus></c:errBars><c:errBars><c:errDir val="y"/><c:errBarType val="both"/><c:errValType val="fixedVal"/><c:val val="3"/></c:errBars>"#,
+            "</c:ser>",
+        );
+        let source = docx_with_error_bars(&xml, Some(&scatter_workbook()));
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let original_xlsx = Package::open(&source).unwrap().get("word/embeddings/book.xlsx").unwrap().to_vec();
+        let output = apply_chart_edit(
+            &source,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges {
+                    error_bars: Some(vec![
+                        ErrorBarChanges {
+                            direction: "x".into(),
+                            positive: Some(vec![4.0, 5.0, 6.0]),
+                            negative: Some(vec![2.0, 2.0, 2.0]),
+                            ..Default::default()
+                        },
+                        ErrorBarChanges { direction: "y".into(), fixed_value: Some(7.0), ..Default::default() },
+                    ]),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let bars = inspect_chart_data(&output, "word/charts/chart1.xml").unwrap().series.remove(0).error_bars;
+        assert_eq!(bars.iter().find(|bar| bar.direction == "x").unwrap().positive, [4.0, 5.0, 6.0]);
+        assert_eq!(bars.iter().find(|bar| bar.direction == "y").unwrap().fixed_value, Some(7.0));
+        assert_eq!(Package::open(&output).unwrap().get("word/embeddings/book.xlsx"), Some(original_xlsx.as_slice()));
+
+        let invalid = ChartDataChanges {
+            series: vec![SeriesChanges {
+                error_bars: Some(vec![ErrorBarChanges {
+                    direction: "x".into(),
+                    positive: Some(vec![1.0, -1.0, 1.0]),
+                    negative: Some(vec![1.0, 1.0, 1.0]),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(apply_chart_edit(&source, &plan, &invalid).is_err());
+        assert_eq!(source, docx_with_error_bars(&xml, Some(&scatter_workbook())));
     }
 
     fn axis_docx_fixture() -> Vec<u8> {
