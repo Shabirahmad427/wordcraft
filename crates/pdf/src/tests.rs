@@ -929,3 +929,196 @@ fn internal_links_export_in_linear_time() {
     let ratio = fastest(&big) / fastest(&small).max(1e-9);
     assert!(ratio < 9.0, "4x the paragraphs and links took {ratio:.1}x as long (quadratic would be ~16x)");
 }
+
+/// Independent package/PDF boundary check: the expected paper, margins and text are authored
+/// here, then read from the DOCX and parsed from the PDF rather than derived from PDF output.
+#[test]
+fn synthetic_docx_page_geometry_and_pdf_content() {
+    use wordcraft_doc::para::{Anchor, Float, NoteKind, Wrap};
+    use wordcraft_doc::{PartKind, Pos, StoryRef};
+
+    let mut doc = Document::from_text("Opening marker\nAfter explicit page break\nClosing marker");
+    doc.last_section.page_w = 432.0;
+    doc.last_section.page_h = 648.0;
+    doc.last_section.margin_left = 54.0;
+    doc.last_section.margin_right = 54.0;
+    doc.last_section.margin_top = 60.0;
+    doc.last_section.margin_bottom = 60.0;
+    doc.para_mut(StoryRef::Body, &wordcraft_doc::Path::top(1)).unwrap().props.page_break_before = Some(true);
+    let header = doc.add_part(PartKind::Header, vec![para_block(Paragraph::with_text("Running header", Default::default()))]);
+    let mut footer_text = Paragraph::with_text("Page ", Default::default());
+    footer_text
+        .insert_object(
+            footer_text.len(),
+            InlineObject::Field { instr: "PAGE".into(), result: "1".into(), locked: false, code: false },
+            &Default::default(),
+        )
+        .unwrap();
+    let footer = doc.add_part(PartKind::Footer, vec![para_block(footer_text)]);
+    doc.last_section.headers.default = Some(header);
+    doc.last_section.footers.default = Some(footer);
+    let note = doc.add_part(PartKind::Footnote, vec![para_block(Paragraph::with_text("Footnote evidence", Default::default()))]);
+    doc.insert_object(&Pos::body(1, 5), InlineObject::NoteRef { kind: NoteKind::Footnote, id: note, custom: String::new() }, &Default::default())
+        .unwrap();
+    let media = doc.add_media(png(), "png");
+    for (at, floating) in [(0, false), (2, true)] {
+        let float = if floating {
+            Float { wrap: Wrap::BehindText, h_rel: Anchor::Page, v_rel: Anchor::Page, x: 310.0, y: 100.0, ..Default::default() }
+        } else {
+            Float::default()
+        };
+        doc.insert_object(
+            &Pos::body(at, 0),
+            InlineObject::Image { media: media.clone(), w: 30.0, h: 15.0, alt: format!("image-{at}"), float, crop: [0.0; 4], ole: None },
+            &Default::default(),
+        )
+        .unwrap();
+    }
+    let package = wordcraft_docx::write(&doc).unwrap();
+    let reopened = wordcraft_docx::read(&package).unwrap();
+    let laid = layout(&reopened, &mut LayoutCache::new(), &LayoutOptions::default());
+    assert_eq!(
+        laid.pages.len(),
+        2,
+        "unexpected pages after DOCX import: {:#?}",
+        laid.pages.iter().map(|p| (p.w, p.h, p.number, p.body)).collect::<Vec<_>>()
+    );
+    for (index, page) in laid.pages.iter().enumerate() {
+        assert_eq!((page.w, page.h), (432.0, 648.0), "page {index} paper");
+        assert!((page.body.x - 54.0).abs() < 0.1 && (page.body.w - 324.0).abs() < 0.1, "page {index} margins: {:?}", page.body);
+        assert!(page.header_story.is_some() && page.footer_story.is_some(), "page {index} furniture");
+        assert!(page.items.iter().any(|i| matches!(i, Placed::Image { .. } | Placed::Object { .. })), "page {index} image missing");
+    }
+    assert!(laid.overflows.is_empty(), "unexpected layout overflow: {:#?}", laid.overflows);
+    let bytes = export(&reopened, &PdfOptions { compress: false, ..Default::default() }).unwrap();
+    let pdf = hayro_syntax::Pdf::new(bytes.clone()).unwrap();
+    assert_eq!(pdf.pages().len(), 2, "PDF page count differs from authored explicit break");
+    for (index, page) in pdf.pages().iter().enumerate() {
+        let box_ = page.media_box();
+        assert!((box_.width() - 432.0).abs() < 0.1 && (box_.height() - 648.0).abs() < 0.1, "PDF page {index} media box: {box_:?}");
+    }
+    let text = extract_text(&bytes);
+    for (index, marker) in ["Opening marker", "explicit page break"].iter().enumerate() {
+        assert!(squash(&text[index]).contains(marker), "PDF page {index} lost {marker:?}: {:?}", text[index]);
+        assert!(squash(&text[index]).contains("Running header"), "PDF page {index} lost header: {:?}", text[index]);
+        assert!(squash(&text[index]).contains(&format!("Page {}", index + 1)), "PDF page {index} lost page field: {:?}", text[index]);
+    }
+    assert!(squash(&text[1]).contains("Footnote evidence"), "PDF lost footnote: {:?}", text[1]);
+    assert!(squash(&text[1]).contains("Closing marker"), "PDF lost trailing body: {:?}", text[1]);
+    let raw = String::from_utf8_lossy(&bytes);
+    assert!(raw.contains("/Subtype /Image") || raw.contains("/Subtype/Image"), "PDF lost embedded images");
+    assert!(raw.contains("/FontFile2") || raw.contains("/FontFile3"), "PDF lost embedded fonts");
+
+    // A saved edit must remain searchable after a second DOCX import and PDF export.
+    let mut edited = reopened;
+    edited
+        .para_mut(StoryRef::Body, &wordcraft_doc::Path::top(2))
+        .unwrap()
+        .insert_text("Closing marker".len(), " EditedProof", &Default::default())
+        .unwrap();
+    let saved = wordcraft_docx::write(&edited).unwrap();
+    let saved_doc = wordcraft_docx::read(&saved).unwrap();
+    let edited_pdf = export(&saved_doc, &PdfOptions::default()).unwrap();
+    assert!(squash(&extract_text(&edited_pdf).concat()).contains("EditedProof"), "saved edit disappeared from PDF");
+}
+
+#[test]
+fn synthetic_docx_table_notes_columns_math_and_vertical_box() {
+    use wordcraft_doc::math::{Math, parse_linear};
+    use wordcraft_doc::para::{NoteKind, ShapeKind};
+    use wordcraft_doc::props::{TextDirection, TextVert};
+    use wordcraft_doc::{PartKind, Path, Pos, StoryRef, TextBody};
+
+    let mut doc = Document::from_text("Scientific summary alpha beta 日本語");
+    doc.last_section.page_w = 432.0;
+    doc.last_section.page_h = 648.0;
+    doc.last_section.margin_left = 54.0;
+    doc.last_section.margin_right = 54.0;
+    let unicode_start = "Scientific summary alpha beta ".len();
+    doc.format_range(&Pos::body(0, unicode_start), &Pos::body(0, "Scientific summary alpha beta 日本語".len()), &|c| {
+        c.font = Some("Noto Sans CJK JP".into())
+    })
+    .unwrap();
+    let endnote = doc.add_part(PartKind::Endnote, vec![para_block(Paragraph::with_text("EndnoteEvidence", Default::default()))]);
+    doc.insert_object(&Pos::body(0, 5), InlineObject::NoteRef { kind: NoteKind::Endnote, id: endnote, custom: String::new() }, &Default::default())
+        .unwrap();
+    let equation = "a+b=c";
+    doc.insert_object(
+        &doc.end_of(StoryRef::Body),
+        InlineObject::Equation { linear: equation.into(), display: true, math: Math { nodes: parse_linear(equation), ..Default::default() } },
+        &Default::default(),
+    )
+    .unwrap();
+    let mut table = Table::new(44, 2, 324.0);
+    table.rows[0].props.header = true;
+    for (row, cells) in table.rows.iter_mut().enumerate() {
+        for (column, cell) in cells.cells.iter_mut().enumerate() {
+            let label = if row == 43 && column == 1 { "FinalRowEvidence".into() } else { format!("R{row}C{column} measurement") };
+            cell.blocks = vec![para_block(Paragraph::with_text(&label, Default::default()))];
+        }
+    }
+    doc.body.push(Arc::new(Block::Table(table)));
+    let package = wordcraft_docx::write(&doc).unwrap();
+    let reopened = wordcraft_docx::read(&package).unwrap();
+    let laid = layout(&reopened, &mut LayoutCache::new(), &LayoutOptions::default());
+    assert!((2..=8).contains(&laid.pages.len()), "table should span pages without runaway pagination: {}", laid.pages.len());
+    assert!(laid.overflows.is_empty(), "table/notes overflow: {:#?}", laid.overflows);
+    for (index, page) in laid.pages.iter().enumerate() {
+        assert!(!page.items.is_empty(), "unexpected blank page {index}");
+        assert_eq!((page.w, page.h), (432.0, 648.0), "page {index} paper");
+        for item in &page.items {
+            if let Placed::Cell { rect, .. } = item {
+                assert!(
+                    rect.x >= -0.5 && rect.right() <= page.w + 0.5 && rect.y >= -0.5 && rect.bottom() <= page.h + 0.5,
+                    "page {index} clipped table cell: {rect:?}"
+                );
+            }
+        }
+    }
+    let pdf = export(&reopened, &PdfOptions::default()).unwrap();
+    let parsed = hayro_syntax::Pdf::new(pdf.clone()).unwrap();
+    assert_eq!(parsed.pages().len(), laid.pages.len(), "PDF lost or added pages");
+    let text = squash(&extract_text(&pdf).concat());
+    for marker in ["summary alpha beta", "R0C0", "FinalRowEvidence", "EndnoteEvidence"] {
+        assert!(text.contains(marker), "PDF lost {marker:?}: {text:?}");
+    }
+
+    // The second fixture has an authored column break and a vertical text box. These assertions
+    // concern coordinates and direction, not glyph pixels or the installed font's line metrics.
+    let mut columns = Document::from_text("First column\u{e}Second column");
+    columns.last_section.columns.count = 2;
+    let box_id = columns.add_part(PartKind::TextBox, vec![para_block(Paragraph::with_text("VerticalEvidence", Default::default()))]);
+    columns.parts.get_mut(&box_id).unwrap().body = TextBody { vert: TextVert::Vert, ..Default::default() };
+    columns
+        .insert_object(
+            &columns.end_of(StoryRef::Body),
+            InlineObject::Shape {
+                kind: ShapeKind::TextBox,
+                w: 72.0,
+                h: 120.0,
+                fill: None,
+                stroke: None,
+                stroke_width: 1.0,
+                float: Default::default(),
+                story: Some(box_id),
+                effects: Default::default(),
+                freeform: None,
+                extra: Default::default(),
+            },
+            &Default::default(),
+        )
+        .unwrap();
+    let package = wordcraft_docx::write(&columns).unwrap();
+    let reopened = wordcraft_docx::read(&package).unwrap();
+    let laid = layout(&reopened, &mut LayoutCache::new(), &LayoutOptions::default());
+    assert_eq!(laid.pages.len(), 1, "short two-column fixture gained a page");
+    let first = laid.caret(&Pos::body(0, 0)).unwrap();
+    let second = laid.caret(&Pos::body(0, "First column\u{e}".len())).unwrap();
+    assert_eq!(first.page, second.page);
+    assert!(second.x > first.x + 100.0, "column break failed: {first:?} -> {second:?}");
+    assert!(
+        laid.pages[0].items.iter().any(|item| matches!(item, Placed::Lines { story: StoryRef::Part(_), turn: TextDirection::Down, .. })),
+        "vertical box text missing or wrong direction"
+    );
+    assert!(reopened.para(StoryRef::Body, &Path::top(0)).unwrap().text.contains("Second column"));
+}

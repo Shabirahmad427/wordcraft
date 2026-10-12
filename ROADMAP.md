@@ -1,5 +1,11 @@
 # WordCraft roadmap
 
+## Phase 7I — shared layout and PDF regression (2026-10-12)
+
+- Added synthetic DOCX import/layout/PDF assertions for paper and margins, page count, extracted text, images and fonts, table/notes/equation/column/vertical-text preservation, plus a saved-edit PDF check. The suite parses PDFs with an independent reader and avoids binary cross-OS comparisons. Coverage and limits: [cross-platform layout regressions](docs/cross-platform-layout-regressions.md).
+- Reproduced an off-page header image with no clipping diagnostic, then fixed shared `layout` overflow analysis to inspect floating objects in header/footer and other non-body stories. The minimal test failed before the fix and passes afterward.
+- The hosted Document regressions matrix now includes layout and PDF tests and native CLI smokes on Linux, macOS and Windows. All six local `cargo xtask ci` gates passed (2,101 tests passed, 2 ignored); native Apple Silicon GUI/CLI release builds and both version smokes passed. New hosted Linux/Windows results remain pending; no Word 365, Windows ARM64 runtime or macOS Intel runtime claim follows from this change.
+
 ## Cross-platform shared-core audit (2026-10-12)
 
 - Audited the shared Rust document path and hosted regression coverage from fork commit `9d023894`; the five ranked remaining gaps are in [the cross-platform audit](docs/cross-platform-audit-2026-10-12.md). The Word 365 reference corpus still has zero verified pairs, so no new application-level compatibility claim is made.

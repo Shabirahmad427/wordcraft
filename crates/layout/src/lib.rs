@@ -1541,9 +1541,9 @@ fn analyze_overflows(doc: &Document, pages: &[Page], box_clips: &[(StoryRef, Pat
                         overflows.push(diagnostic(page_index, OverflowElement::Table, OverflowAxis::Vertical, severity, *rect));
                     }
                 }
-                Placed::Object { rect, spin, story: StoryRef::Body, path, off, text_box, wrap, .. } => {
+                Placed::Object { rect, spin, story, path, off, text_box, wrap, .. } => {
                     let bounds = spin.bounds(*rect);
-                    let object = doc.para(StoryRef::Body, path).and_then(|p| p.object_at(*off));
+                    let object = doc.para(*story, path).and_then(|p| p.object_at(*off));
                     let element = if text_box.is_some() {
                         OverflowElement::TextBox
                     } else if matches!(object, Some(InlineObject::Image { .. })) {
@@ -1553,8 +1553,9 @@ fn analyze_overflows(doc: &Document, pages: &[Page], box_clips: &[(StoryRef, Pat
                     };
                     // A page- or margin-positioned floating object may intentionally cross the
                     // text margins (including a full-bleed image). Warn only when it crosses the
-                    // physical page edge. Inline objects belong to the text flow and use body bounds.
-                    let area = if *wrap == Wrap::Inline { page.body } else { Rect::new(0.0, 0.0, page.w, page.h) };
+                    // physical page edge. Inline body objects belong to the text flow and use body
+                    // bounds; header/footer stories have their own placement outside body bounds.
+                    let area = if *story == StoryRef::Body && *wrap == Wrap::Inline { page.body } else { Rect::new(0.0, 0.0, page.w, page.h) };
                     if horizontal_outside(bounds, area) {
                         let severity = if *wrap == Wrap::Inline { page_edge_severity(bounds, page) } else { OverflowSeverity::Clipped };
                         overflows.push(diagnostic(page_index, element, OverflowAxis::Horizontal, severity, bounds));
@@ -1564,17 +1565,10 @@ fn analyze_overflows(doc: &Document, pages: &[Page], box_clips: &[(StoryRef, Pat
                         overflows.push(diagnostic(page_index, element, OverflowAxis::Vertical, severity, bounds));
                     }
                     if text_box.is_some() {
-                        for (_, _, _, axis) in box_clips.iter().filter(|(s, p, o, _)| *s == StoryRef::Body && p == path && *o == *off) {
+                        for (_, _, _, axis) in box_clips.iter().filter(|(s, p, o, _)| s == story && p == path && *o == *off) {
                             let severity = if *axis == OverflowAxis::Vertical { OverflowSeverity::Clipped } else { page_edge_severity(bounds, page) };
                             overflows.push(diagnostic(page_index, OverflowElement::TextBox, *axis, severity, bounds));
                         }
-                    }
-                }
-                Placed::Object { rect, spin, story, path, off, text_box: Some(_), .. } => {
-                    let bounds = spin.bounds(*rect);
-                    for (_, _, _, axis) in box_clips.iter().filter(|(s, p, o, _)| s == story && p == path && *o == *off) {
-                        let severity = if *axis == OverflowAxis::Vertical { OverflowSeverity::Clipped } else { page_edge_severity(bounds, page) };
-                        overflows.push(diagnostic(page_index, OverflowElement::TextBox, *axis, severity, bounds));
                     }
                 }
                 _ => {}

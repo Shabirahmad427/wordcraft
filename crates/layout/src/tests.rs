@@ -76,6 +76,47 @@ fn oversized_inline_content_reports_its_overflow_page_and_keeps_following_text()
 }
 
 #[test]
+fn off_page_header_picture_reports_clipping() {
+    let mut doc = Document::from_text("Body remains visible");
+    let mut header = Paragraph::new();
+    header
+        .insert_object(
+            0,
+            InlineObject::Image {
+                media: "header-image".into(),
+                w: 80.0,
+                h: 30.0,
+                alt: "off-page header image".into(),
+                float: wordcraft_doc::para::Float {
+                    wrap: wordcraft_doc::para::Wrap::BehindText,
+                    h_rel: wordcraft_doc::para::Anchor::Page,
+                    v_rel: wordcraft_doc::para::Anchor::Page,
+                    x: 600.0,
+                    y: 20.0,
+                    ..Default::default()
+                },
+                crop: [0.0; 4],
+                ole: None,
+            },
+            &Default::default(),
+        )
+        .unwrap();
+    let id = doc.add_part(wordcraft_doc::PartKind::Header, vec![wordcraft_doc::para_block(header)]);
+    doc.last_section.headers.default = Some(id);
+    let result = lay(&doc);
+    assert_eq!(result.pages.len(), 1);
+    assert!(result.pages[0].header.iter().any(|item| matches!(item, Placed::Object { .. })), "header picture was not placed");
+    assert!(
+        result
+            .overflows
+            .iter()
+            .any(|o| o.element == OverflowElement::Image && o.axis == OverflowAxis::Horizontal && o.severity == OverflowSeverity::Clipped),
+        "header picture crosses the paper edge but was not diagnosed: {:#?}",
+        result.overflows
+    );
+}
+
+#[test]
 fn oversized_unsplittable_table_row_reports_its_overflow_page() {
     let mut doc = Document::new();
     doc.last_section.page_h = 220.0;

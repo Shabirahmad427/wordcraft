@@ -6591,6 +6591,7 @@ dependencies = [
  "log",
  "thiserror 2.0.21",
  "wordcraft-doc",
+ "wordcraft-docx",
  "wordcraft-fonts",
  "wordcraft-geom",
  "wordcraft-layout",

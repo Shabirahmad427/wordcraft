@@ -72,8 +72,18 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Package, chart, equation, recovery and save regressions
-        run: cargo test --locked -p wordcraft-docx -p wordcraft-engine --tests
+      - name: Package, layout, PDF, recovery and save regressions
+        run: cargo test --locked -p wordcraft-docx -p wordcraft-engine -p wordcraft-layout -p wordcraft-pdf --tests --lib
+      - name: Native CLI smoke
+        run: |
+          cargo build --locked -p wordcraft-cli
+          ./target/debug/wordcraft-cli --version
+        if: runner.os != 'Windows'
+      - name: Native Windows CLI smoke
+        if: runner.os == 'Windows'
+        run: |
+          cargo build --locked -p wordcraft-cli
+          ./target/debug/wordcraft-cli.exe --version
 
   linux-release:
     name: Linux GUI and CLI release build

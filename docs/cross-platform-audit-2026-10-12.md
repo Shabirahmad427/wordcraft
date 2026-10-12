@@ -1,6 +1,8 @@
 # Cross-platform architecture and regression audit
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** hosted Linux/macOS/Windows regression results recorded for `3a480b9` · **Status:** source and synthetic-test audit; no new Word 365 application comparison
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** Phase 7I synthetic DOCX/PDF geometry corpus and proposed native matrix extension · **Status:** source and synthetic-test audit; no new Word 365 application comparison
+
+Phase 7I adds [a cross-platform layout regression protocol](cross-platform-layout-regressions.md). All six local gates and native Apple Silicon GUI/CLI release builds passed; hosted results for this revision remain pending. A minimal fixture exposed an omitted clipping warning for a floating image anchored in a header. Shared layout now diagnoses it and the regression passes. PDF checks use an independent reader for media boxes and extracted text. They still lack a Word-generated reference pair and do not change the estimates below.
 
 The document model, DOCX reader/writer, chart transactions, equation representation, bibliography handling, layout, raster rendering, PDF generation, and session recovery live in shared Rust crates (`doc`, `docx`, `layout`, `render`, `pdf`, `engine`). Platform differences are concentrated in the desktop app/UI and its printing and system adapters. The document crates contain no macOS-specific DOCX interpretation path. `cargo xtask layers` enforces the crate boundary, and `cargo xtask wasm` checks shared crates. This is an architecture finding, not native runtime certification.
 

@@ -1,6 +1,6 @@
 # Where WordCraft falls short of Word
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** cross-platform audit and shared DOCX export validation; real Word-generated corpus remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** synthetic cross-platform layout/PDF corpus and header-float clipping fix; real Word-generated corpus remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 The work list. One entry per shortfall, ranked by how much it stops a Word user from switching
 (**B** = blocks beta). Each says what's missing, the evidence, who it hurts, an Opus 5.5 agent
@@ -10,6 +10,8 @@ first (`gh pr list`), and update this file and the parity doc when a gap closes.
 Native save reliability: synthetic cases on macOS reproduced loss through the predictable temporary-file name. Saves now use owned, exclusively created siblings, synchronize before replacement and clean up on failure; originals survive pre-replacement errors. This narrows save-path reliability under gap #3; the listed field failures and broader stability work remain open. See [save-path guarantees](file-format-parity.md#native-save-path-guarantees).
 
 The [cross-platform audit](cross-platform-audit-2026-10-12.md) ranks the five current evidence gaps across Word reference files, native regression coverage, pagination/PDF comparison, complex OOXML edits and recovery/runtime testing. Older row descriptions below retain historical estimates and may understate preservation features already implemented; the audit distinguishes current source evidence from unverified application behavior.
+
+Phase 7I adds [synthetic DOCX/PDF layout regressions](cross-platform-layout-regressions.md) and fixes a missed clipping warning for header-anchored images. Gap #4 still needs independent Word page geometry and font metrics; this internal corpus does not change its estimate.
 
 ## Ranked
 
@@ -73,6 +75,7 @@ The same gaps grouped the way the parity documents are, for agents working in on
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Synthetic cross-platform layout/PDF corpus and header-float clipping diagnostic; independent Word comparison gap remains |
 | 2026-10-12 | minor | Ranked five cross-platform evidence gaps; shared DOCX export now rejects XML-forbidden model text and validates final packages, without claiming Word 365 parity |
 | 2026-10-12 | minor | Added bounded DOCX package fingerprint and round-trip allowlist benchmark; no Word-created corpus or Word visual result is claimed |
 | 2026-10-11 | trivial | Formatting revisions landed (#41); gap #5 narrowed to move tracking and content controls, 8–12 h |

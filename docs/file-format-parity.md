@@ -1,6 +1,6 @@
 # File-format parity with Microsoft Word
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (shared DOCX output validation and XML-forbidden character refusal; Word reference comparison remains pending) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4, plus Word for Windows' extra formats
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** synthetic DOCX import/edit/save to PDF geometry, text and resource assertions; Word reference comparison remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4, plus Word for Windows' extra formats
 
 Every format Word opens or saves, what WordCraft does with it, and how it's tested. Fidelity is the
 share of a typical real-world file's content and formatting that survives (read: shows correctly;
@@ -164,6 +164,7 @@ raise readiness estimates. No Word-derived files are fixtures.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Synthetic DOCX-to-PDF corpus checks parsed paper size/page count, extracted text, image/font resources and a saved edit; no Word-derived reference |
 | 2026-10-12 | minor | Final DOCX export package validation and explicit refusal of XML-forbidden model text, with synthetic four-flavor regression; Word 365 evidence remains pending |
 | 2026-10-12 | trivial | Paste keeps the formatting of HTML and RTF on the system clipboard; Paste Special lists them and pictures (#687, #833) |
 | 2026-10-12 | trivial | ODT page size, orientation and margins read back from `styles.xml` on open, so they survive a save and reopen (#810) |
