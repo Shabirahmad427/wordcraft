@@ -1,0 +1,15 @@
+{
+  "caseId": "replace-with-stable-case-id",
+  "sourceKind": "synthetic",
+  "sourceProvenance": "Describe how this document was created. Never infer Word provenance from package contents.",
+  "license": "State the redistribution license or record that the source is kept private with permission.",
+  "wordProduct": null,
+  "wordBuild": null,
+  "sourceSha256": null,
+  "controlledEdits": [
+    "List each supported WordCraft operation performed on a copy of the source."
+  ],
+  "allowedChangedParts": [
+    "word/document.xml"
+  ]
+}

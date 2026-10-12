@@ -2,6 +2,12 @@
 
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
+## Word 365 interoperability benchmark (2026-10-12)
+
+- Added `cargo xtask interop inspect` and `cargo xtask interop compare` for bounded DOCX package fingerprints and explicit per-case changed-part allowlists. The contract flags removed, added, or changed package parts outside the manifest; it reports hashes and package metadata without claiming semantic validity.
+- Added a reproducible case manifest template and protocol in [the interoperability report](docs/word365-interoperability.md). It separates synthetic fixtures from Word-generated references and records a feature/evidence matrix and defect severity scheme.
+- No licensed, independently verified Word-generated documents were available; Word 365 could not be run in this Linux environment. The Word corpus remains at zero, and Word visual/editability/repair checks remain pending. Existing internal fixtures are synthetic only. Hosted FreeBSD/Windows ARM64 checks and independent visual comparisons are not yet verified for this benchmark commit.
+
 ## GitHub Actions hardening (2026-10-11)
 
 - Replaced the four externally called reusable workflows with local, reviewable snapshots based on `craft-common-actions@8f081ff5db115de44313c9db09415c359bf2ca01`; all nested action references are now full immutable SHAs. Removed the nested `install-linux-deps@main` path and kept its package setup while calling the pinned, checksum-verifying nfpm action directly.

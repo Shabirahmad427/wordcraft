@@ -1,6 +1,6 @@
 # WordCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** trivial (Draw: Lasso Select, Add Pen, Ink to Shape and Ink Replay landed, #395; previously trivial: M7: formatting revisions landed, #41; previously trivial: M5: Draw Table and Eraser landed, #303; previously minor: beta distance restated: ~15 points, ~150–230 h; previously: alpha gate checked: six core workflows pass; previously major: milestones moved here from ROADMAP.md; Current focus set from the re-measured gaps) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** interoperability benchmark commands and report added; real Word corpus remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 Forward-looking plan. The summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is
 [`gaps.md`](gaps.md); the numbers are in [`target-app-parity.md`](target-app-parity.md). Hours are
@@ -11,8 +11,10 @@ Opus 5.5 agent wall-clock.
 1. **Merge or close the ~45 open PRs** before starting overlapping work: many close catalog gaps
    (Clipboard pane #264, Manage Styles #270, Group #267), fix field bugs (Hebrew RTL #20, IME
    fixes #155–#164) or add languages (de, nb, nn, he). Owner review needed.
-2. **DOCX real-world corpus** (gap #1, 30–50 h): collect openly licensed real-world .docx files,
-   open/render/round-trip them, compare with Word locally, fix what breaks.
+2. **DOCX real-world corpus** (gap #1, 30–50 h): use the [benchmark protocol](word365-interoperability.md)
+   and `cargo xtask interop` package checks; collect openly licensed, consented Word-generated
+   .docx files, compare with Word locally, and fix reproducible defects. Benchmark tooling is ready,
+   but the genuine corpus and application-level comparisons are not.
 3. **Preserve what we can't render** (gap #2, 10–15 h): charts, SmartArt, OLE, ink, group shapes
    survive a round trip and show their fallback pictures.
 4. **Stability sweep** (gap #3, 20–30 h): the open crash, hang and write-failure issues, plus an
@@ -71,6 +73,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | M1: reproducible package fingerprint/allowlist benchmark added; Word 365 corpus and visual comparison remain pending |
 | 2026-10-11 | trivial | M7: formatting revisions landed (#41) |
 | 2026-10-10 | trivial | M5: Draw Table and Eraser landed (#303) |
 | 2026-10-10 | trivial | Merged main: PRs that landed removed from the Current focus list |

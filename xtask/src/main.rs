@@ -5,6 +5,7 @@
 
 mod assets;
 mod ico;
+mod interop;
 mod layers;
 mod parity;
 mod stats;
@@ -23,6 +24,10 @@ commands:
   ci              fmt --check, clippy -D warnings, test, assets, layers, wasm (stops at first failure)
   corpus [--download]
                   show where test corpora live; --download fetches PngSuite into corpus/pngsuite
+  interop inspect <docx> <report.json>
+                  fingerprint package parts and relationships
+  interop compare <original.docx> <roundtrip.docx> <case.json> <report.json>
+                  enforce a per-case allowlist of changed package parts
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   parity          recompute the Word feature-parity summary in docs/parity-checklist.md
   ico <out.ico> <in.png>...
@@ -41,6 +46,7 @@ fn main() -> ExitCode {
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("parity") => parity::run(&root()),
         Some("ico") => ico::run(&rest),
+        Some("interop") => interop::run(&args[1..]),
         Some("version") => version::run(&root(), &rest),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");

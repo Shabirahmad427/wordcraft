@@ -1,5 +1,10 @@
 # DOCX preservation contract and verification
 
+The reproducible package-integrity benchmark and current Word-reference evidence are tracked in
+[the Word 365 interoperability report](word365-interoperability.md). Current benchmark fixtures
+are synthetic; package-preservation results are not Microsoft Word rendering or editability
+verification.
+
 ## Phase 6C table-edit audit
 
 WordCraft's existing table model and commands support row/column insertion and deletion, cell
