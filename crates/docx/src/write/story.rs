@@ -542,7 +542,13 @@ impl Writer<'_> {
                         };
                         inner
                     }
-                    (Some(spec), _, None) => self.chart_graphic(spec, rels),
+                    (Some(spec), _, None) => match self.chart_graphic(spec, rels) {
+                        Ok(inner) => inner,
+                        Err(error) => {
+                            self.preservation_error = Some(error);
+                            return;
+                        }
+                    },
                     (None, Some(spec), None) => self.smart_art_graphic(spec, *gw, *gh, rels),
                     (None, None, None) => {
                         self.preservation_error = Some(crate::DocxError::Preservation("chart or diagram source markup is missing".into()));

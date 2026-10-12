@@ -1,7 +1,7 @@
 //! Charts WordCraft makes ([`ChartSpec`]) as chart parts (ECMA-376 Part 1 §21.2) and back.
 //!
-//! [`chart_xml`] writes a `c:chartSpace` with the data as literals in the part itself
-//! (`c:strLit`, `c:numLit`): no embedded workbook (`c:externalData`) and no external references.
+//! [`chart_xml`] writes an in-memory chart with literal data. New DOCX charts use
+//! [`chart_package_parts`] to write matching worksheet-backed caches and an embedded workbook.
 //! [`chart_items`] draws a chart through the same code that draws chart parts read from files.
 //! [`spec_of`] turns a chart part back into the model only when writing that model again gives
 //! the same markup, so a chart with anything the model leaves out stays as it was read.
@@ -10,6 +10,7 @@ use wordcraft_doc::chart::{ChartSeries, ChartSpec, ChartType, LegendPos};
 use wordcraft_doc::graphic::GraphicItem;
 use wordcraft_doc::props::Rgb;
 
+use crate::package::{self, Rel};
 use crate::xml::{self, El, MAX_DEPTH, Node, W};
 
 const NS_C: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
@@ -17,6 +18,7 @@ const NS_A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const NS_R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 /// Content type of a chart part.
 pub(crate) const CHART_CT: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+pub(crate) const WORKBOOK_CT: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 /// `a:graphicData` URI of a chart.
 pub(crate) const CHART_URI: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
 /// Axis ids (any pair of distinct numbers will do; Word keeps them).
@@ -26,6 +28,56 @@ const VAL_AX: &str = "500000002";
 /// The chart part for `spec`: a complete XML document. `spec` should be sanitized
 /// ([`ChartSpec::sanitize`]); a value that isn't finite is written as a gap either way.
 pub fn chart_xml(spec: &ChartSpec) -> String {
+    chart_xml_mode(spec, None)
+}
+
+/// Build a chart part and a self-contained workbook for a newly inserted chart. The output is
+/// validated through the same mapper used by Chart Design before it is accepted for writing.
+pub(crate) fn chart_package_parts(spec: &ChartSpec, workbook_rel_id: &str) -> Result<(String, Vec<u8>), crate::DocxError> {
+    let spec = spec.clone().sanitized();
+    validate_editable_spec(&spec)?;
+    let chart = chart_xml_mode(&spec, Some(workbook_rel_id));
+    let workbook = chart_workbook(&spec)?;
+    let rel = Rel {
+        id: workbook_rel_id.to_string(),
+        kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package".into(),
+        target: "word/embeddings/workbook1.xlsx".into(),
+        external: false,
+    };
+    match crate::chart_mapping::map_chart(chart.as_bytes(), &[rel], "word/embeddings/workbook1.xlsx", &workbook) {
+        crate::chart_mapping::Classification::Mappable(_) => Ok((chart, workbook)),
+        crate::chart_mapping::Classification::Inconsistent(reason)
+            if spec.series.iter().any(|series| series.values.iter().any(Option::is_none)) && reason.contains("references a missing") =>
+        {
+            // Preserve the supported chart model's explicit gaps as blank cells. The mapper
+            // intentionally leaves sparse data read-only because its editor accepts only numbers.
+            Ok((chart, workbook))
+        }
+        crate::chart_mapping::Classification::Unsupported(reason)
+        | crate::chart_mapping::Classification::Ambiguous(reason)
+        | crate::chart_mapping::Classification::Inconsistent(reason) => {
+            Err(crate::DocxError::Preservation(format!("new chart data could not be validated safely: {reason}")))
+        }
+    }
+}
+
+fn validate_editable_spec(spec: &ChartSpec) -> Result<(), crate::DocxError> {
+    if spec.series.is_empty() || spec.categories.is_empty() {
+        return Err(crate::DocxError::Preservation("new editable charts need at least one series and one data point".into()));
+    }
+    if spec.kind.is_round() && spec.series.len() != 1 {
+        return Err(crate::DocxError::Preservation("editable pie and doughnut charts require exactly one series".into()));
+    }
+    if spec.series.iter().any(|series| series.name.is_empty() || series.values.len() != spec.categories.len()) {
+        return Err(crate::DocxError::Preservation("new charts require named series with one value slot for every category".into()));
+    }
+    if spec.kind == ChartType::Scatter && spec.categories.iter().any(|category| category.parse::<f64>().ok().is_none_or(|value| !value.is_finite())) {
+        return Err(crate::DocxError::Preservation("editable scatter charts require finite numeric X values".into()));
+    }
+    Ok(())
+}
+
+fn chart_xml_mode(spec: &ChartSpec, workbook_rel_id: Option<&str>) -> String {
     let mut w = W::new();
     w.open("c:chartSpace", &[("xmlns:c", NS_C), ("xmlns:a", NS_A), ("xmlns:r", NS_R)]);
     w.empty("c:roundedCorners", &[("val", "0")]);
@@ -49,7 +101,7 @@ pub fn chart_xml(spec: &ChartSpec) -> String {
     w.empty("c:autoTitleDeleted", &[("val", if spec.title.is_some() { "0" } else { "1" })]);
     w.open("c:plotArea", &[]);
     w.empty("c:layout", &[]);
-    plot(&mut w, spec);
+    plot(&mut w, spec, workbook_rel_id.is_some());
     w.close("c:plotArea");
     if let Some(pos) = spec.legend {
         w.open("c:legend", &[]);
@@ -66,6 +118,9 @@ pub fn chart_xml(spec: &ChartSpec) -> String {
     w.empty("c:plotVisOnly", &[("val", "1")]);
     w.empty("c:dispBlanksAs", &[("val", "gap")]);
     w.close("c:chart");
+    if let Some(id) = workbook_rel_id {
+        w.empty("c:externalData", &[("xmlns:r", NS_R), ("r:id", id)]);
+    }
     // A white chart area without a border, in the document's own background colour.
     w.open("c:spPr", &[]);
     w.open("a:solidFill", &[]);
@@ -79,6 +134,143 @@ pub fn chart_xml(spec: &ChartSpec) -> String {
     w.s
 }
 
+fn chart_workbook(spec: &ChartSpec) -> Result<Vec<u8>, crate::DocxError> {
+    let mut entries = Vec::new();
+    let mut types = W::new();
+    types.open("Types", &[("xmlns", "http://schemas.openxmlformats.org/package/2006/content-types")]);
+    types.empty("Default", &[("Extension", "rels"), ("ContentType", "application/vnd.openxmlformats-package.relationships+xml")]);
+    types.empty("Default", &[("Extension", "xml"), ("ContentType", "application/xml")]);
+    types.empty(
+        "Override",
+        &[("PartName", "/xl/workbook.xml"), ("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml")],
+    );
+    types.empty(
+        "Override",
+        &[("PartName", "/xl/worksheets/sheet1.xml"), ("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml")],
+    );
+    types.close("Types");
+    entries.push(("[Content_Types].xml".to_string(), types.into_bytes()));
+
+    let mut root_rels = W::new();
+    root_rels.open("Relationships", &[("xmlns", "http://schemas.openxmlformats.org/package/2006/relationships")]);
+    root_rels.empty(
+        "Relationship",
+        &[
+            ("Id", "rId1"),
+            ("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"),
+            ("Target", "xl/workbook.xml"),
+        ],
+    );
+    root_rels.close("Relationships");
+    entries.push(("_rels/.rels".to_string(), root_rels.into_bytes()));
+
+    let mut workbook = W::new();
+    workbook.open("workbook", &[("xmlns", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"), ("xmlns:r", NS_R)]);
+    workbook.open("sheets", &[]);
+    workbook.empty("sheet", &[("name", "Data"), ("sheetId", "1"), ("r:id", "rId1")]);
+    workbook.close("sheets");
+    workbook.close("workbook");
+    entries.push(("xl/workbook.xml".to_string(), workbook.into_bytes()));
+
+    let mut wb_rels = W::new();
+    wb_rels.open("Relationships", &[("xmlns", "http://schemas.openxmlformats.org/package/2006/relationships")]);
+    wb_rels.empty(
+        "Relationship",
+        &[
+            ("Id", "rId1"),
+            ("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"),
+            ("Target", "worksheets/sheet1.xml"),
+        ],
+    );
+    wb_rels.close("Relationships");
+    entries.push(("xl/_rels/workbook.xml.rels".to_string(), wb_rels.into_bytes()));
+
+    let mut sheet = W::new();
+    sheet.open("worksheet", &[("xmlns", "http://schemas.openxmlformats.org/spreadsheetml/2006/main")]);
+    sheet.open("sheetData", &[]);
+    if spec.kind == ChartType::Scatter {
+        open_row(&mut sheet, 1);
+        for (index, series) in spec.series.iter().enumerate() {
+            let base_col = index
+                .checked_mul(3)
+                .and_then(|n| n.checked_add(1))
+                .ok_or_else(|| crate::DocxError::Limit("chart worksheet column overflow".into()))?;
+            add_text_cell(&mut sheet, 1, base_col, &series.name);
+        }
+        sheet.close("row");
+        for (index, x) in spec.categories.iter().enumerate() {
+            let row = index + 2;
+            open_row(&mut sheet, row);
+            let x = x.parse::<f64>().map_err(|_| crate::DocxError::Preservation("scatter X value is invalid".into()))?;
+            for (series_index, series) in spec.series.iter().enumerate() {
+                let base_col = series_index * 3 + 1;
+                add_number_cell(&mut sheet, row, base_col + 1, x);
+                if let Some(value) = series.values.get(index).and_then(|value| *value) {
+                    add_number_cell(&mut sheet, row, base_col + 2, value);
+                }
+            }
+            sheet.close("row");
+        }
+    } else {
+        open_row(&mut sheet, 1);
+        add_text_cell(&mut sheet, 1, 1, "");
+        for (index, series) in spec.series.iter().enumerate() {
+            add_text_cell(&mut sheet, 1, index + 2, &series.name);
+        }
+        sheet.close("row");
+        for (index, category) in spec.categories.iter().enumerate() {
+            let row = index + 2;
+            open_row(&mut sheet, row);
+            add_text_cell(&mut sheet, row, 1, category);
+            for (series_index, series) in spec.series.iter().enumerate() {
+                if let Some(value) = series.values.get(index).and_then(|value| *value) {
+                    add_number_cell(&mut sheet, row, series_index + 2, value);
+                }
+            }
+            sheet.close("row");
+        }
+    }
+    sheet.close("sheetData");
+    sheet.close("worksheet");
+    entries.push(("xl/worksheets/sheet1.xml".to_string(), sheet.into_bytes()));
+    package::zip_entries(&entries)
+}
+
+fn add_text_cell(w: &mut W, row: usize, col: usize, value: &str) {
+    let address = format!("{}{}", column_name(col), row);
+    w.open("c", &[("r", &address), ("t", "inlineStr")]);
+    w.open("is", &[]);
+    if value.trim() != value {
+        w.leaf("t", &[("xml:space", "preserve")], value);
+    } else {
+        w.leaf("t", &[], value);
+    }
+    w.close("is");
+    w.close("c");
+}
+
+fn add_number_cell(w: &mut W, row: usize, col: usize, value: f64) {
+    let address = format!("{}{}", column_name(col), row);
+    w.open("c", &[("r", &address)]);
+    w.leaf("v", &[], &num(value));
+    w.close("c");
+}
+
+fn open_row(w: &mut W, row: usize) {
+    w.open("row", &[("r", &row.to_string())]);
+}
+
+fn column_name(mut col: usize) -> String {
+    let mut result = Vec::new();
+    while col > 0 {
+        let remainder = (col - 1) % 26;
+        result.push(char::from(b'A' + remainder as u8));
+        col = (col - 1) / 26;
+    }
+    result.reverse();
+    result.into_iter().collect()
+}
+
 /// What `spec` draws as, `w` × `h` points, in the colours of `theme` (series take the accents in
 /// turn). Empty when the chart has no series.
 pub fn chart_items(spec: &ChartSpec, theme: &[Rgb], w: f32, h: f32) -> Vec<GraphicItem> {
@@ -89,7 +281,7 @@ pub fn chart_items(spec: &ChartSpec, theme: &[Rgb], w: f32, h: f32) -> Vec<Graph
 }
 
 /// The chart type element and the series in it, then the axes.
-fn plot(w: &mut W, spec: &ChartSpec) {
+fn plot(w: &mut W, spec: &ChartSpec, embedded: bool) {
     let k = spec.kind;
     let el = match k {
         ChartType::Column | ChartType::ColumnStacked | ChartType::Bar | ChartType::BarStacked => "c:barChart",
@@ -114,7 +306,7 @@ fn plot(w: &mut W, spec: &ChartSpec) {
     w.empty("c:varyColors", &[("val", if k.is_round() { "1" } else { "0" })]);
     // Pie and doughnut charts show the first series; the others are kept for other types.
     for (i, s) in spec.series.iter().enumerate() {
-        series(w, spec, i, s);
+        series(w, spec, i, s, embedded);
     }
     if spec.data_labels {
         w.open("c:dLbls", &[]);
@@ -164,13 +356,23 @@ fn plot(w: &mut W, spec: &ChartSpec) {
 }
 
 /// One `c:ser` (ECMA-376 element order: idx, order, tx, spPr, marker, cat/xVal, val/yVal, smooth).
-fn series(w: &mut W, spec: &ChartSpec, i: usize, s: &ChartSeries) {
+fn series(w: &mut W, spec: &ChartSpec, i: usize, s: &ChartSeries, embedded: bool) {
     let k = spec.kind;
-    let i = i.to_string();
+    let index = i;
+    let i = index.to_string();
     w.open("c:ser", &[]);
     w.empty("c:idx", &[("val", &i)]);
     w.empty("c:order", &[("val", &i)]);
-    if !s.name.is_empty() {
+    if embedded {
+        let name_col = if k == ChartType::Scatter { index.saturating_mul(3).saturating_add(1) } else { index.saturating_add(2) };
+        w.open("c:tx", &[]);
+        w.open("c:strRef", &[]);
+        let name_col = column_name(name_col);
+        w.leaf("c:f", &[], &format!("Data!${name_col}$1"));
+        str_cache(w, std::slice::from_ref(&s.name));
+        w.close("c:strRef");
+        w.close("c:tx");
+    } else if !s.name.is_empty() {
         w.open("c:tx", &[]);
         w.leaf("c:v", &[], &s.name);
         w.close("c:tx");
@@ -201,26 +403,81 @@ fn series(w: &mut W, spec: &ChartSpec, i: usize, s: &ChartSeries) {
             .map(|c| if c.is_empty() { Some(None) } else { c.parse::<f64>().ok().filter(|v| v.is_finite()).map(Some) })
             .collect();
         w.open("c:xVal", &[]);
-        match xs {
-            Some(xs) => num_lit(w, &xs),
-            None => str_lit(w, &spec.categories),
+        if embedded {
+            let base = index.saturating_mul(3).saturating_add(2);
+            numeric_reference(w, column_name(base), spec.categories.len(), &xs.unwrap_or_default());
+        } else {
+            match xs {
+                Some(xs) => num_lit(w, &xs),
+                None => str_lit(w, &spec.categories),
+            }
         }
         w.close("c:xVal");
         w.open("c:yVal", &[]);
-        num_lit(w, &s.values);
+        if embedded {
+            let base = index.saturating_mul(3).saturating_add(3);
+            numeric_reference(w, column_name(base), spec.categories.len(), &s.values);
+        } else {
+            num_lit(w, &s.values);
+        }
         w.close("c:yVal");
     } else {
         w.open("c:cat", &[]);
-        str_lit(w, &spec.categories);
+        if embedded {
+            string_reference(w, "A", &spec.categories);
+        } else {
+            str_lit(w, &spec.categories);
+        }
         w.close("c:cat");
         w.open("c:val", &[]);
-        num_lit(w, &s.values);
+        if embedded {
+            numeric_reference(w, column_name(index.saturating_add(2)), spec.categories.len(), &s.values);
+        } else {
+            num_lit(w, &s.values);
+        }
         w.close("c:val");
     }
     if matches!(k, ChartType::Line | ChartType::Scatter) {
         w.empty("c:smooth", &[("val", "0")]);
     }
     w.close("c:ser");
+}
+
+fn string_reference(w: &mut W, col: &str, values: &[String]) {
+    let end = values.len().saturating_add(1);
+    w.open("c:strRef", &[]);
+    w.leaf("c:f", &[], &format!("Data!${col}$2:${col}${end}"));
+    str_cache(w, values);
+    w.close("c:strRef");
+}
+
+fn str_cache(w: &mut W, values: &[String]) {
+    w.open("c:strCache", &[]);
+    w.empty("c:ptCount", &[("val", &values.len().to_string())]);
+    for (index, value) in values.iter().enumerate() {
+        w.open("c:pt", &[("idx", &index.to_string())]);
+        w.leaf("c:v", &[], value);
+        w.close("c:pt");
+    }
+    w.close("c:strCache");
+}
+
+fn numeric_reference(w: &mut W, col: String, length: usize, values: &[Option<f64>]) {
+    let end = length.saturating_add(1);
+    w.open("c:numRef", &[]);
+    w.leaf("c:f", &[], &format!("Data!${col}$2:${col}${end}"));
+    w.open("c:numCache", &[]);
+    w.leaf("c:formatCode", &[], "General");
+    w.empty("c:ptCount", &[("val", &values.len().to_string())]);
+    for (index, value) in values.iter().enumerate() {
+        if let Some(value) = value {
+            w.open("c:pt", &[("idx", &index.to_string())]);
+            w.leaf("c:v", &[], &num(*value));
+            w.close("c:pt");
+        }
+    }
+    w.close("c:numCache");
+    w.close("c:numRef");
 }
 
 fn str_lit(w: &mut W, items: &[String]) {
@@ -334,7 +591,13 @@ pub(crate) fn spec_of(space: &El) -> Option<ChartSpec> {
     let series = sers
         .iter()
         .map(|s| ChartSeries {
-            name: s.child("c:tx").and_then(|t| t.child("c:v")).map(|v| v.text()).unwrap_or_default(),
+            name: s
+                .child("c:tx")
+                .and_then(|t| {
+                    t.child("c:v").or_else(|| t.find("c:strCache").and_then(|cache| cache.child("c:pt")).and_then(|point| point.child("c:v")))
+                })
+                .map(|v| v.text())
+                .unwrap_or_default(),
             values: s
                 .child(if scatter { "c:yVal" } else { "c:val" })
                 .map(literal)
@@ -354,13 +617,19 @@ pub(crate) fn spec_of(space: &El) -> Option<ChartSpec> {
     let data_labels = ty.child("c:dLbls").and_then(|d| d.child("c:showVal")).and_then(|v| v.attr("val")) == Some("1");
     let spec = ChartSpec { kind, categories, series, title, legend, data_labels }.sanitized();
     // Editable only when nothing would be lost: writing the model again gives the same part.
-    let again = xml::parse(chart_xml(&spec).as_bytes()).ok()?;
-    same(space, &again, 0).then_some(spec)
+    let literal = xml::parse(chart_xml(&spec).as_bytes()).ok()?;
+    if same(space, &literal, 0) {
+        return Some(spec);
+    }
+    let embedded = xml::parse(chart_xml_mode(&spec, Some("rId1")).as_bytes()).ok()?;
+    same(space, &embedded, 0).then_some(spec)
 }
 
 /// The points of a `c:strLit` / `c:numLit` (or a cache) as texts by index, `ptCount` long.
 fn literal(e: &El) -> Vec<String> {
-    let Some(lit) = e.els().find(|c| matches!(c.name.as_str(), "c:strLit" | "c:numLit")) else { return Vec::new() };
+    let Some(lit) = e.find("c:strLit").or_else(|| e.find("c:numLit")).or_else(|| e.find("c:strCache")).or_else(|| e.find("c:numCache")) else {
+        return Vec::new();
+    };
     let n = lit
         .child("c:ptCount")
         .and_then(|c| c.attr("val"))
@@ -436,6 +705,109 @@ mod tests {
         }
         let plain = ChartSpec { legend: None, ..ChartSpec::sample(ChartType::Line) };
         assert_eq!(spec_of(&parse(&plain)), Some(plain));
+    }
+
+    #[test]
+    fn generated_chart_workbooks_pass_the_editing_mapper_for_supported_families() {
+        for kind in ChartType::ALL {
+            let mut spec = ChartSpec::sample(kind);
+            if kind.is_round() {
+                spec.series.truncate(1);
+            }
+            let (chart, workbook) = chart_package_parts(&spec, "rId1").expect("supported sample chart should produce a valid package pair");
+            let rel = Rel {
+                id: "rId1".into(),
+                kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package".into(),
+                target: "word/embeddings/workbook1.xlsx".into(),
+                external: false,
+            };
+            assert!(
+                matches!(
+                    crate::chart_mapping::map_chart(chart.as_bytes(), &[rel], "word/embeddings/workbook1.xlsx", &workbook),
+                    crate::chart_mapping::Classification::Mappable(_)
+                ),
+                "{kind:?}"
+            );
+            let parsed = xml::parse(chart.as_bytes()).expect("generated chart XML should parse");
+            assert_eq!(spec_of(&parsed).as_ref(), Some(&spec.sanitized()), "{kind:?} model should remain available after reopening");
+        }
+    }
+
+    #[test]
+    fn generated_scatter_workbook_maps_multiple_independent_xy_series() {
+        let spec = ChartSpec::sample(ChartType::Scatter);
+        let (chart, workbook) = chart_package_parts(&spec, "rId1").expect("sample scatter should be supported");
+        let rel = Rel {
+            id: "rId1".into(),
+            kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package".into(),
+            target: "word/embeddings/workbook1.xlsx".into(),
+            external: false,
+        };
+        let result = crate::chart_mapping::map_chart(chart.as_bytes(), &[rel], "word/embeddings/workbook1.xlsx", &workbook);
+        assert!(matches!(result, crate::chart_mapping::Classification::Mappable(_)), "generated scatter chart should map: {result:?}");
+        let crate::chart_mapping::Classification::Mappable(mapping) = result else { return };
+        assert_eq!(mapping.series.len(), 2);
+        assert!(matches!(mapping.series[0].data, crate::chart_mapping::SeriesDataMapping::Scatter { .. }));
+    }
+
+    #[test]
+    fn sparse_chart_keeps_a_valid_workbook_but_remains_read_only() {
+        let mut gaps = ChartSpec::sample(ChartType::Column);
+        gaps.series[0].values[1] = None;
+        let (chart, workbook) = chart_package_parts(&gaps, "rId1").expect("a chart with a gap still gets a valid workbook");
+        let rel = Rel {
+            id: "rId1".into(),
+            kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package".into(),
+            target: "word/embeddings/workbook1.xlsx".into(),
+            external: false,
+        };
+        assert!(matches!(
+            crate::chart_mapping::map_chart(chart.as_bytes(), &[rel], "word/embeddings/workbook1.xlsx", &workbook),
+            crate::chart_mapping::Classification::Inconsistent(reason) if reason.contains("references a missing")
+        ));
+
+        let mut pie = ChartSpec::sample(ChartType::Pie);
+        pie.series.push(pie.series[0].clone());
+        assert!(chart_package_parts(&pie, "rId1").is_err());
+    }
+
+    #[test]
+    fn inserted_chart_round_trips_with_an_editable_package_relationship() {
+        use std::sync::Arc;
+        use wordcraft_doc::graphic::{Graphic, GraphicKind};
+        use wordcraft_doc::para::{Float, InlineObject, Paragraph};
+        use wordcraft_doc::{Block, Document};
+
+        let spec = ChartSpec::sample(ChartType::Column);
+        let graphic = Graphic {
+            kind: GraphicKind::Chart,
+            items: chart_items(&spec, &THEME_COLORS, 360.0, 220.0),
+            w: 360.0,
+            h: 220.0,
+            source: None,
+            smart_art: None,
+            chart: Some(Arc::new(spec)),
+        };
+        let mut paragraph = Paragraph::new();
+        paragraph
+            .insert_object(
+                0,
+                InlineObject::Graphic { w: 360.0, h: 220.0, alt: String::new(), float: Float::default(), graphic: Arc::new(graphic) },
+                &Default::default(),
+            )
+            .expect("chart object should fit in the new paragraph");
+        let mut document = Document::new();
+        document.body = vec![Arc::new(Block::Para(paragraph))];
+
+        let docx = crate::write::write(&document).expect("inserted chart should be written with its workbook");
+        let reopened = crate::read::read(&docx).expect("chart DOCX should reopen");
+        assert!(
+            crate::chart_mapping::inspect_document(&reopened)
+                .iter()
+                .all(|classification| matches!(classification, crate::chart_mapping::Classification::Mappable(_)))
+        );
+        assert!(crate::chart_mapping::document_has_chart(&reopened, "word/charts/chart1.xml"));
+        assert!(crate::chart_mapping::prepare_chart_edit(&docx, "word/charts/chart1.xml").is_ok());
     }
 
     #[test]

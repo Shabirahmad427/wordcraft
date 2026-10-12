@@ -1005,7 +1005,11 @@ impl Reader<'_> {
             GraphicKind::Diagram if !items.is_empty() => self.smart_art_spec(gd, rels).map(Arc::new),
             _ => None,
         };
-        let source = if chart.is_some() || smart_art.is_some() { None } else { source };
+        // Model-readable charts with a valid embedded workbook stay package-backed: that lets
+        // Chart Design route edits through the validated chart/XLSX transaction. Older
+        // model-only literal charts still use the model writer because they have no externalData.
+        let has_embedded_workbook = chart.is_some() && self.graphic_part(&key.1).is_some_and(|part| part.find("c:externalData").is_some());
+        let source = if smart_art.is_some() || (chart.is_some() && !has_embedded_workbook) { None } else { source };
         let g = Arc::new(Graphic { kind, items, w, h, source, chart, smart_art });
         self.graphics.insert(key, g.clone());
         g

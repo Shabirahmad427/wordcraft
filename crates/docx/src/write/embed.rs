@@ -327,10 +327,15 @@ impl super::Writer<'_> {
 
     /// The `a:graphic` of a chart written from its model: a new chart part (`word/charts/chartN.xml`)
     /// related from the story part through `rels`.
-    pub(super) fn chart_graphic(&mut self, spec: &wordcraft_doc::chart::ChartSpec, rels: &mut PartRels) -> String {
+    pub(super) fn chart_graphic(&mut self, spec: &wordcraft_doc::chart::ChartSpec, rels: &mut PartRels) -> Result<String, crate::DocxError> {
         let name = self.embeds.fresh("word/charts/chart", ".xml");
-        let bytes = crate::chart_spec::chart_xml(spec).into_bytes();
-        self.embeds.parts.push((name.clone(), bytes, crate::chart_spec::CHART_CT.to_string(), PartRels::default()));
+        let workbook_name = self.embeds.fresh("word/embeddings/workbook", ".xlsx");
+        let mut chart_rels = PartRels::default();
+        let workbook_rel =
+            chart_rels.add("http://schemas.openxmlformats.org/officeDocument/2006/relationships/package", &relative(&name, &workbook_name), false);
+        let (chart_xml, workbook) = crate::chart_spec::chart_package_parts(spec, &workbook_rel)?;
+        self.embeds.parts.push((name.clone(), chart_xml.into_bytes(), crate::chart_spec::CHART_CT.to_string(), chart_rels));
+        self.embeds.parts.push((workbook_name, workbook, crate::chart_spec::WORKBOOK_CT.to_string(), PartRels::default()));
         let id = rels.add(crate::package::rt::CHART, &relative(STORY_PART, &name), false);
         let mut w = xml::W::default();
         w.open("a:graphic", &[("xmlns:a", "http://schemas.openxmlformats.org/drawingml/2006/main")]);
@@ -345,7 +350,7 @@ impl super::Writer<'_> {
         );
         w.close("a:graphicData");
         w.close("a:graphic");
-        w.s
+        Ok(w.s)
     }
 
     /// Write an OLE object's size (and position, when floating), rotation and flips into its VML

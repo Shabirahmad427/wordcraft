@@ -17,6 +17,12 @@
 - Added regression tests for unsafe URL schemes, import/export behavior, inline screenshot output and the MCP bridge's no-path calls. Local validation and hosted check results are recorded in [the current upstream audit](docs/upstream-audit-2026-10-11.md) after completion. Upstream issues #678/#679 remain open; their status is independent of fork mitigation. Issue #685 (Excel workbooks for newly created charts) remains out of scope and unresolved.
 - Open PRs #647, #626 and #617 remain unmerged; they were not auto-applied. No Microsoft Word/Excel interoperability claim is made.
 
+## Issue #685 — editable workbooks for inserted charts (2026-10-11)
+
+- Newly inserted charts now serialize chart caches as worksheet references and add a matching embedded XLSX worksheet with series names, category labels and numeric values. Scatter charts store each series' paired X/Y datasets in separate columns. Complete finite datasets must pass the existing validated mapper before writing; sparse datasets keep blank workbook cells and aligned caches, and the existing mapper explicitly classifies them read-only.
+- After save and reopen, generated charts retain their package-backed chart/workbook relationship and expose the existing Chart Design → Edit Chart Data workflow. Edits still flow only through `chart.editData` and its atomic synchronized cache/workbook transaction. Package-backed imported charts remain on their guarded preservation path.
+- Nameless series, empty datasets, invalid scatter X values and multi-series pie/doughnut input fail explicitly during chart writing rather than creating malformed relationships. Sparse/missing numeric values remain renderable and package-backed but are intentionally read-only under the existing numeric-only edit contract. Synthetic round-trip and mapper tests cover all current chart families; independent Microsoft Word/Excel application verification remains outstanding.
+
 ## Chart-axis scaling and number formats (2026-10-11)
 
 - Extended the existing `chart.editData` transaction and Chart Design dialog with Auto/Manual minimum and maximum bounds and safe General, integer, decimal, percentage and scientific number formats. The chart parser already used these OOXML fields in its shared preview/PDF renderer; axis-only edits now feed that same path and do not change embedded XLSX data.
