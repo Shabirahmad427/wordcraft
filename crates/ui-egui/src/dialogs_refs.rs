@@ -18,6 +18,7 @@ use crate::theme::{Tokens, semibold};
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "refs", rename_all = "camelCase")]
 pub enum RefsDialog {
+    CrossReference(CrossReferenceForm),
     Caption(CaptionForm),
     /// Caption › Numbering…; `was` comes back on Cancel.
     CaptionNumbering {
@@ -50,6 +51,7 @@ pub enum RefsDialog {
 impl RefsDialog {
     pub fn name(&self) -> &'static str {
         match self {
+            RefsDialog::CrossReference(_) => "crossReference",
             RefsDialog::Caption(_) => "caption",
             RefsDialog::CaptionNumbering { .. } => "captionNumbering",
             RefsDialog::NewLabel(_) => "newLabel",
@@ -67,6 +69,7 @@ impl RefsDialog {
     /// The window title (English; the caller translates it).
     pub fn title(&self) -> &'static str {
         match self {
+            RefsDialog::CrossReference(_) => "Cross-reference",
             RefsDialog::Caption(_) => "Caption",
             RefsDialog::CaptionNumbering { .. } => "Caption Numbering",
             RefsDialog::NewLabel(_) => "New Label",
@@ -84,8 +87,9 @@ impl RefsDialog {
 
 /// The dialog `ui.dialog` opens by `name`: `caption`, `index`, `markEntry`, `toc`,
 /// `sourceManager` or `createSource` (which inserts a citation of the new source).
-pub fn open(name: &str, app: &WordApp) -> Option<RefsDialog> {
+pub fn open(name: &str, app: &mut WordApp) -> Option<RefsDialog> {
     Some(match name {
+        "crossReference" => RefsDialog::CrossReference(CrossReferenceForm::read(app)),
         "caption" => RefsDialog::Caption(CaptionForm::read(app)),
         "index" => RefsDialog::Index(IndexForm::read(app)),
         "markEntry" => RefsDialog::MarkEntry(MarkForm::read(app)),
@@ -99,6 +103,7 @@ pub fn open(name: &str, app: &WordApp) -> Option<RefsDialog> {
 /// Draws the dialog; returns true to close it.
 pub fn body(app: &mut WordApp, ui: &mut Ui, d: &mut RefsDialog) -> bool {
     let next = match d {
+        RefsDialog::CrossReference(f) => cross_reference_ui(app, ui, f),
         RefsDialog::Caption(f) => caption_ui(app, ui, f),
         RefsDialog::CaptionNumbering { form, was } => numbering_ui(ui, form, was),
         RefsDialog::NewLabel(f) => new_label_ui(app, ui, f),
@@ -118,6 +123,93 @@ pub fn body(app: &mut WordApp, ui: &mut Ui, d: &mut RefsDialog) -> bool {
             false
         }
     }
+}
+
+/// The cross-reference picker. Target text comes from the engine's validated target listing;
+/// insertion still goes through `insert.crossReference` so script and UI behavior stay aligned.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossReferenceForm {
+    to: String,
+    target: String,
+    show: String,
+    targets: Vec<String>,
+    error: String,
+}
+
+impl CrossReferenceForm {
+    fn read(app: &mut WordApp) -> Self {
+        let mut form = Self { to: "heading".into(), target: String::new(), show: "text".into(), targets: Vec::new(), error: String::new() };
+        form.refresh_targets(app);
+        form
+    }
+
+    fn refresh_targets(&mut self, app: &mut WordApp) {
+        self.targets = app
+            .session
+            .run("insert.crossReference", &json!({"to": self.to}))
+            .ok()
+            .and_then(|value| value.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_owned))
+            .collect();
+        if !self.targets.iter().any(|target| target == &self.target) {
+            self.target = self.targets.first().cloned().unwrap_or_default();
+        }
+    }
+
+    fn params(&self) -> Value {
+        json!({"to": self.to, "target": self.target, "show": self.show})
+    }
+}
+
+fn cross_reference_ui(app: &mut WordApp, ui: &mut Ui, f: &mut CrossReferenceForm) -> Next {
+    let types: Vec<(String, &str)> =
+        [("heading", "Heading"), ("bookmark", "Bookmark"), ("figure", "Figure"), ("table", "Table"), ("equation", "Equation")]
+            .map(|(value, label)| (value.to_string(), label))
+            .into_iter()
+            .collect();
+    let show: Vec<(String, &str)> = [("text", "Entire item"), ("number", "Number only"), ("page", "Page number"), ("aboveBelow", "Above/below")]
+        .map(|(value, label)| (value.to_string(), label))
+        .into_iter()
+        .collect();
+    heading(ui, "Reference type");
+    let old_to = f.to.clone();
+    choice(ui, "cross_ref_type", &mut f.to, &types);
+    if f.to != old_to {
+        f.target.clear();
+        f.refresh_targets(app);
+    }
+    ui.add_space(6.0);
+    ui.label(tl!("Insert reference to:"));
+    egui::ComboBox::from_id_salt("cross_ref_target")
+        .selected_text(if f.target.is_empty() { tl!("No available targets").to_string() } else { f.target.clone() })
+        .width(300.0)
+        .show_ui(ui, |ui| {
+            for target in &f.targets {
+                ui.selectable_value(&mut f.target, target.clone(), target);
+            }
+        });
+    ui.horizontal(|ui| {
+        ui.label(tl!("Insert as:"));
+        choice(ui, "cross_ref_show", &mut f.show, &show);
+    });
+    if !f.error.is_empty() {
+        ui.colored_label(Tokens::get(ui.ctx()).red, &f.error);
+    }
+    let (ok, cancel) = buttons(ui, tl!("Insert"));
+    if ok {
+        if f.target.is_empty() {
+            f.error = tl!("No available targets").to_string();
+            return Next::Stay;
+        }
+        match app.run("insert.crossReference", f.params()) {
+            Ok(_) => return Next::Close,
+            Err(error) => f.error = error,
+        }
+    }
+    if cancel { Next::Close } else { Next::Stay }
 }
 
 fn go(d: RefsDialog) -> Next {

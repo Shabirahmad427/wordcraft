@@ -3253,6 +3253,33 @@ fn insert_icon_places_a_picture_of_the_requested_size_that_saves_and_recolours()
     assert!(s.run("picture.iconColor", &json!({})).is_err());
 }
 
+#[test]
+fn scripted_picture_insertion_survives_following_paragraph_and_typing() {
+    use wordcraft_doc::para::InlineObject;
+
+    let mut s = s();
+    run(&mut s, "text.insert", json!({"text": "before"}));
+    run(&mut s, "text.newParagraph", json!({}));
+    let r = run(&mut s, "insert.picture", json!({"data": crate::cmd::insert::base64_encode(&tiny_png())}));
+    let key = r["media"].as_str().expect("media key").to_owned();
+    run(&mut s, "text.newParagraph", json!({}));
+    run(&mut s, "text.insert", json!({"text": "caption"}));
+
+    let mut image_is_present = false;
+    s.doc.objects_in_reading_order(&mut |object| {
+        image_is_present |= matches!(object, InlineObject::Image { media, .. } if media == &key);
+    });
+    assert!(image_is_present, "typing after a scripted picture insertion must not replace it");
+
+    let bytes = wordcraft_docx::write(&s.doc).unwrap();
+    let reopened = wordcraft_docx::read(&bytes).unwrap();
+    let mut survives_round_trip = false;
+    reopened.objects_in_reading_order(&mut |object| {
+        survives_round_trip |= matches!(object, InlineObject::Image { .. });
+    });
+    assert!(survives_round_trip, "the inserted picture remains in the saved DOCX");
+}
+
 /// Print Markup (#589): `file.printMarkup` or a command's `markup` puts the comments into PDFs
 /// (balloons beside the scaled page) and at the end of HTML, Markdown and text copies.
 #[test]

@@ -1,5 +1,14 @@
 # WordCraft roadmap
 
+## v0.6.1 stabilization — integrity issue follow-up (2026-10-12)
+
+- Reproduced issue #965 with a synthetic CLI sequence and changed image insertion so scripted commands leave the caret after the inserted picture; interactive insertion and clipboard paste continue to select it. Regression verifies the picture survives follow-up typing and DOCX save/reopen.
+- Reproduced issue #966 with a synthetic keep-with-next heading and widow-controlled long paragraph. Release-PDF verification exposed a missing paragraph-after gap in the fit calculation; the lookahead now reserves the two-line minimum plus the effective paragraph gap. A rebuilt CLI PDF and regression verify the heading and body begin on the same page.
+- Fixed issue #916's empty cross-reference UI route by opening a target picker for headings, bookmarks, figures, tables and equations. The form routes insertion through the existing REF/PAGEREF engine command. The arbitrary SEQ field report is not independently verified.
+- Added a Zotero bridge boundary regression for #898; the synthetic field remains balanced through following typing and DOCX round-trip, but the actual desktop plugin sequence remains unverified. Issue #963 remains unresolved pending a safe reproducer; standalone synthetic image and text-direction tests pass.
+- Chart package preservation, embedded-workbook error-bar recovery/round-trip, and academic pagination/recovery regression tests passed. Upstream main remains at `159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0`, with 0 new upstream commits since the v0.6.1 merge. Full CI and hosted checks must be recorded after this stabilization commit is pushed. No Word 365 compatibility claim is made.
+- Detailed issue-by-issue evidence and remaining gaps: [October 12 upstream audit](docs/upstream-audit-2026-10-12.md).
+
 ## Upstream synchronization and integrity audit (2026-10-12)
 
 - Merged upstream `storytold/wordcraft` main at `159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0` (v0.6.1), 181 commits after common base `46d5e99b3e82828f95ec87da92b2e1fc1db03b78`, into fork commit `1d7daa4098e85c9cf928696623ba38868deb8e02`. Backup branch: `backup/pre-upstream-sync-2026-10-12-1d7daa4`; merge commit: `d976573cd452dd821beb90466b7a2cdc7ae34e18`.

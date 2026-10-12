@@ -24,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         CommandSpec::new("insert.coverPage", "Cover Page", "Insert › Pages", cover_page).params(r#"{"title"?: string, "subtitle"?: string, "author"?: string}"#),
         CommandSpec::new("insert.table", "Table", "Insert › Tables", table).params(r#"{"rows": n, "cols": n, "style"?: string}"#),
-        CommandSpec::new("insert.picture", "Pictures", "Insert › Illustrations", picture).params(r#"{"path"?: string, "data"?: base64, "width"?: pt, "alt"?: string}"#),
+        CommandSpec::new("insert.picture", "Pictures", "Insert › Illustrations", picture).params(r#"{"path"?: string, "data"?: base64, "width"?: pt, "alt"?: string, "select"?: bool}"#),
         CommandSpec::new("insert.icon", "Icons", "Insert › Illustrations", icon)
             .params(r#"{"id"?: string (omit to list the library), "color"?: "RRGGBB", "size"?: pt, "query"?: string, "category"?: string}"#),
         CommandSpec::new("insert.shape", "Shapes", "Insert › Illustrations", shape)
@@ -192,12 +192,12 @@ pub(crate) fn picture(s: &mut Session, v: &Value) -> CmdResult {
         s.ui_requests.push(json!({"open": "insertPicture"}));
         return sel_result(s);
     };
-    place_picture(s, bytes, p::f32(v, "width"), p::str(v, "alt").unwrap_or(""))
+    place_picture(s, bytes, p::f32(v, "width"), p::str(v, "alt").unwrap_or(""), p::bool(v, "select").unwrap_or(false))
 }
 
 /// Insert an encoded image at the selection as an inline picture, `width` points wide (default:
 /// its natural size at 96 ppi), never wider than the text column.
-fn place_picture(s: &mut Session, bytes: Vec<u8>, width: Option<f32>, alt: &str) -> CmdResult {
+fn place_picture(s: &mut Session, bytes: Vec<u8>, width: Option<f32>, alt: &str, select: bool) -> CmdResult {
     if bytes.len() > 200 << 20 {
         return Err(CmdError::Failed("image is larger than 200 MB".into()));
     }
@@ -238,7 +238,7 @@ fn place_picture(s: &mut Session, bytes: Vec<u8>, width: Option<f32>, alt: &str)
     let props = s.typing_props();
     let at = delete_selection(s)?;
     let end = s.doc.insert_object(&at, obj, &props)?;
-    s.sel = Selection { anchor: at, focus: end };
+    s.sel = if select { Selection { anchor: at, focus: end } } else { Selection::caret(end) };
     Ok(json!({"media": key, "width": w, "height": h}))
 }
 
@@ -269,7 +269,7 @@ fn icon(s: &mut Session, v: &Value) -> CmdResult {
     if png.is_empty() {
         return Err(CmdError::Failed("couldn't draw the icon".into()));
     }
-    let mut r = place_picture(s, png, Some(size), icon.name)?;
+    let mut r = place_picture(s, png, Some(size), icon.name, true)?;
     r["icon"] = json!(icon.id);
     Ok(r)
 }

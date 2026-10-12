@@ -121,6 +121,26 @@ fn citations_survive_docx_and_zotero_finds_them_again() {
 }
 
 #[test]
+fn zotero_field_inserted_at_document_end_stays_closed_before_following_typing() {
+    let mut z = Z::new("ending", 6);
+    z.begin();
+    let id = z.cite(0, r"{\rtf (Doe, 2020)}");
+    z.ok("Document_complete", json!([1]));
+    let before = z.ok("Field_getText", json!([1, id]));
+
+    z.s.run("text.insert", &json!({"text": ". Next sentence."})).unwrap();
+
+    assert_eq!(z.ok("Field_getText", json!([1, id])), before);
+    assert_eq!(z.ok("Document_cursorInField", json!([1, "ReferenceMark"])), Value::Null);
+    let ranges = z.s.doc.field_ranges(StoryRef::Body);
+    assert_eq!(ranges.len(), 1);
+    assert!(!z.s.doc.has_unbalanced_field_ranges());
+    let bytes = wordcraft_docx::write(&z.s.doc).unwrap();
+    let reopened = wordcraft_docx::read(&bytes).unwrap();
+    assert_eq!(reopened.field_ranges(StoryRef::Body), ranges);
+}
+
+#[test]
 fn bibliography_spans_paragraphs_with_its_style() {
     let mut z = Z::new("Text.", 5);
     z.begin();

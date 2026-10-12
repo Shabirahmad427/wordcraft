@@ -626,6 +626,13 @@ impl WordApp {
         // Ctrl+V's paste event carries it (#584), and its HTML and RTF, which egui's paste event
         // doesn't carry (#687).
         let mut params = params;
+        // The engine default leaves a programmatic caret after the image, so subsequent scripted
+        // typing cannot replace it. An interactive insertion selects the picture for its tools.
+        if id == "insert.picture"
+            && let Some(object) = params.as_object_mut()
+        {
+            object.entry("select").or_insert(json!(true));
+        }
         if let Some(r) = system_clipboard::fill(self, id, &mut params) {
             return r;
         }
@@ -1735,12 +1742,14 @@ pub fn keeps_everything(name: &str) -> bool {
 /// The dialog a user-run command opens when it lacks the input it needs (scripts and agents get
 /// the command's own error or default instead): Select Recipients and Edit Recipient List without
 /// data, Insert Merge Field without a field, Find Recipient without text, the If and Skip
-/// Record If rules (or Rules with no rule at all) without a field, Table Properties without
+/// Record If rules (or Rules with no rule at all) without a field, cross-reference insertion
+/// without a target, Table Properties without
 /// settings, Symbol and Field without a character or code, and Enclose Characters without a shape.
 fn input_dialog(id: &str, params: &Value) -> Option<&'static str> {
     let has = |k: &str| params.get(k).is_some_and(|v| !v.is_null());
     let rule = params.get("rule").and_then(Value::as_str).map(str::to_ascii_uppercase);
     match id {
+        "insert.crossReference" if !has("to") || !has("target") => Some("crossReference"),
         "references.sources" if params.as_object().is_none_or(|params| params.is_empty()) => Some("sourceManager"),
         "mailings.rules" if !has("field") => match rule.as_deref() {
             None | Some("IF") => Some("ruleIf"),
@@ -1924,6 +1933,14 @@ mod tests {
 
     fn app() -> WordApp {
         WordApp::new(Session::new(wordcraft_doc::Document::new()), Services::default())
+    }
+
+    #[test]
+    fn cross_reference_command_opens_target_picker() {
+        let mut app = app();
+        let result = app.run("insert.crossReference", json!({})).unwrap();
+        assert_eq!(result, json!({"pending": "crossReference"}));
+        assert_eq!(app.dialog.as_ref().map(dialogs::Dialog::name), Some("crossReference"));
     }
 
     /// File › Options › Advanced › Animation: the caret's animation is a UI command, kept between
@@ -3976,7 +3993,7 @@ mod tests {
 
     fn insert_picture(a: &mut WordApp, c: [u8; 4]) {
         let data = wordcraft_engine::cmd::insert::base64_encode(&png_bytes(c));
-        a.session.run("insert.picture", &json!({"data": data})).unwrap();
+        a.session.run("insert.picture", &json!({"data": data, "select": true})).unwrap();
     }
 
     fn object_count(a: &mut WordApp) -> usize {

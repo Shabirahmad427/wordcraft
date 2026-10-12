@@ -3174,7 +3174,7 @@ fn place_para_in_flow(ctx: &mut Ctx, pb: &mut PageBuilder, p: &Paragraph, block:
     // next alone moves a paragraph only when it would fit here by itself (Word for Windows): one
     // that doesn't breaks as usual, its last lines going over with the next paragraph.
     if pl.rp.keep_lines || (pl.rp.keep_next && pb.y + pl.height <= pb.bottom + 0.01) {
-        let need = pl.height + if pl.rp.keep_next { next_first_line(ctx, block, width, 0) } else { 0.0 };
+        let need = pl.height + if pl.rp.keep_next { next_first_line(ctx, block, width, 0, pl.rp.space_after) } else { 0.0 };
         // (Against the whole column: balanced columns grow to hold it.)
         if pb.y + need > pb.bottom && !pb.at_top() && need <= pb.uncapped_bottom() - pb.top {
             pb.advance(block, body_top);
@@ -3402,7 +3402,7 @@ fn place_para_in_flow(ctx: &mut Ctx, pb: &mut PageBuilder, p: &Paragraph, block:
 /// The room the paragraphs after `block` need on its page for keep with next: the next one's
 /// first line, or all of it and what it keeps with in turn when it is kept with the next too
 /// (a chain moves together in Word).
-fn next_first_line(ctx: &mut Ctx, block: usize, width: f32, depth: usize) -> f32 {
+fn next_first_line(ctx: &mut Ctx, block: usize, width: f32, depth: usize, preceding_after: f32) -> f32 {
     match ctx.doc.body.get(block + 1).map(|b| &**b) {
         Some(Block::Para(p)) => {
             // Don't advance list counters for a lookahead: lay out without the label.
@@ -3426,10 +3426,22 @@ fn next_first_line(ctx: &mut Ctx, block: usize, width: f32, depth: usize) -> f32
             };
             let _ = rp;
             let pl = para::layout_para(p, &env);
+            // Adjacent paragraph spacing uses the larger positive before/after value. This
+            // gap participates in the kept-together fit check, including the first line.
+            let before = pl.rp.space_before;
+            let gap = if before > 0.0 && preceding_after > 0.0 { before.max(preceding_after) } else { before + preceding_after };
             if pl.rp.keep_next && depth < 8 {
-                pl.rp.space_before + pl.height + pl.rp.space_after + next_first_line(ctx, block + 1, width, depth + 1)
+                gap + pl.height + next_first_line(ctx, block + 1, width, depth + 1, pl.rp.space_after)
             } else {
-                pl.rp.space_before + pl.lines.first().map(|l| l.height).unwrap_or(0.0)
+                // Widow/orphan control moves a paragraph whose first line alone fits to the next
+                // page. A kept predecessor must reserve that two-line minimum too, or it can be
+                // stranded at the bottom while the whole following paragraph advances.
+                let line_need = match (pl.rp.widow_control, pl.lines.first(), pl.lines.get(1)) {
+                    (true, Some(first), Some(second)) => second.top + second.height - first.top,
+                    (_, Some(first), _) => first.height,
+                    _ => 0.0,
+                };
+                gap + line_need
             }
         }
         Some(Block::Table(_)) => 24.0,

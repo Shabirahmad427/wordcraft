@@ -5136,6 +5136,25 @@ fn keep_with_next_moves_a_paragraph_only_when_it_would_fit() {
     assert_eq!(pages(fit - 1, kn.clone(), kn.clone()), [1, 1, 1, 1, 1, 1], "a kept chain moves together");
 }
 
+#[test]
+fn keep_with_next_moves_heading_with_widow_controlled_long_paragraph() {
+    let mut d = Document::new();
+    for i in 1..=25 {
+        let filler = format!("filler {i}");
+        d.body.push(wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text(&filler, Default::default())));
+    }
+    let mut heading = wordcraft_doc::Paragraph::with_text("HEADING", Default::default());
+    heading.props.keep_next = Some(true);
+    d.body.push(wordcraft_doc::para_block(heading));
+    let body = format!("BODYSTART {}", std::iter::repeat_n("body sentence", 60).collect::<Vec<_>>().join(" "));
+    d.body.push(wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text(&body, Default::default())));
+
+    let l = lay(&d);
+    let heading_page = l.caret(&Pos::body(26, 0)).unwrap().page;
+    let body_page = l.caret(&Pos::body(27, 0)).unwrap().page;
+    assert_eq!(heading_page, body_page, "keep-with-next must follow the two-line widow minimum");
+}
+
 /// An empty paragraph that only carries a section break before a continuous section takes no
 /// room, measured in Word for Windows (`plan/word` R21, 10 cases): the text after it follows right
 /// on, and columns balanced above it don't count it (two one-line paragraphs in two columns sit

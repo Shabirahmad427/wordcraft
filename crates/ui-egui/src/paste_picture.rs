@@ -80,7 +80,7 @@ pub(crate) fn paste(app: &mut WordApp) -> Option<Result<Value, String>> {
     let picture = app.services.clipboard_picture.as_ref()?()?;
     let r = match picture {
         ClipboardPicture::Pixels { width, height, rgba } => match png_from_rgba(width, height, rgba) {
-            Ok(png) => app.execute("insert.picture", json!({"data": wordcraft_engine::cmd::insert::base64_encode(&png)})),
+            Ok(png) => app.execute("insert.picture", json!({"data": wordcraft_engine::cmd::insert::base64_encode(&png), "select": true})),
             Err(e) => {
                 log::warn!("clipboard picture: {e}");
                 app.status(e.clone());
@@ -92,7 +92,9 @@ pub(crate) fn paste(app: &mut WordApp) -> Option<Result<Value, String>> {
             app.status(e.clone());
             Err(e)
         }
-        ClipboardPicture::Encoded(bytes) => app.execute("insert.picture", json!({"data": wordcraft_engine::cmd::insert::base64_encode(&bytes)})),
+        ClipboardPicture::Encoded(bytes) => {
+            app.execute("insert.picture", json!({"data": wordcraft_engine::cmd::insert::base64_encode(&bytes), "select": true}))
+        }
         ClipboardPicture::Unreadable(why) => {
             let e = format!("the picture on the clipboard couldn't be read: {why}");
             log::warn!("clipboard picture: {e}");
@@ -112,7 +114,7 @@ pub(crate) fn paste(app: &mut WordApp) -> Option<Result<Value, String>> {
                     app.status(e.clone());
                     Err(e)
                 } else {
-                    app.execute("insert.picture", json!({"path": path.to_string_lossy()}))
+                    app.execute("insert.picture", json!({"path": path.to_string_lossy(), "select": true}))
                 };
                 if r.is_err() {
                     break;
