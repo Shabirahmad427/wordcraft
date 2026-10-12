@@ -122,7 +122,15 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
             "open" => open_page(app, ui),
             "saveAs" => save_as_page(app, ui),
             "info" => info_page(app, ui),
-            "print" => print_page(app, ui),
+            "print" => {
+                if app.services.native_print.is_some() {
+                    print_page(app, ui);
+                } else {
+                    // Keep the asynchronous host print hook for web and legacy desktop hosts;
+                    // the native spooler page above uses the platform discovery/capability API.
+                    crate::print_page::show(app, ui);
+                }
+            }
             "export" => export_page(app, ui),
             "options" => crate::options::page(app, ui),
             _ => home_page(app, ui),
@@ -374,7 +382,7 @@ fn export_page(app: &mut WordApp, ui: &mut Ui) {
 }
 
 fn print_page(app: &mut WordApp, ui: &mut Ui) {
-    use crate::printing::{Duplex, NativePrintOptions, parse_page_range};
+    use crate::printing::{NativeDuplex as Duplex, NativePrintOptions, parse_page_range};
     use std::collections::BTreeSet;
 
     heading(ui, "Print");

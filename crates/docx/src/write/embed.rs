@@ -13,9 +13,7 @@ use wordcraft_doc::graphic::Embedded;
 use wordcraft_doc::para::Float;
 
 use super::PartRels;
-use crate::package::{
-    CUSTOM_XML_ROOTS, EMBEDDED_PARTS, EmbeddedManifest, MAX_EMBEDDED_PARTS, MAX_EMBEDDED_RELS, VBA_PROJECT_PART, VBA_RELATED, rel_is, relative, rt,
-};
+use crate::package::{EMBEDDED_PARTS, EmbeddedManifest, MAX_EMBEDDED_PARTS, VBA_PROJECT_PART, VBA_RELATED, relative, rt};
 use crate::units::{MAX_LEN_PT, emu, int};
 use crate::xml::{self, El, MAX_DEPTH};
 
@@ -175,25 +173,6 @@ impl<'d> EmbedWriter<'d> {
     /// Can part `name` be written (bytes and manifest entry both kept)?
     fn available(&self, name: &str) -> bool {
         self.manifest.parts.contains_key(name) && self.passthrough.contains_key(name)
-    }
-
-    /// Reattach implicit custom XML roots, sharing their kept parts across both owners.
-    pub fn custom_xml_rels(&mut self, owner: &str, rels: &mut PartRels) {
-        let Some(roots) = self.passthrough.get(CUSTOM_XML_ROOTS).cloned() else { return };
-        let mut memo = std::mem::take(&mut self.first);
-        let mut written = Vec::new();
-        for line in String::from_utf8_lossy(&roots).lines().take(MAX_EMBEDDED_RELS * 2) {
-            let fields: Vec<&str> = line.split('\t').collect();
-            let [source, kind, target] = fields.as_slice() else { continue };
-            if *source != owner || !rel_is(kind, rt::CUSTOM_XML) {
-                continue;
-            }
-            if let Some(name) = self.copy_tree(target, &mut memo, &mut written) {
-                let source_part = if owner == "P" { "" } else { STORY_PART };
-                rels.add(kind, &relative(source_part, &name), false);
-            }
-        }
-        self.first = memo;
     }
 
     /// What copying the parts reached from `roots` costs against the copy budget.

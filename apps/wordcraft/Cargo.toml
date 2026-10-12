@@ -65,8 +65,6 @@ windows = { version = "0.62", features = ["UI_ViewManagement", "System_UserProfi
 # The clipboard's "Rich Text Format" and the names of its formats (#687, #833), which arboard
 # doesn't read. Already in the build through arboard, at this version.
 clipboard-win = { version = "5.4", features = ["std"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
 # Windows' PrintTicket/PrintCapabilities, XPS print pipeline and system PDF renderer. Keep its
 # optional PDFium feature disabled: printing uses Windows.Data.Pdf instead of a bundled engine.
 winprint = { version = "0.2.1", default-features = false }

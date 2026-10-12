@@ -923,6 +923,34 @@ impl Reader<'_> {
         let gd = c.child("a:graphic").and_then(|g| g.child("a:graphicData"))?;
         // Checked by URI before the blip search: a diagram's data can hold a blip further down.
         let uri = gd.attr("uri").unwrap_or("");
+        if uri == INK_URI {
+            let Some(content) = gd.els().find(|element| element.local() == "contentPart") else {
+                self.preservation_error = Some(crate::DocxError::Preservation("native ink is missing its content part".into()));
+                return None;
+            };
+            let Some(part) = content.attr("r:id").and_then(|id| super::part_of(rels, id, INK_REL)) else {
+                self.preservation_error = Some(crate::DocxError::Preservation("native ink has no valid custom XML relationship".into()));
+                return None;
+            };
+            let pkg = self.pkg;
+            if self.content_types.get_or_insert_with(|| ContentTypes::read(pkg)).of(&part) != Some("application/inkml+xml") {
+                return None;
+            }
+            let Some(source) = c.child("a:graphic").and_then(|graphic| self.keep_embedded(graphic, rels, &[])) else {
+                self.preservation_error = Some(crate::DocxError::Preservation("native ink dependency graph is missing, unsafe, or oversized".into()));
+                return None;
+            };
+            float.set_spin(xfrm_spin(content.els().find(|element| element.local() == "xfrm")));
+            let (px, py) = float.spin_pad(w, h);
+            for (effect, padding) in float.effect.iter_mut().zip([px, py, px, py]) {
+                *effect = (*effect - padding).clamp(0.0, 1584.0);
+            }
+            // InkML remains opaque. The placeholder makes unsupported preview rendering visible
+            // without approximating the strokes or changing their source data.
+            let items = vec![GraphicItem::Image { rect: [0.0, 0.0, w, h], media: String::new() }];
+            let graphic = Arc::new(Graphic { kind: GraphicKind::Ink, items, w, h, source: Some(source), ..Default::default() });
+            return Some(InlineObject::Graphic { w, h, alt, float, graphic });
+        }
         let graphic_kind = if uri.ends_with("/chart") && gd.child("c:chart").is_some() {
             Some(GraphicKind::Chart)
         } else if uri.ends_with("/diagram") {
@@ -939,6 +967,18 @@ impl Reader<'_> {
                     .is_some_and(|rel| !rel.external && super::rel_is(&rel.kind, rt::CHART));
                 if !valid_chart_relation {
                     self.preservation_error = Some(crate::DocxError::Preservation("chart reference has no chart relationship".into()));
+                    return None;
+                }
+            }
+            if kind == GraphicKind::Ink {
+                let valid_ink_relation = gd
+                    .els()
+                    .find(|element| element.local() == "contentPart")
+                    .and_then(|content| content.attr("r:id"))
+                    .and_then(|id| rels.by_id(id))
+                    .is_some_and(|rel| !rel.external && super::rel_is(&rel.kind, INK_REL));
+                if !valid_ink_relation {
+                    self.preservation_error = Some(crate::DocxError::Preservation("native ink has no valid custom XML relationship".into()));
                     return None;
                 }
             }

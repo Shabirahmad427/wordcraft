@@ -104,8 +104,8 @@ fn schedule_macos_terminate(app: &WordApp, key_file: Option<&control_server::Key
         return;
     }
     log::info!("window close: quitting");
-    // This path can bypass on_exit. Join the owned workers before termination and cleanup.
-    print::finish_pending_jobs();
+    // This path can bypass on_exit. Current printer backends submit synchronously, so there are
+    // no owned print workers to join before termination and cleanup.
     save_prefs(app);
     if let Some(key_file) = key_file {
         key_file.remove();
@@ -201,7 +201,7 @@ fn save_prefs(app: &WordApp) {
 }
 
 /// Native file dialogs, shown without blocking the window (`file_dialogs`, #94).
-fn services(file_dialog: file_dialogs::Hook) -> Services {
+fn services(file_dialog: file_dialogs::Hook, ctx: &egui::Context) -> Services {
     Services {
         file_dialog: Some(file_dialog),
         print: Some(print::hook()),
@@ -209,7 +209,13 @@ fn services(file_dialog: file_dialogs::Hook) -> Services {
         native_print: Some(Box::new(print::CupsBackend)),
         #[cfg(target_os = "windows")]
         native_print: Some(Box::new(print::WindowsPrintBackend)),
-        clipboard_picture: Some(Box::new(clipboard_picture)),
+        clipboard_picture: Some(Box::new(clipboard::picture)),
+        clipboard_text: Some(Box::new(clipboard::text)),
+        clipboard_html: Some(Box::new(clipboard::html)),
+        clipboard_rtf: Some(Box::new(clipboard::rtf)),
+        clipboard_formats: Some(Box::new(clipboard::formats)),
+        make_default_app: default_apps::hook(),
+        animations_enabled: Some(animations::hook(ctx)),
         ..Default::default()
     }
 }

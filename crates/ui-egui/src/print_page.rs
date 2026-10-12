@@ -204,6 +204,7 @@ fn preview(app: &mut WordApp, ui: &mut Ui, lay: &DocLayout, total: usize) {
     let ctx = ui.ctx().clone();
     let width = 340.0;
     let page = app.ui.print.preview;
+    ui.label(egui::RichText::new(tl!("Print preview")).font(medium(15.0)));
     let aspect = lay.pages.get(page).map_or(11.0 / 8.5, |p| p.h.max(1.0) / p.w.max(1.0)).clamp(0.2, 5.0);
     let (r, _) = ui.allocate_exact_size(vec2(width, width * aspect), Sense::hover());
     ui.painter().rect_filled(r.translate(vec2(2.0, 3.0)), 0.0, t.page_shadow);

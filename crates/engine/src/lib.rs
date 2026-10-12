@@ -13,6 +13,7 @@ pub mod io;
 mod io_ext;
 pub mod keymap;
 pub mod math_gallery;
+pub mod print;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod recovery;
 pub mod ribbon;
@@ -27,7 +28,10 @@ use serde_json::Value;
 pub use io::Password;
 pub use keymap::KeyMap;
 pub use ribbon::RibbonLayout;
-pub use session::{ColumnBlock, EditSnapshot, FindState, MathEdit, Prefs, Selection, Session, SourcePackage, ViewState};
+pub use session::{
+    CellRange, ColumnBlock, EditSnapshot, FindState, MathEdit, Prefs, Selection, Session, SourcePackage, UNDO_LIST_MAX, ViewState, blank_document,
+    set_system_locale,
+};
 pub use wordcraft_doc as doc;
 pub use wordcraft_geom::Region;
 pub use wordcraft_layout as layout;

@@ -62,6 +62,7 @@ pub mod options;
 pub mod panes;
 pub mod paste_picture;
 pub mod previews;
+pub mod print_page;
 pub mod printing;
 pub mod read_aloud;
 pub mod recovery;
@@ -348,7 +349,7 @@ pub struct WordApp {
     pub ui: UiState,
     pub services: Services,
     pub printing: printing::State,
-    print_feedback_seen: Option<printing::Feedback>,
+    pub(crate) print_feedback_seen: Option<printing::Feedback>,
     pub canvas: canvas::CanvasState,
     /// Content control frames, check boxes and lists on the page.
     pub controls: content_controls::ControlUi,
@@ -1183,7 +1184,14 @@ impl WordApp {
 
     /// Submit the selected print job; the implementation lives beside its localized controls.
     fn print_to_system(&mut self, p: &Value) -> Result<Value, String> {
-        printing::submit(self, p)
+        match printing::submit(self, p) {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                let message = i18n::fmt(tl!("Print failed: {error}"), &[("error", &error)]);
+                self.status(message);
+                Err(error)
+            }
+        }
     }
 
     /// File › Options › General › Make WordCraft the default…: hand over to the host's
@@ -2961,7 +2969,8 @@ mod tests {
         a.run("text.insert", json!({"text": "Unsaved edit"})).unwrap();
         let expected_pages = a.session.export_layout().pages.len();
         let document_before_print = a.session.doc.clone();
-        a.print_preview.page_range = "1,3".into();
+        a.ui.print.range = "custom".into();
+        a.ui.print.pages = "1,3".into();
         a.services.print = Some(Box::new(move |bytes| {
             seen.borrow_mut().push(bytes.to_vec());
             Ok(())
@@ -2981,7 +2990,7 @@ mod tests {
         assert!(h.state().ui.backstage && h.state().ui.backstage_page == "print", "the Print page is open");
         assert!(h.query_by_label("Print preview").is_some());
         assert!(h.query_by_label("Pages").is_some());
-        h.get_by_role_and_label(egui::accesskit::Role::Button, "Print").click();
+        h.query_all_by_label("Print").last().expect("the Print page has a submit button").click();
         h.step();
         assert_eq!(printed.borrow().len(), 1, "the selected document pages were sent once");
         let pdf = &printed.borrow()[0];
@@ -2996,7 +3005,9 @@ mod tests {
 
     #[test]
     fn print_preview_passes_copies_duplex_and_cancel_to_the_host_backend() {
-        use crate::printing::{Duplex, NativePrintBackend, NativePrintOptions, PrintJob, Printer, PrinterCapabilities};
+        use crate::printing::{
+            NativeDuplex as Duplex, NativePrintBackend, NativePrintOptions, NativePrinter as Printer, PrintJob, PrinterCapabilities,
+        };
         use egui_kittest::kittest::Queryable;
 
         #[derive(Clone)]
@@ -3045,7 +3056,7 @@ mod tests {
             harness.step();
         }
         harness.state_mut().print_preview.duplex = Duplex::LongEdge;
-        harness.get_by_role_and_label(egui::accesskit::Role::Button, "Print").click();
+        harness.query_all_by_label("Print").last().expect("the Print page has a submit button").click();
         harness.step();
         harness.step();
         let Some((pdf, options)) = submitted.borrow().clone() else { panic!("the native print backend received no PDF") };

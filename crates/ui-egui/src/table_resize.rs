@@ -1,228 +1,626 @@
-//! Table borders resize through engine commands, once on release (one undo step).
+//! Resizing tables with the mouse, like Word: over a column border (or the left edge) the pointer
+//! turns into a column-resize arrow, over a row's bottom border a row-resize arrow; over a table
+//! a small handle shows past its bottom-right corner. Dragging shows a dashed preview of the new border
+//! (or outline); releasing runs `table.resizeDrag` with page coordinates, one undo step. Shift
+//! while releasing a column border changes only the column on its left; a double-click on a
+//! column border fits the column to its contents (`table.fitColumn`). The geometry decisions
+//! are the engine's (`cmd::table_resize`).
 
-use egui::{Pos2, Rect, Ui};
+use egui::{Pos2, Rect, Stroke, Ui, pos2};
 use serde_json::json;
-use wordcraft_doc::Pos;
-use wordcraft_layout::{DocLayout, Placed};
+use wordcraft_engine::cmd::table_resize::{self, Edge, Plan, ResizeTarget, Share};
+use wordcraft_layout::DocLayout;
 
 use crate::WordApp;
+use crate::theme::Tokens;
 
-pub(crate) struct TableDrag {
-    pos: Pos,
-    start: Pos2,
-    size: f32,
-    column: bool,
-    scale: f32,
-    document: u64,
-    revision: u64,
-    table_width: f32,
+/// How near (screen pixels) the pointer has to be to a border to grab it.
+pub(crate) const REACH_PX: f32 = 4.0;
+
+/// A table border (or the handle) being dragged.
+#[derive(Clone, Debug)]
+pub(crate) struct ResizeDrag {
+    page: usize,
+    from: (f32, f32),
+    to: (f32, f32),
+    target: ResizeTarget,
+    /// Started on a ruler marker, where Shift works the other way round, as on Word's ruler:
+    /// without it a column border changes only the column on its left (the columns right of it
+    /// move along), with it the neighbour makes up the difference.
+    ruler: bool,
 }
 
-fn grab(app: &WordApp, layout: &DocLayout, pages: &[Rect], scale: f32, at: Pos2) -> Option<TableDrag> {
-    if !scale.is_finite() || scale <= 0.0 || app.session.doc.settings.protection.is_some() {
-        return None;
-    }
-    for (page, screen) in layout.pages.iter().zip(pages) {
-        for item in &page.items {
-            let Placed::Cell { rect, table, row, cell, story } = item else { continue };
-            if *story != app.session.sel.focus.story {
-                continue;
-            }
-            let right = screen.min.x + rect.right() * scale;
-            let bottom = screen.min.y + rect.bottom() * scale;
-            let left = screen.min.x + rect.x * scale;
-            let top = screen.min.y + rect.y * scale;
-            let column = (at.x - right).abs() <= 4.0 && at.y >= top + 4.0 && at.y <= bottom - 4.0;
-            let row_border = (at.y - bottom).abs() <= 4.0 && at.x >= left + 4.0 && at.x <= right - 4.0;
-            if !column && !row_border {
-                continue;
-            }
-            let t = app.session.doc.table(*story, table)?;
-            let cl = t.rows.get(*row)?.cells.get(*cell)?;
-            // A spanned cell has no individual column border; its underlying columns can
-            // still be resized from a row with unmerged cells.
-            if column && cl.props.span > 1 {
-                continue;
-            }
-            let mut prefix = table.0.clone();
-            prefix.push(u32::try_from(*row).ok()?);
-            prefix.push(u32::try_from(*cell).ok()?);
-            let path = app.session.doc.para_paths(*story).into_iter().find(|p| p.0.starts_with(&prefix))?;
-            // Skip split row fragments: their visible height isn't the whole row's height.
-            if !column
-                && layout.pages.iter().any(|p| {
-                    !std::ptr::eq(p, page)
-                        && p.items
-                            .iter()
-                            .any(|it| matches!(it, Placed::Cell { table: other, row: r, story: st, .. } if other == table && r == row && st == story))
-                })
-            {
-                continue;
-            }
-            return Some(TableDrag {
-                pos: Pos { story: *story, path, off: 0 },
-                start: at,
-                size: if column { rect.w } else { rect.h },
-                column,
-                scale,
-                document: app.session.document_id(),
-                revision: app.session.rev(),
-                table_width: page
-                    .items
-                    .iter()
-                    .filter_map(|it| match it {
-                        Placed::Cell { rect, table: other, row: r, story: st, .. } if other == table && r == row && st == story => Some(rect.w),
-                        _ => None,
-                    })
-                    .sum(),
-            });
+impl ResizeDrag {
+    /// Who makes up a column border's move, by the keys held now: Ctrl the columns on the
+    /// right; Shift nobody on the page but the neighbour on a ruler marker, which works the other
+    /// way round; else the neighbour on the page and nobody on the ruler.
+    fn share(&self, ctx: &egui::Context) -> Share {
+        let keys = ctx.input(|i| i.modifiers);
+        if keys.command {
+            Share::Proportional
+        } else if keys.shift != self.ruler {
+            Share::LeftOnly
+        } else {
+            Share::Neighbour
         }
     }
-    None
+
+    /// What the drag so far makes of the table, with the keys held now.
+    fn plan(&self, ctx: &egui::Context) -> Plan {
+        self.target.plan(self.to.0 - self.from.0, self.to.1 - self.from.1, self.share(ctx))
+    }
+
+    /// Where the dragged column border (page x) or row bottom (page y) is now; `None` for the
+    /// handle.
+    fn line_now(&self, plan: &Plan) -> Option<f32> {
+        match self.target.edge {
+            Edge::Column(i) => Some(self.target.planned_x(plan, plan.cells.first().map(|(r, _)| *r), i)),
+            Edge::Row(r) => planned_bottom(&self.target, plan, r),
+            Edge::Corner => None,
+        }
+    }
 }
 
-pub(crate) fn cursor(app: &WordApp, layout: &DocLayout, pages: &[Rect], scale: f32, at: Pos2) -> Option<egui::CursorIcon> {
-    let column = app.canvas.table_drag.as_ref().map(|d| d.column).or_else(|| grab(app, layout, pages, scale, at).map(|d| d.column))?;
-    Some(if column { egui::CursorIcon::ResizeColumn } else { egui::CursorIcon::ResizeRow })
+/// Page y of the bottom of `tg`'s row `row` with `plan` applied (rows above it that change move
+/// it too); `None` when the row isn't drawn on the page.
+fn planned_bottom(tg: &ResizeTarget, plan: &Plan, row: usize) -> Option<f32> {
+    let bottom = tg.rows.iter().find(|r| r.row == row)?.bottom;
+    let grown: f32 = tg
+        .rows
+        .iter()
+        .filter(|r| r.row <= row)
+        .filter_map(|r| plan.heights.iter().find(|(i, _)| *i == r.row).map(|(_, h)| h - (r.bottom - r.top)))
+        .sum();
+    Some(bottom + grown)
 }
 
-pub(crate) fn pointer(app: &mut WordApp, ui: &Ui, resp: &egui::Response, layout: &DocLayout, pages: &[Rect], scale: f32) -> bool {
-    if let Some(d) = app.canvas.table_drag.take() {
-        if d.document != app.session.document_id() || d.revision != app.session.rev() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+/// Screen pixels per page point on `page`.
+pub(crate) fn page_scale(rects: &[Rect], layout: &DocLayout, scale: f32, page: usize) -> Option<f32> {
+    let r = rects.get(page)?;
+    let sc = layout.pages.get(page).filter(|pg| pg.w > 0.0).map_or(scale, |pg| r.width() / pg.w);
+    (sc > 0.0 && sc.is_finite()).then_some(sc)
+}
+
+pub(crate) fn to_screen(rects: &[Rect], layout: &DocLayout, scale: f32, page: usize, x: f32, y: f32) -> Option<Pos2> {
+    let r = rects.get(page)?;
+    let sc = page_scale(rects, layout, scale, page)?;
+    Some(pos2(r.min.x + x * sc, r.min.y + y * sc))
+}
+
+/// Whether table resizing is in reach: not while a pen, the eraser, an object drag, a text drag
+/// or a press on a table's selection area or move handle (`table_mouse`) owns the pointer, nor
+/// while editing a header or footer from the body (or back).
+pub(crate) fn available(app: &WordApp) -> bool {
+    app.canvas.table_tool.is_none()
+        && app.canvas.table_drag.is_none()
+        && app.canvas.ink.is_none()
+        && app.canvas.obj_drag.is_none()
+        && !app.canvas.drag_selecting()
+        && crate::ink::cursor(app).is_none()
+}
+
+/// The border or handle under screen point `p`, if any.
+fn target_at(app: &WordApp, layout: &DocLayout, rects: &[Rect], scale: f32, p: Pos2) -> Option<(usize, f32, f32, ResizeTarget)> {
+    let (page, x, y) = crate::canvas::page_at(rects, layout, scale, p)?;
+    let sc = page_scale(rects, layout, scale, page)?;
+    let t = table_resize::resize_target(layout, &app.session.doc, page, x, y, REACH_PX / sc)?;
+    Some((page, x, y, t))
+}
+
+/// Mouse input: a press on a border starts a drag (in the selected cells' rows only, when it's a
+/// border of theirs), moving updates it, releasing applies it with the keys held then (Ctrl: the
+/// columns right of the border share the change). `false` (nothing done) when the pointer isn't
+/// on a border, so the caret logic runs.
+pub fn pointer(app: &mut WordApp, ui: &Ui, resp: &egui::Response, rects: &[Rect], layout: &DocLayout, scale: f32) -> bool {
+    let latest = ui.input(|i| i.pointer.latest_pos());
+    if let Some(mut d) = app.canvas.table_resize.take() {
+        if let Some(p) = latest
+            && let Some(r) = rects.get(d.page)
+            && let Some(sc) = page_scale(rects, layout, scale, d.page)
+        {
+            d.to = ((p.x - r.min.x) / sc, (p.y - r.min.y) / sc);
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             return true;
         }
-        let Some(at) = ui.input(|i| i.pointer.latest_pos()) else { return true };
-        let delta = if d.column { at.x - d.start.x } else { at.y - d.start.y };
         if ui.input(|i| i.pointer.primary_down()) {
-            if let Some(rect) = app.canvas.canvas_rect {
-                let line = if d.column {
-                    [egui::pos2(at.x, rect.top()), egui::pos2(at.x, rect.bottom())]
-                } else {
-                    [egui::pos2(rect.left(), at.y), egui::pos2(rect.right(), at.y)]
-                };
-                ui.painter().line_segment(line, egui::Stroke::new(1.0, crate::theme::Tokens::get(ui.ctx()).accent));
+            app.canvas.table_resize = Some(d);
+            return true;
+        }
+        // A click without a move changes nothing; a double-click on a column border fits the
+        // column left of it to its contents.
+        if (d.to.0 - d.from.0).abs() < 0.5 && (d.to.1 - d.from.1).abs() < 0.5 {
+            if resp.double_clicked() && matches!(d.target.edge, Edge::Column(_)) {
+                let sc = page_scale(rects, layout, scale, d.page).unwrap_or(1.0);
+                let params = json!({"page": d.page, "x": d.from.0, "y": d.from.1, "reach": REACH_PX / sc});
+                if let Err(e) = app.run("table.fitColumn", params) {
+                    app.status(e);
+                }
             }
-            app.canvas.table_drag = Some(d);
-        } else if delta.abs() >= 1.0 && delta.is_finite() {
-            app.session.sel = wordcraft_engine::Selection::caret(d.pos);
-            let size = (d.size + delta / d.scale).clamp(if d.column { 6.0 } else { 1.0 }, 1584.0);
-            let (command, params) = if d.column {
-                ("table.columnWidth", json!({"width": size, "tableWidth": d.table_width}))
-            } else {
-                ("table.rowHeight", json!({"height": size}))
-            };
-            let _ = app.run(command, params);
+            return true;
+        }
+        let share = d.share(ui.ctx());
+        let sc = page_scale(rects, layout, scale, d.page).unwrap_or(1.0);
+        let params = json!({
+            "page": d.page, "x": d.from.0, "y": d.from.1, "toX": d.to.0, "toY": d.to.1,
+            "shift": share == Share::LeftOnly, "ctrl": share == Share::Proportional, "reach": REACH_PX / sc,
+        });
+        if let Err(e) = app.run("table.resizeDrag", params) {
+            app.status(e);
         }
         return true;
     }
-    if ui.input(|i| i.pointer.primary_pressed())
-        && resp.contains_pointer()
-        && let Some(at) = ui.input(|i| i.pointer.latest_pos())
-        && let Some(d) = grab(app, layout, pages, scale, at)
-    {
-        app.canvas.table_drag = Some(d);
-        return true;
+    if !available(app) || !(ui.input(|i| i.pointer.primary_pressed()) && resp.contains_pointer()) {
+        return false;
     }
-    false
+    let Some(p) = latest else { return false };
+    let Some((page, x, y, mut target)) = target_at(app, layout, rects, scale, p) else { return false };
+    target.limit_to_selection(&app.session, y);
+    app.canvas.table_resize = Some(ResizeDrag { page, from: (x, y), to: (x, y), target, ruler: false });
+    true
+}
+
+/// Starts dragging the table border at page point (`x`, `y`) on `page` from a ruler marker: it
+/// goes on as a drag on the page (`pointer`: dashed preview, Escape cancels, one undo step), but
+/// a column border changes only the column on its left.
+pub(crate) fn grab(app: &mut WordApp, layout: &DocLayout, page: usize, x: f32, y: f32) {
+    if !available(app) {
+        return;
+    }
+    if let Some(mut target) = table_resize::resize_target(layout, &app.session.doc, page, x, y, 1.0) {
+        target.limit_to_selection(&app.session, y);
+        app.canvas.table_resize = Some(ResizeDrag { page, from: (x, y), to: (x, y), target, ruler: true });
+    }
+}
+
+/// The drag of one of the caret's table's borders on `page`, if one is going on.
+fn caret_drag(app: &WordApp, page: usize) -> Option<&ResizeDrag> {
+    let caret = app.session.sel.focus.path.cell().map(|(tp, _, _)| tp);
+    app.canvas
+        .table_resize
+        .as_ref()
+        .filter(|d| d.page == page && d.target.story == app.session.sel.focus.story && caret.as_ref() == Some(&d.target.table))
+}
+
+/// Whether the rulers show the caret's table's column widths: Alt is held while one of its
+/// column borders (or its left edge) is dragged on `page`, as in Word.
+pub(crate) fn measuring(app: &WordApp, ctx: &egui::Context, page: usize) -> bool {
+    ctx.input(|i| i.modifiers.alt) && caret_drag(app, page).is_some_and(|d| matches!(d.target.edge, Edge::Column(_)))
+}
+
+/// Where the caret's table's column border drawn at page x `at` (`column`; in the caret's row),
+/// or row bottom drawn at page y `at`, is while one of its borders is dragged on `page`: the
+/// rulers' markers follow the drag.
+pub(crate) fn moved(app: &WordApp, ctx: &egui::Context, page: usize, column: bool, at: f32) -> f32 {
+    let Some(d) = caret_drag(app, page) else { return at };
+    let (tg, plan) = (&d.target, d.plan(ctx));
+    let near = |v: f32| (v - at).abs() < 0.5;
+    if column {
+        let row = app.session.sel.focus.path.cell().map(|(_, r, _)| r);
+        tg.cols.iter().position(|x| near(*x)).map_or(at, |line| tg.planned_x(&plan, row, line))
+    } else {
+        tg.rows.iter().find(|r| near(r.bottom)).and_then(|r| planned_bottom(tg, &plan, r.row)).unwrap_or(at)
+    }
+}
+
+/// The resize arrow over a border or the handle, and while dragging.
+pub fn cursor(app: &WordApp, ui: &Ui, resp: &egui::Response, layout: &DocLayout, rects: &[Rect], scale: f32) {
+    let edge = match &app.canvas.table_resize {
+        Some(d) => Some(d.target.edge),
+        None if resp.hovered() && available(app) => {
+            ui.input(|i| i.pointer.latest_pos()).and_then(|p| target_at(app, layout, rects, scale, p)).map(|(_, _, _, t)| t.edge)
+        }
+        None => None,
+    };
+    let icon = match edge {
+        Some(Edge::Column(_)) => egui::CursorIcon::ResizeColumn,
+        Some(Edge::Row(_)) => egui::CursorIcon::ResizeRow,
+        Some(Edge::Corner) => egui::CursorIcon::ResizeNwSe,
+        None => return,
+    };
+    ui.ctx().set_cursor_icon(icon);
+}
+
+/// The handle past the bottom-right corner of the table under the pointer, and while dragging,
+/// a dashed preview of the new border or outline.
+pub fn paint(app: &WordApp, painter: &egui::Painter, t: &Tokens, layout: &DocLayout, rects: &[Rect], scale: f32) {
+    let s = |page: usize, x: f32, y: f32| to_screen(rects, layout, scale, page, x, y);
+    let dash = Stroke::new(1.0, t.text);
+    if let Some(d) = &app.canvas.table_resize {
+        let tg = &d.target;
+        let plan = d.plan(painter.ctx());
+        let (left, top) = (tg.left(), tg.top());
+        let right = plan.widths.as_ref().map_or(tg.right(), |w| left + w.iter().sum::<f32>());
+        let bottom = top + tg.rows.iter().map(|r| plan.heights.iter().find(|(i, _)| *i == r.row).map_or(r.bottom - r.top, |(_, h)| *h)).sum::<f32>();
+        let line = |a: Option<Pos2>, b: Option<Pos2>| {
+            if let (Some(a), Some(b)) = (a, b) {
+                painter.extend(egui::Shape::dashed_line(&[a, b], dash, 3.0, 3.0));
+            }
+        };
+        // The dragged column border's x, or row bottom's y.
+        let at = d.line_now(&plan).unwrap_or_default();
+        match tg.edge {
+            Edge::Column(_) => {
+                // Down the rows it moves in (the selected cells'), else the whole table.
+                let rows: Vec<_> = tg.rows.iter().filter(|r| plan.cells.is_empty() || plan.cells.iter().any(|(c, _)| *c == r.row)).collect();
+                let (y0, y1) =
+                    (rows.iter().map(|r| r.top).fold(f32::INFINITY, f32::min), rows.iter().map(|r| r.bottom).fold(f32::NEG_INFINITY, f32::max));
+                if y0 <= y1 {
+                    line(s(d.page, at, y0), s(d.page, at, y1));
+                }
+            }
+            Edge::Row(_) => line(s(d.page, left, at), s(d.page, tg.right(), at)),
+            Edge::Corner => {
+                if let (Some(a), Some(b)) = (s(d.page, left, top), s(d.page, right, bottom)) {
+                    let r = Rect::from_two_pos(a, b);
+                    let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+                    painter.extend(egui::Shape::dashed_line(&pts, dash, 3.0, 3.0));
+                }
+            }
+        }
+        return;
+    }
+    if !available(app) {
+        return;
+    }
+    // The handle shows while the pointer is over the table (or on the handle itself).
+    let Some(p) = painter.ctx().input(|i| i.pointer.hover_pos()) else { return };
+    let Some((page, x, y)) = crate::canvas::page_at(rects, layout, scale, p) else { return };
+    let Some(sc) = page_scale(rects, layout, scale, page) else { return };
+    let Some(tg) = table_resize::table_under(layout, &app.session.doc, page, x, y, REACH_PX / sc) else { return };
+    let h = tg.handle();
+    if let (Some(a), Some(b)) = (s(page, h.x, h.y), s(page, h.right(), h.bottom())) {
+        let r = Rect::from_two_pos(a, b);
+        painter.rect_filled(r, 0.0, egui::Color32::WHITE);
+        painter.rect_stroke(r, 0.0, Stroke::new(1.0, t.text_dim), egui::StrokeKind::Inside);
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::Services;
-    use wordcraft_engine::Session;
 
-    fn frame(ctx: &egui::Context, app: &mut WordApp, events: Vec<egui::Event>) {
-        let input = egui::RawInput { events, screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1440.0, 900.0))), ..Default::default() };
-        ctx.run_ui(input, |ui| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        })
-        .drop_without_applying_deltas();
-    }
-
-    fn button(pos: Pos2, pressed: bool) -> egui::Event {
-        egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE }
-    }
-
+    /// Screen ↔ page conversion survives a page list that doesn't match the layout.
     #[test]
-    fn border_drags_resize_rows_and_columns_once_and_can_be_cancelled() {
-        for column in [true, false] {
-            let ctx = egui::Context::default();
-            let mut app = WordApp::new(Session::new(wordcraft_doc::Document::new()), Services::default());
-            app.run("insert.table", json!({"rows": 2, "cols": 2})).unwrap();
-            for _ in 0..4 {
-                frame(&ctx, &mut app, Vec::new());
-            }
-            let l = app.session.layout();
-            let (rect, table) = l
-                .pages
-                .iter()
-                .flat_map(|p| &p.items)
-                .find_map(|it| match it {
-                    Placed::Cell { rect, table, row: 0, cell: 0, .. } => Some((*rect, table.clone())),
-                    _ => None,
-                })
-                .unwrap();
-            let page = app.canvas.page_rects[0];
-            let scale = app.canvas.scale;
-            let start = if column {
-                egui::pos2(page.min.x + rect.right() * scale, page.min.y + (rect.y + rect.h / 2.0) * scale)
-            } else {
-                egui::pos2(page.min.x + (rect.x + rect.w / 2.0) * scale, page.min.y + rect.bottom() * scale)
-            };
-            let end = start + if column { egui::vec2(30.0 * scale, 0.0) } else { egui::vec2(0.0, 30.0 * scale) };
-            let before = app.session.doc.table(wordcraft_doc::StoryRef::Body, &table).unwrap().clone();
-            let undo = app.session.undo_labels().len();
-            frame(&ctx, &mut app, vec![egui::Event::PointerMoved(start)]);
-            frame(&ctx, &mut app, vec![button(start, true)]);
-            assert!(app.canvas.table_drag.is_some(), "border owns the press");
-            for _ in 0..3 {
-                frame(&ctx, &mut app, vec![egui::Event::PointerMoved(end)]);
-            }
-            assert_eq!(app.session.undo_labels().len(), undo, "moving doesn't edit or accumulate deltas");
-            frame(&ctx, &mut app, vec![button(end, false)]);
-            assert!(app.canvas.table_drag.is_none());
-            assert_eq!(app.session.undo_labels().len(), undo + 1, "the entire drag is one edit");
-            let t = app.session.doc.table(wordcraft_doc::StoryRef::Body, &table).unwrap();
-            if column {
-                assert!((t.grid[0] - (rect.w + 30.0)).abs() < 0.1);
-            } else {
-                assert!((t.rows[0].props.height.unwrap() - (rect.h + 30.0)).abs() < 0.1);
-            }
-            let shown = app
-                .session
-                .layout()
-                .pages
-                .iter()
-                .flat_map(|p| &p.items)
-                .find_map(|it| match it {
-                    Placed::Cell { rect, row: 0, cell: 0, .. } => Some(*rect),
-                    _ => None,
-                })
-                .unwrap();
-            let difference = if column { shown.w - rect.w } else { shown.h - rect.h };
-            assert!(
-                (difference - 30.0).abs() < if column { 0.1 } else { 1.0 },
-                "layout follows the drag: column {column}, before {rect:?}, after {shown:?}, delta {difference}"
-            );
-            app.run("edit.undo", json!({})).unwrap();
-            let t = app.session.doc.table(wordcraft_doc::StoryRef::Body, &table).unwrap();
-            assert_eq!(t.grid, before.grid);
-            assert_eq!(t.rows[0].props.height, before.rows[0].props.height);
-            for _ in 0..3 {
-                frame(&ctx, &mut app, Vec::new());
-            }
-            frame(&ctx, &mut app, vec![egui::Event::PointerMoved(start), button(start, true)]);
-            frame(&ctx, &mut app, vec![egui::Event::PointerMoved(end)]);
-            frame(
-                &ctx,
-                &mut app,
-                vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }],
-            );
-            frame(&ctx, &mut app, vec![button(end, false)]);
-            assert!(app.canvas.table_drag.is_none());
-            assert_eq!(app.session.undo_labels().len(), undo, "Escape cancels without editing");
+    fn conversions_survive_missing_pages() {
+        let layout = DocLayout::default();
+        assert!(page_scale(&[], &layout, 1.0, 0).is_none());
+        assert!(to_screen(&[], &layout, 1.0, 3, 1.0, 1.0).is_none());
+        let rects = [Rect::from_min_size(pos2(10.0, 20.0), egui::vec2(100.0, 200.0))];
+        assert_eq!(page_scale(&rects, &layout, 2.0, 0), Some(2.0));
+        assert_eq!(to_screen(&rects, &layout, 2.0, 0, 5.0, 5.0), Some(pos2(20.0, 30.0)));
+        assert!(page_scale(&rects, &layout, 0.0, 0).is_none());
+    }
+
+    pub(crate) type H = egui_kittest::Harness<'static, WordApp>;
+
+    /// The whole window with a 2×3 table whose first cell's text is selected.
+    pub(crate) fn table_window() -> H {
+        table_window_stepping(0.25)
+    }
+
+    /// The same, each step `dt` seconds apart (short enough for a double-click: 1/60).
+    pub(crate) fn table_window_stepping(dt: f32) -> H {
+        let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), Default::default());
+        a.run("insert.table", json!({"rows": 2, "cols": 3})).unwrap();
+        a.run("text.insert", json!({"text": "Product"})).unwrap();
+        a.run("select.text", json!({"text": "Product"})).unwrap();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).with_step_dt(dt).build_ui_state(
+            |ui, app: &mut WordApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            a,
+        );
+        for _ in 0..6 {
+            h.step();
         }
+        h
+    }
+
+    /// Cell (`row`, `cell`)'s rect in page points.
+    pub(crate) fn cell(h: &mut H, row: usize, cell: usize) -> wordcraft_geom::Rect {
+        h.state_mut().session.layout().pages[0]
+            .items
+            .iter()
+            .find_map(|it| match it {
+                wordcraft_layout::Placed::Cell { rect, row: r, cell: c, .. } if *r == row && *c == cell => Some(*rect),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    pub(crate) fn screen(h: &mut H, x: f32, y: f32) -> Pos2 {
+        crate::canvas::page_to_screen(h.state_mut(), 0, x, y).unwrap()
+    }
+
+    pub(crate) fn button(h: &H, at: Pos2, pressed: bool) {
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() });
+    }
+
+    pub(crate) fn steps(h: &mut H, n: usize) {
+        for _ in 0..n {
+            h.step();
+        }
+    }
+
+    /// A real mouse drag of a column border: the resize arrow on hover, a preview and no change
+    /// while dragging, then one undo step on release, the selection untouched.
+    #[test]
+    fn dragging_a_column_border_with_the_mouse_is_one_undo_step() {
+        let mut h = table_window();
+        let (a, b) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1));
+        let sel = h.state().session.sel.clone();
+        let depth = h.state().session.undo_depth();
+        let start = screen(&mut h, a.right(), a.y + a.h / 2.0);
+        h.event(egui::Event::PointerMoved(start));
+        steps(&mut h, 2);
+        assert_eq!(h.output().platform_output.cursor_icon, egui::CursorIcon::ResizeColumn, "the resize arrow over the border");
+        button(&h, start, true);
+        h.step();
+        // 30 page points to the right, in a few moves.
+        let end = screen(&mut h, a.right() + 30.0, a.y + a.h / 2.0);
+        for k in 1..=5 {
+            h.event(egui::Event::PointerMoved(start + (end - start) * (k as f32 / 5.0)));
+            h.step();
+        }
+        assert!(h.state().canvas.table_resize.is_some(), "a drag is in progress");
+        assert_eq!(h.state().session.undo_depth(), depth, "nothing is written while dragging");
+        assert_eq!(cell(&mut h, 0, 0), a, "the table waits for the release");
+        button(&h, end, false);
+        steps(&mut h, 3);
+        assert!(h.state().canvas.table_resize.is_none());
+        assert_eq!(h.state().session.undo_depth(), depth + 1, "one undo step for the drag");
+        let (a1, b1) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1));
+        assert!((a1.w - (a.w + 30.0)).abs() < 1.0, "{a:?} → {a1:?}");
+        assert!((b1.w - (b.w - 30.0)).abs() < 1.0, "{b:?} → {b1:?}");
+        assert_eq!(h.state().session.sel, sel, "the selection is kept");
+        assert!(h.state_mut().session.undo());
+        assert_eq!(cell(&mut h, 0, 0), a);
+    }
+
+    /// The zone of the ruler marker named `label` nearest to screen point `near`.
+    fn ruler_marker(h: &H, label: &str, near: Pos2) -> Rect {
+        use egui_kittest::kittest::Queryable;
+        h.query_all_by_label(label).map(|n| n.rect()).min_by(|p, q| p.center().distance(near).total_cmp(&q.center().distance(near))).expect(label)
+    }
+
+    /// A real mouse drag from `from` to `to` (screen points), in a few moves.
+    fn drag(h: &mut H, from: Pos2, to: Pos2) {
+        h.event(egui::Event::PointerMoved(from));
+        h.step();
+        button(h, from, true);
+        h.step();
+        for k in 1..=5 {
+            h.event(egui::Event::PointerMoved(from + (to - from) * (k as f32 / 5.0)));
+            h.step();
+        }
+        button(h, to, false);
+        steps(h, 3);
+    }
+
+    /// #49: with the caret in the table, a column marker on the horizontal ruler drags its border,
+    /// in one undo step; only the column left of it changes and the columns right of it move
+    /// along, as on Word's ruler. The marker follows the drag.
+    #[test]
+    fn a_column_marker_on_the_ruler_moves_the_columns_right_of_it() {
+        let mut h = table_window();
+        let (a, b, c) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1), cell(&mut h, 0, 2));
+        let depth = h.state().session.undo_depth();
+        let near = screen(&mut h, a.right(), a.y);
+        let start = ruler_marker(&h, "Table Column Width", near).center();
+        assert!((start.x - near.x).abs() < 0.5, "a marker over the first column border");
+        let end = start + egui::vec2(screen(&mut h, a.right() + 30.0, a.y).x - near.x, 0.0);
+        h.event(egui::Event::PointerMoved(start));
+        h.step();
+        button(&h, start, true);
+        h.step();
+        for k in 1..=5 {
+            h.event(egui::Event::PointerMoved(start + (end - start) * (k as f32 / 5.0)));
+            h.step();
+        }
+        assert!((ruler_marker(&h, "Table Column Width", end).center().x - end.x).abs() < 1.0, "the marker follows the pointer");
+        assert_eq!(h.state().session.undo_depth(), depth, "nothing is written while dragging");
+        button(&h, end, false);
+        steps(&mut h, 3);
+        assert_eq!(h.state().session.undo_depth(), depth + 1, "one undo step for the drag");
+        let (a1, b1, c1) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1), cell(&mut h, 0, 2));
+        assert!((a1.w - (a.w + 30.0)).abs() < 1.0, "{a:?} → {a1:?}");
+        assert!((b1.w - b.w).abs() < 0.5 && (c1.w - c.w).abs() < 0.5, "the columns right of it keep their widths");
+        assert!((c1.right() - (c.right() + 30.0)).abs() < 1.0, "and move along, so the table is wider");
+    }
+
+    /// With Shift a column marker on the ruler works the other way round, as on Word's ruler: the
+    /// neighbour on the right makes up the difference, so the table keeps its width.
+    #[test]
+    fn a_shift_drag_on_the_ruler_trades_width_with_the_neighbour() {
+        let mut h = table_window();
+        let (a, b, c) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1), cell(&mut h, 0, 2));
+        let near = screen(&mut h, a.right(), a.y);
+        let start = ruler_marker(&h, "Table Column Width", near).center();
+        let end = start + egui::vec2(screen(&mut h, a.right() + 30.0, a.y).x - near.x, 0.0);
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+        drag(&mut h, start, end);
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        let (a1, b1, c1) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1), cell(&mut h, 0, 2));
+        assert!((a1.w - (a.w + 30.0)).abs() < 1.0, "{a:?} → {a1:?}");
+        assert!((b1.w - (b.w - 30.0)).abs() < 1.0, "{b:?} → {b1:?}");
+        assert!((c1.w - c.w).abs() < 0.5 && (c1.right() - c.right()).abs() < 1.0, "the table keeps its width");
+    }
+
+    /// #49: a row marker on the vertical ruler drags that row's bottom border: the row gets taller,
+    /// in one undo step.
+    #[test]
+    fn a_row_marker_on_the_ruler_sets_the_row_height() {
+        let mut h = table_window();
+        let a = cell(&mut h, 0, 0);
+        let depth = h.state().session.undo_depth();
+        let near = screen(&mut h, a.x, a.bottom());
+        let start = ruler_marker(&h, "Table Row Height", near).center();
+        assert!((start.y - near.y).abs() < 0.5, "a marker at the first row's bottom");
+        let end = start + egui::vec2(0.0, screen(&mut h, a.x, a.bottom() + 20.0).y - near.y);
+        drag(&mut h, start, end);
+        assert_eq!(h.state().session.undo_depth(), depth + 1, "one undo step for the drag");
+        let a1 = cell(&mut h, 0, 0);
+        assert!((a1.h - (a.h + 20.0)).abs() < 1.0, "{a:?} → {a1:?}");
+    }
+
+    /// #49: in a cell the ruler's indents are the cell's: the left-indent marker sits where the
+    /// cell's text starts (its box less its margins), and dragging it 18 points indents the
+    /// paragraph 18 points.
+    #[test]
+    fn in_a_cell_the_ruler_measures_indents_from_its_text() {
+        let mut h = table_window();
+        let b = cell(&mut h, 0, 1);
+        // Into the second cell: its text starts far from the page's left margin.
+        let inside = screen(&mut h, b.x + b.w / 2.0, b.y + b.h / 2.0);
+        h.event(egui::Event::PointerMoved(inside));
+        h.step();
+        button(&h, inside, true);
+        h.step();
+        button(&h, inside, false);
+        steps(&mut h, 3);
+        assert_eq!(h.state().session.sel.focus.path.cell().map(|(_, r, cl)| (r, cl)), Some((0, 1)));
+        let layout = h.state_mut().session.layout();
+        let (left, w) = crate::table_ruler::text_area(h.state(), &layout, 0).unwrap();
+        assert!((left - (b.x + 5.4)).abs() < 0.01 && (w - (b.w - 10.8)).abs() < 0.01, "the cell less its margins: {left}, {w}");
+        // The left-indent marker is at the text's start, just above the ruler's bottom edge.
+        let near = screen(&mut h, left, b.y);
+        let bar_bottom = ruler_marker(&h, "Table Column Width", near).bottom();
+        let start = egui::pos2(near.x, bar_bottom - 3.0);
+        let end = start + egui::vec2(screen(&mut h, left + 18.0, b.y).x - near.x, 0.0);
+        drag(&mut h, start, end);
+        let focus = h.state().session.sel.focus.clone();
+        assert_eq!(h.state().session.doc.para_at(&focus).and_then(|p| p.props.indent_left), Some(18.0));
+    }
+
+    /// With Ctrl held, the change of a dragged column border is shared by the columns right of
+    /// it, so the table keeps its width.
+    #[test]
+    fn a_ctrl_drag_shares_the_change_among_the_columns_right_of_it() {
+        let mut h = table_window();
+        let (a, b, c) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1), cell(&mut h, 0, 2));
+        let y = a.y + a.h / 2.0;
+        let (start, end) = (screen(&mut h, a.right(), y), screen(&mut h, a.right() + 30.0, y));
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::COMMAND));
+        drag(&mut h, start, end);
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        let (a1, b1, c1) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1), cell(&mut h, 0, 2));
+        assert!((a1.w - (a.w + 30.0)).abs() < 1.0, "{a:?} → {a1:?}");
+        assert!((b1.w - (b.w - 15.0)).abs() < 1.0 && (c1.w - (c.w - 15.0)).abs() < 1.0, "{b1:?} {c1:?}");
+        assert!((c1.right() - c.right()).abs() < 1.0, "the table keeps its width");
+    }
+
+    /// The table's left edge, under the resize arrow just outside it, drags the table in; the
+    /// first column makes up the difference. The horizontal ruler has a marker on it too.
+    #[test]
+    fn the_left_edge_drags_the_table_in_and_has_a_ruler_marker() {
+        let mut h = table_window();
+        let (a, b) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1));
+        let y = a.y + a.h / 2.0;
+        let (start, end) = (screen(&mut h, a.x - 1.5, y), screen(&mut h, a.x + 20.0, y));
+        h.event(egui::Event::PointerMoved(start));
+        steps(&mut h, 2);
+        assert_eq!(h.output().platform_output.cursor_icon, egui::CursorIcon::ResizeColumn, "the resize arrow on the left edge");
+        drag(&mut h, start, end);
+        let (a1, b1) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1));
+        assert!((a1.x - (a.x + 21.5)).abs() < 1.0 && (a1.right() - a.right()).abs() < 0.5, "{a:?} → {a1:?}");
+        assert!((b1.x - b.x).abs() < 0.5 && (b1.w - b.w).abs() < 0.5, "{b:?} → {b1:?}");
+        let near = screen(&mut h, a1.x, a1.y);
+        let marker = ruler_marker(&h, "Table Column Width", near).center();
+        assert!((marker.x - near.x).abs() < 0.5, "a marker on the left edge");
+        let back = marker - egui::vec2(near.x - screen(&mut h, a.x, a1.y).x, 0.0);
+        drag(&mut h, marker, back);
+        assert!((cell(&mut h, 0, 0).x - a.x).abs() < 1.0, "the marker drags it back out");
+    }
+
+    /// Alt while a column border is dragged shows each column's width on the ruler, as it is
+    /// going to be.
+    #[test]
+    fn alt_shows_the_column_widths_while_dragging() {
+        let mut h = table_window();
+        let (a, b) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1));
+        let y = a.y + a.h / 2.0;
+        let (start, end) = (screen(&mut h, a.right(), y), screen(&mut h, a.right() + 18.0, y));
+        h.event(egui::Event::PointerMoved(start));
+        h.step();
+        button(&h, start, true);
+        h.step();
+        h.event(egui::Event::PointerMoved(end));
+        h.step();
+        let widths = |h: &mut H| {
+            let layout = h.state_mut().session.layout();
+            crate::table_ruler::widths(h.state(), &h.ctx, &layout, 0)
+        };
+        assert!(widths(&mut h).is_empty(), "not without Alt");
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
+        h.step();
+        let w = widths(&mut h);
+        assert_eq!(w.len(), 3, "{w:?}");
+        assert!((w[0].1 - (a.w + 18.0)).abs() < 0.5 && (w[1].1 - (b.w - 18.0)).abs() < 0.5, "{w:?}");
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        button(&h, end, false);
+        steps(&mut h, 3);
+        assert!(widths(&mut h).is_empty(), "gone with the drag");
+    }
+
+    /// Clicks inside a cell still place the caret (the border doesn't steal them), and Esc drops a
+    /// drag without changing anything.
+    #[test]
+    fn clicks_in_cells_still_move_the_caret_and_esc_cancels_a_drag() {
+        let mut h = table_window();
+        let c = cell(&mut h, 1, 1);
+        let at = screen(&mut h, c.x + c.w / 2.0, c.y + c.h / 2.0);
+        h.event(egui::Event::PointerMoved(at));
+        h.step();
+        button(&h, at, true);
+        h.step();
+        button(&h, at, false);
+        steps(&mut h, 3);
+        let focus = &h.state().session.sel.focus;
+        assert_eq!(focus.path.cell().map(|(_, r, cl)| (r, cl)), Some((1, 1)), "the caret went into the clicked cell");
+        let table = h.state().session.doc.body.iter().find_map(|b| b.as_table()).cloned();
+        let depth = h.state().session.undo_depth();
+        let a = cell(&mut h, 0, 0);
+        let start = screen(&mut h, a.x + a.w / 2.0, a.bottom());
+        h.event(egui::Event::PointerMoved(start));
+        h.step();
+        button(&h, start, true);
+        h.step();
+        let end = start + egui::vec2(0.0, 40.0);
+        h.event(egui::Event::PointerMoved(end));
+        h.step();
+        assert!(h.state().canvas.table_resize.is_some(), "the row border is being dragged");
+        h.event(egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() });
+        h.step();
+        button(&h, end, false);
+        steps(&mut h, 3);
+        assert_eq!(h.state().session.undo_depth(), depth, "Esc cancelled it");
+        assert_eq!(h.state().session.doc.body.iter().find_map(|b| b.as_table()).cloned(), table);
+    }
+
+    /// A double-click on a column border fits the column left of it to its text, the next
+    /// column keeping its width and moving along (the table narrows, as in Word), in one undo
+    /// step.
+    #[test]
+    fn double_clicking_a_column_border_fits_the_column() {
+        let mut h = table_window_stepping(1.0 / 60.0);
+        let (a, b) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1));
+        let depth = h.state().session.undo_depth();
+        let at = screen(&mut h, a.right(), a.y + a.h / 2.0);
+        h.event(egui::Event::PointerMoved(at));
+        h.step();
+        for _ in 0..2 {
+            button(&h, at, true);
+            h.step();
+            button(&h, at, false);
+            h.step();
+        }
+        steps(&mut h, 2);
+        let (a1, b1) = (cell(&mut h, 0, 0), cell(&mut h, 0, 1));
+        assert!(a1.w < a.w - 40.0, "{a:?} → {a1:?}");
+        assert!((b1.w - b.w).abs() < 1.0 && (b1.x - b.x - (a1.w - a.w)).abs() < 1.0, "the next column keeps its width and moves along");
+        assert_eq!(h.state().session.undo_depth(), depth + 1, "one undo step");
     }
 }

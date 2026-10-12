@@ -78,6 +78,16 @@ pub struct CellRange {
     pub stream: bool,
 }
 
+fn default_read_width() -> f32 {
+    300.0
+}
+fn default_read_height() -> f32 {
+    500.0
+}
+fn default_read_zoom() -> f32 {
+    1.0
+}
+
 impl CellRange {
     /// The selected cells of table `t` (row, cell index), in document order.
     pub fn cells(&self, t: &Table) -> Vec<(usize, usize)> {
@@ -813,6 +823,7 @@ impl Session {
             sel: self.sel.clone(),
             source_package: self.source_package.clone(),
             pending: self.pending.clone(),
+            column: self.column.clone(),
         }));
         if self.history.len() > MAX_UNDO {
             self.history.remove(0);
@@ -829,6 +840,7 @@ impl Session {
             sel,
             source_package: self.source_package.clone(),
             pending: self.pending.clone(),
+            column: None,
         }));
         if self.history.len() > MAX_UNDO {
             self.history.remove(0);

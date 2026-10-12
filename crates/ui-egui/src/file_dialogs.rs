@@ -63,6 +63,10 @@ pub(crate) enum AfterPick {
     Export {
         ext: String,
     },
+    /// Write the PDF for the selected print settings.
+    PrintPdf {
+        settings: Value,
+    },
     /// Load the picked CSV/TSV/text file as the mail-merge recipients (#240).
     Recipients,
     /// Add the picked font file (#582).

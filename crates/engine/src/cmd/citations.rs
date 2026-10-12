@@ -583,10 +583,8 @@ fn import_sources(s: &mut Session, v: &Value) -> CmdResult {
     } else if let Some(path) = p::str(v, "path") {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let bytes = std::fs::read(path).map_err(|error| CmdError::Failed(format!("{path}: {error}")))?;
-            if bytes.len() > wordcraft_formats::citations::MAX_BYTES {
-                return Err(CmdError::Params("bibliography import exceeds 8 MiB".into()));
-            }
+            let bytes =
+                crate::io::read_file_capped(path, wordcraft_formats::citations::MAX_BYTES as u64, "bibliography import").map_err(CmdError::Failed)?;
             String::from_utf8(bytes).map_err(|_| CmdError::Params("bibliography import must be UTF-8".into()))?
         }
         #[cfg(target_arch = "wasm32")]
@@ -738,7 +736,7 @@ fn number_of(doc: &Document, order: &[usize], tag: &str) -> usize {
 /// Refresh CITATION results and generated lists.
 pub fn update_citations(s: &mut Session) -> Result<(), CmdError> {
     let st = style(&s.bib_style);
-    let order = bib_order(&s.doc, st);
+    let order = bib_order(&s.doc, st, super::default_lang(s));
     let mut missing = std::collections::BTreeSet::new();
     let stories: Vec<_> = std::iter::once(StoryRef::Body).chain(s.doc.parts.keys().map(|id| StoryRef::Part(*id))).collect();
     for story in stories {

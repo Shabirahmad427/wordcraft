@@ -1793,14 +1793,12 @@
 	Browse in WordCraft…	Потражи у WordCraft-у…
 	Open a file with WordCraft's own browser when the system file dialog doesn't appear.	Отворите датотеку помоћу WordCraft-овог прегледача када се системски дијалог за датотеке не појави.
 	Hide White Space	Сакриј празан простор
-	All pages	Све странице
 	Current page	Тренутна страница
 	Selected pages	Изабране странице
 	Custom range	Прилагођени опсег
 	All pages in the range	Све странице у опсегу
 	Odd pages only	Само непарне странице
 	Even pages only	Само парне странице
-	Copies	Копије
 	Collate copies	Сложи копије
 	Pages like 1-3, 5	Странице попут 1-3, 5
 	{count} of {total} pages will print	Штампаће се {count} од {total} страница

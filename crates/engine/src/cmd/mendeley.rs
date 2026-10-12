@@ -27,14 +27,8 @@ fn import(s: &mut Session, v: &Value) -> CmdResult {
     } else if let Some(path) = p::str(v, "path") {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            use std::io::Read;
-            let f = std::fs::File::open(path).map_err(|e| CmdError::Failed(e.to_string()))?;
-            let mut text = String::new();
-            f.take((MAX_BYTES + 1) as u64).read_to_string(&mut text).map_err(|e| CmdError::Failed(e.to_string()))?;
-            if text.len() > MAX_BYTES {
-                return Err(CmdError::Params("RIS export exceeds 8 MiB".into()));
-            }
-            text
+            let bytes = crate::io::read_file_capped(path, MAX_BYTES as u64, "RIS export").map_err(CmdError::Failed)?;
+            String::from_utf8(bytes).map_err(|_| CmdError::Params("RIS export must be UTF-8".into()))?
         }
         #[cfg(target_arch = "wasm32")]
         {

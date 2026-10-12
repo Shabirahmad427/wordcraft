@@ -2703,7 +2703,7 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             }
             false
         }
-        Dialog::Font { font, size, bold, italic, underline, strike, sup, sub, small_caps, caps, hidden, color, spacing, .. } => {
+        Dialog::Font { font, font_ea, asian, size, bold, italic, underline, strike, sup, sub, small_caps, caps, hidden, color, spacing, .. } => {
             // Build the sample text format for the preview pane below.
             let preview_size = size.trim().parse::<f32>().unwrap_or(12.0).clamp(6.0, 72.0);
             let preview_color = wordcraft_doc::Rgb::parse(color).map(crate::theme::c32).unwrap_or_else(|| ui.visuals().text_color());
@@ -3471,17 +3471,26 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             }
             let r = ui.add(egui::TextEdit::singleline(query).hint_text(tl!("Type a command, e.g. \"insert table\"")).desired_width(380.0));
             r.request_focus();
+            let q = query.to_lowercase();
+            let localized_q = crate::i18n::lowercase(query);
             let reg = app.session.registry.clone();
+            // Empty Search opens with a few useful suggestions; typing still searches the full
+            // command catalog. This keeps the keyboard entry point discoverable without ranking
+            // every command above actual query matches.
+            const SUGGESTED: [&str; 4] = ["review.wordCount", "file.save", "edit.undo", "format.bold"];
             let mut hits: Vec<&wordcraft_engine::CommandSpec> = reg
                 .all()
                 .iter()
                 .filter(|c| {
-                    !q.is_empty()
-                        && (c.label.to_lowercase().contains(&q)
+                    if q.is_empty() {
+                        SUGGESTED.contains(&c.id)
+                    } else {
+                        c.label.to_lowercase().contains(&q)
                             || crate::i18n::lowercase(tl!(c.label)).contains(&localized_q)
                             || c.id.to_lowercase().contains(&q)
                             || c.location.to_lowercase().contains(&q)
-                            || crate::i18n::lowercase(&crate::i18n::location(c.location)).contains(&localized_q))
+                            || crate::i18n::lowercase(&crate::i18n::location(c.location)).contains(&localized_q)
+                    }
                 })
                 .collect();
             hits.sort_by_key(|c| {
@@ -4280,9 +4289,6 @@ fn describe(st: &Value) -> String {
     parts.join(", ")
 }
 
-/// What Search lists before anything is typed: common commands (#819).
-const SEARCH_SUGGESTIONS: [&str; 3] = ["review.spelling", "review.wordCount", "file.print"];
-
 /// Search's "Find … in the document": the Navigation pane opens on its results for `text`.
 fn find_in_navigation_pane(app: &mut WordApp, ctx: &egui::Context, text: &str) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("nav_query"), text.to_string()));
@@ -4309,6 +4315,7 @@ fn swallow_shortcut_text(swallow: &mut bool, e: &egui::Event) -> bool {
 
 /// Search's filter: every word of the query is in the command's label, location or id, in English
 /// or in the interface language, so "insert table" finds Insert › Tables › Table (#819).
+#[cfg(test)]
 fn command_matches(c: &wordcraft_engine::CommandSpec, query: &str) -> bool {
     if query.trim().is_empty() {
         return false;

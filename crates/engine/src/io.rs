@@ -253,6 +253,7 @@ pub fn open_path(path: &std::path::Path) -> Result<Document, String> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn open_path_with_source(path: &std::path::Path) -> Result<(Document, Option<crate::SourcePackage>), String> {
+    crate::file_access::check_read(&path.to_string_lossy())?;
     let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if meta.len() > 2 << 30 {
         return Err(format!("{}: file is larger than 2 GB", path.display()));
@@ -404,6 +405,11 @@ pub fn read_file_capped(path: &str, max: u64, what: &str) -> Result<Vec<u8>, Str
     std::fs::read(path).map_err(|e| format!("{path}: {e}"))
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn read_file_capped(path: &str, _max: u64, _what: &str) -> Result<Vec<u8>, String> {
+    Err(format!("{path}: files are opened through the browser on the web"))
+}
+
 /// Write `bytes` to the file at `path`, inside the automation write root when there is one.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
@@ -432,9 +438,9 @@ pub fn save_path(path: &std::path::Path, doc: &Document) -> Result<(), String> {
 
 /// [`save_path`], encrypted with `password` as [`save_bytes_with`] does.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn save_path_with(path: &std::path::Path, doc: &Document, password: Option<&str>) -> Result<(), String> {
+pub fn save_path_with(path: &std::path::Path, doc: &Document, password: Option<&str>, opts: &ExportOptions) -> Result<(), String> {
     let name = path.to_string_lossy();
-    let bytes = save_bytes_with(&name, doc, password)?;
+    let bytes = save_bytes_with(&name, doc, password, opts)?;
     if is_word_package(&ext_of(&name)) {
         // Parse the exact staged bytes before touching the destination. This catches malformed
         // package output while leaving the current document untouched on validation failure.
@@ -447,6 +453,7 @@ pub fn save_path_with(path: &std::path::Path, doc: &Document, password: Option<&
 /// created sibling and synchronized. This is shared by document and image exports.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    crate::file_access::check_write(&path.to_string_lossy()).map_err(std::io::Error::other)?;
     safe_save::write(path, bytes)
 }
 

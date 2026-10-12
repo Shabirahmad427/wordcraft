@@ -105,9 +105,9 @@ fn lay(ctx: &mut Ctx, id: u32, blocks: &Blocks, len: f32, vert: TextVert, depth:
 /// share of a linked chain's, cut to what fits, aligned and turned as the box says.
 pub(crate) fn box_items(ctx: &mut Ctx, id: u32, rect: Rect, depth: usize) -> BoxItems {
     let body = ctx.doc.parts.get(&id).map(|p| p.body).unwrap_or_default();
-    let (len, across) = frame(body.vert, rect.w, rect.h);
-    let (items, overflow) = match chain_share(ctx, id, depth) {
-        Some(items) => (items, None),
+    let (len, across) = frame(&body, rect.w, rect.h);
+    let (items, overflow, across) = match chain_share(ctx, id, depth) {
+        Some(items) => (items, None, across),
         None => {
             if !ctx.boxes.enter(id) {
                 return BoxItems { items: Vec::new(), overflow: None };
@@ -116,10 +116,13 @@ pub(crate) fn box_items(ctx: &mut Ctx, id: u32, rect: Rect, depth: usize) -> Box
             let inner = lay(ctx, id, &blocks, len, body.vert, depth);
             let content_bottom = extent(&inner);
             let horizontal = inner.iter().filter_map(crate::placed_bounds).any(|bounds| bounds.x < -0.5 || bounds.right() > len + 0.5);
-            let overflow = Some((horizontal, content_bottom > across + 0.5));
+            // `a:spAutoFit` grows the text frame to its laid-out content. Render every line and
+            // suppress the clipping warning that would be false once the shape has grown.
+            let effective_across = if body.auto_fit { across.max(content_bottom) } else { across };
+            let overflow = (!body.auto_fit).then_some((horizontal, content_bottom > across + 0.5));
             ctx.boxes.leave();
             // Text that doesn't fit inside the margins is hidden, as in Word.
-            (fit_box(inner, across), overflow)
+            (fit_box(inner, effective_across), overflow, effective_across)
         }
     };
     BoxItems { items: place(items, &body, rect, across), overflow }

@@ -25,6 +25,7 @@ pub mod fields;
 pub mod freeform;
 pub mod graphic;
 pub mod links;
+pub mod locale_number;
 pub mod math;
 pub mod math_edit;
 pub mod math_latex;

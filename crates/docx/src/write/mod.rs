@@ -134,6 +134,10 @@ pub fn write_as(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {
 }
 
 pub(crate) fn write_native(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {
+    zip_entries(&write_parts(doc, flavor)?)
+}
+
+pub(crate) fn write_parts(doc: &Document, flavor: Flavor) -> Result<Vec<(String, Vec<u8>)>, DocxError> {
     // A range field must be whole in the file: drop markers that lost their partner in editing.
     let balanced;
     let doc = if doc.has_unbalanced_field_ranges() {
@@ -396,8 +400,6 @@ pub(crate) fn write_native(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, Do
         }
     }
 
-    wr.embeds.custom_xml_rels("D", &mut rels);
-    wr.embeds.custom_xml_rels("P", &mut root);
     // Parts of embedded objects and custom XML stores kept from the file.
     for (name, bytes, ct, prels) in std::mem::take(&mut wr.embeds.parts) {
         push_part(&mut entries, &mut overrides, &name, bytes, &ct, prels);
@@ -442,7 +444,7 @@ pub(crate) fn write_native(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, Do
     if let Some(error) = wr.preservation_error {
         return Err(error);
     }
-    crate::custom_xml::write(doc, &mut entries, &mut overrides, &mut rels)?;
+    crate::custom_xml::write(doc, &mut entries, &mut overrides, &mut root, &mut rels)?;
     wr.opaque.append(doc, &mut entries, &mut overrides)?;
 
     // Main part goes first in the zip after content types.
@@ -472,13 +474,29 @@ pub(crate) fn write_native(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, Do
         overrides.push(("/docProps/custom.xml".into(), "application/vnd.openxmlformats-officedocument.custom-properties+xml".into()));
     }
     if !doc.sources.is_empty() {
-        root.add(rt::CUSTOM_XML, "customXml/item1.xml", false);
+        // Imported custom XML stores are preserved verbatim and can occupy item1.xml (or
+        // itemProps1.xml). Keep the editable bibliography in a distinct store instead of
+        // colliding with, or overwriting, an unrelated original custom XML graph.
+        let mut bibliography_index = 1usize;
+        while entries.iter().any(|(name, _)| {
+            name.eq_ignore_ascii_case(&format!("customXml/item{bibliography_index}.xml"))
+                || name.eq_ignore_ascii_case(&format!("customXml/itemProps{bibliography_index}.xml"))
+                || name.eq_ignore_ascii_case(&format!("customXml/_rels/item{bibliography_index}.xml.rels"))
+        }) {
+            bibliography_index = bibliography_index.checked_add(1).ok_or_else(|| DocxError::Limit("bibliography part names exhausted".into()))?;
+            if bibliography_index > 100_000 {
+                return Err(DocxError::Limit("bibliography part names exhausted".into()));
+            }
+        }
+        let item_name = format!("customXml/item{bibliography_index}.xml");
+        let props_name = format!("customXml/itemProps{bibliography_index}.xml");
+        root.add(rt::CUSTOM_XML, &item_name, false);
         let mut item_rels = PartRels::default();
-        item_rels.add(rt::CUSTOM_XML_PROPS, "itemProps1.xml", false);
+        item_rels.add(rt::CUSTOM_XML_PROPS, &format!("itemProps{bibliography_index}.xml"), false);
         push_part(
             &mut entries,
             &mut overrides,
-            "customXml/item1.xml",
+            &item_name,
             bibliography_xml(doc),
             "application/vnd.openxmlformats-officedocument.customXml+xml",
             item_rels,
@@ -486,7 +504,7 @@ pub(crate) fn write_native(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, Do
         push_part(
             &mut entries,
             &mut overrides,
-            "customXml/itemProps1.xml",
+            &props_name,
             bibliography_props_xml(),
             "application/vnd.openxmlformats-officedocument.customXmlProperties+xml",
             PartRels::default(),

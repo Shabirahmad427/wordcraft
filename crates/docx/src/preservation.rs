@@ -106,7 +106,10 @@ pub(crate) fn validate(pkg: &Package) -> Result<(), DocxError> {
             || path.ends_with(".rels")
             || content_type.ends_with("+xml")
             || matches!(content_type, "application/xml" | "text/xml");
-        let nodes = if is_xml {
+        // Flat OPC permits an explicit empty `pkg:xmlData` part. It is not a well-formed XML
+        // document, but it must survive unpacking as an empty part rather than making the entire
+        // package unreadable. Relationship parts still fail below because they require a root.
+        let nodes = if is_xml && !bytes.is_empty() {
             Some(xml::inspect(bytes).map_err(|e| match e {
                 DocxError::Preservation(message) => error(format!("invalid XML in {path}: {message}")),
                 other => other,

@@ -1,5 +1,12 @@
 # WordCraft roadmap
 
+## Upstream synchronization and integrity audit (2026-10-12)
+
+- Merged upstream `storytold/wordcraft` main at `159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0` (v0.6.1), 181 commits after common base `46d5e99b3e82828f95ec87da92b2e1fc1db03b78`, into fork commit `1d7daa4098e85c9cf928696623ba38868deb8e02`. Backup branch: `backup/pre-upstream-sync-2026-10-12-1d7daa4`; merge commit: `d976573cd452dd821beb90466b7a2cdc7ae34e18`.
+- Reconciled upstream APIs with fork save/recovery, custom XML, chart package preservation, printing and layout features. Added tests for merged package validation and bibliography/custom XML name collisions; restored native ink preservation and rejected over-budget markup safely. Verification and 57 merge-resolution file details are in [the October 12 upstream audit](docs/upstream-audit-2026-10-12.md).
+- Issues #965, #963, #898, #966 and #916 remain open upstream. #933/#934/#935/#940/#923 are merged and included; #943 is closed unmerged and was not applied. Hosted FreeBSD, Windows ARM64 and packaging lint for this merge have not run yet. Do not install or claim Word 365 compatibility until local and hosted validation completes.
+- The genuine Word 365 benchmark remains blocked. No private DOCX files were opened or processed.
+
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
 ## Word 365 interoperability benchmark (2026-10-12)

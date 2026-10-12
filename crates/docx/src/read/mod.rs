@@ -144,7 +144,15 @@ pub(crate) fn read_model(bytes: &[u8]) -> Result<Document, DocxError> {
 
 fn read_impl(bytes: &[u8], preserve: bool) -> Result<Document, DocxError> {
     let pkg = Package::open(bytes)?;
-    crate::preservation::validate(&pkg)?;
+    read_opened_inner(&pkg, preserve, bytes)
+}
+
+pub(crate) fn read_opened(pkg: &Package) -> Result<Document, DocxError> {
+    read_opened_inner(pkg, false, &[])
+}
+
+fn read_opened_inner(pkg: &Package, preserve: bool, source: &[u8]) -> Result<Document, DocxError> {
+    crate::preservation::validate(pkg)?;
     let root_rels = pkg.rels_checked("")?;
     let main = root_rels.by_type(rt::OFFICE_DOC).filter(|r| !r.external).map(|r| r.target.clone()).unwrap_or_else(|| "word/document.xml".to_string());
     let Some(root) = pkg.xml(&main)? else {
@@ -298,8 +306,9 @@ fn read_impl(bytes: &[u8], preserve: bool) -> Result<Document, DocxError> {
     if let Some(error) = r.preservation_error {
         return Err(error);
     }
-    r.opaque.preserve(&pkg, &main, &mut r.doc)?;
-    crate::custom_xml::read(&pkg, &rels, &main, &mut r.doc)?;
+    r.opaque.preserve(pkg, &main, &mut r.doc)?;
+    let embedded_parts = r.embedded.parts.keys().cloned().collect();
+    crate::custom_xml::read(pkg, &root_rels, &rels, &main, &embedded_parts, &mut r.doc)?;
     if !r.embedded.parts.is_empty() {
         let manifest = r.embedded.to_bytes();
         r.doc.passthrough.insert(EMBEDDED_PARTS.into(), Arc::new(manifest));
@@ -313,7 +322,7 @@ fn read_impl(bytes: &[u8], preserve: bool) -> Result<Document, DocxError> {
     let mut doc = r.doc;
     doc.ensure_nonempty();
     if preserve {
-        crate::preservation::capture(bytes, &pkg, &main, &mut doc)?;
+        crate::preservation::capture(source, pkg, &main, &mut doc)?;
     }
     Ok(doc)
 }
@@ -1356,6 +1365,8 @@ impl Reader<'_> {
                     day,
                     accessed,
                     doi,
+                    isbn: child_text(src_el, "ISBN"),
+                    metadata: BTreeMap::new(),
                 });
             }
         }

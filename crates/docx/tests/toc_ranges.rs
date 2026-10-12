@@ -7,6 +7,10 @@ fn package(body: &str) -> Vec<u8> {
     let xml = format!(r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#);
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for (name, value) in [
+        (
+            "[Content_Types].xml",
+            r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#,
+        ),
         ("word/document.xml", xml.as_str()),
         (
             "_rels/.rels",
@@ -141,14 +145,16 @@ fn toc_in_table_cell_does_not_capture_the_next_cell() {
 }
 
 #[test]
-fn missing_end_and_excessive_nesting_stay_bounded_and_save_balanced() {
+fn malformed_and_excessively_nested_source_fields_are_preserved() {
     for (starts, ends) in [(1, 0), (40, 40)] {
         let body = format!("<w:p>{}<w:r><w:t>Visible result.</w:t></w:r>{}</w:p>", start("TOC").repeat(starts), END.repeat(ends));
-        let doc = wordcraft_docx::read(&package(&body)).unwrap();
-        let saved = wordcraft_docx::read(&wordcraft_docx::write(&doc).unwrap()).unwrap();
-        assert!(!saved.has_unbalanced_field_ranges());
-        assert_eq!(saved.plain_text(StoryRef::Body), "Visible result.");
-        assert!(saved.field_ranges(StoryRef::Body).len() <= 32);
+        let input = package(&body);
+        let doc = wordcraft_docx::read(&input).unwrap();
+        assert!(doc.field_ranges(StoryRef::Body).len() <= 32);
+        // The model is bounded and cannot safely repair field markup in a package whose
+        // complete representation does not match the native writer. Guarded saving retains the
+        // original field stream byte-for-byte rather than exporting a partial projection.
+        assert_eq!(wordcraft_docx::write(&doc).unwrap(), input);
     }
 }
 

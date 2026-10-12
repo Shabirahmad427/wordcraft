@@ -259,17 +259,6 @@ pub fn handle(app: &mut WordApp, ctx: &egui::Context, req: &ControlRequest) -> O
     }
 }
 
-/// A page rendered by the engine, as base64 PNG in the reply (the same shape as the headless
-/// MCP server's `ui.render`).
-fn render_png(app: &WordApp, page: u64, scale: f32) -> Result<Value, String> {
-    let page = usize::try_from(page.max(1)).unwrap_or(usize::MAX).saturating_sub(1);
-    let l = app.session.export_layout();
-    let pg = l.pages.get(page).ok_or_else(|| format!("no page {}", page + 1))?;
-    let img = wordcraft_render::render_page(&app.session.doc, pg, scale.clamp(0.1, 8.0), &Default::default());
-    let png = img.to_png();
-    Ok(json!({"png": wordcraft_engine::cmd::insert::base64_encode(&png), "width": img.width, "height": img.height, "pages": l.pages.len()}))
-}
-
 /// The window screenshot: written to `path` when one was given, else base64 PNG in the reply
 /// (never a fixed name in the shared temporary folder).
 pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>) -> Value {

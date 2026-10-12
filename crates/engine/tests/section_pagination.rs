@@ -134,8 +134,8 @@ fn academic_sections_roundtrip_undo_and_recovery_keep_pagination_and_pixels() {
     session.run("edit.redo", &json!({})).unwrap();
     let before = session.layout();
     assert!(before.pages.len() > 3);
-    assert_eq!(before.caret(&Pos::body(1, 0)).unwrap().page, 2);
-    assert_eq!(before.pages[2].number, 1);
+    assert_eq!(before.caret(&Pos::body(1, 0)).unwrap().page, 1);
+    assert_eq!(before.pages[1].number, 1);
     assert_complete(&session.doc, &before);
     let note_pos = Pos { story: StoryRef::Part(note), path: Path::top(0), off: 0 };
     let nc = before.caret(&note_pos).unwrap();

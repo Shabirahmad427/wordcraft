@@ -1791,14 +1791,12 @@
 	Browse in WordCraft…	Procurar no WordCraft…
 	Open a file with WordCraft's own browser when the system file dialog doesn't appear.	Abra um arquivo com o navegador próprio do WordCraft quando a caixa de diálogo de arquivos do sistema não aparecer.
 	Hide White Space	Ocultar espaço em branco
-	All pages	Todas as páginas
 	Current page	Página atual
 	Selected pages	Páginas selecionadas
 	Custom range	Intervalo personalizado
 	All pages in the range	Todas as páginas do intervalo
 	Odd pages only	Somente páginas ímpares
 	Even pages only	Somente páginas pares
-	Copies	Cópias
 	Collate copies	Agrupar cópias
 	Pages like 1-3, 5	Páginas como 1-3, 5
 	{count} of {total} pages will print	{count} de {total} páginas serão impressas

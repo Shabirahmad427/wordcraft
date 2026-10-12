@@ -21,6 +21,8 @@ const MAX_LABEL: usize = 4096;
 struct Root {
     kind: String,
     target: String,
+    #[serde(default)]
+    package: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Part {
@@ -61,27 +63,43 @@ fn reserved(path: &str) -> bool {
     .any(|p| p.eq_ignore_ascii_case(path))
 }
 
-pub(crate) fn read(pkg: &Package, rels: &Rels, main: &str, doc: &mut Document) -> Result<(), DocxError> {
+pub(crate) fn read(
+    pkg: &Package,
+    package_rels: &Rels,
+    rels: &Rels,
+    main: &str,
+    embedded_parts: &BTreeSet<String>,
+    doc: &mut Document,
+) -> Result<(), DocxError> {
     let mut manifest = Manifest::default();
-    for rel in rels.list.iter().filter(|r| r.kind.rsplit('/').next() == Some("customXml")) {
-        if rel.kind.len() > MAX_LABEL {
-            return Err(limit());
+    let mut targets = Vec::new();
+    for (package, relationships) in [(true, package_rels), (false, rels)] {
+        for rel in relationships.list.iter().filter(|r| r.kind.rsplit('/').next() == Some("customXml")) {
+            // Embedded-object preservation already owns this dependency graph. Capturing it a
+            // second time as a document custom-XML root would emit the same ZIP parts twice.
+            if embedded_parts.iter().any(|part| part.eq_ignore_ascii_case(&rel.target)) {
+                continue;
+            }
+            if rel.kind.len() > MAX_LABEL {
+                return Err(limit());
+            }
+            if rel.external {
+                return Err(invalid("a custom XML root must be internal"));
+            }
+            if !valid_path(&rel.target) {
+                return Err(invalid("invalid part name"));
+            }
+            if manifest.roots.len() >= MAX_PARTS {
+                return Err(limit());
+            }
+            targets.push(rel.target.clone());
+            manifest.roots.push(Root { kind: rel.kind.clone(), target: rel.target.clone(), package });
         }
-        if rel.external {
-            return Err(invalid("a custom XML root must be internal"));
-        }
-        if !valid_path(&rel.target) {
-            return Err(invalid("invalid part name"));
-        }
-        if manifest.roots.len() >= MAX_PARTS {
-            return Err(limit());
-        }
-        manifest.roots.push(Root { kind: rel.kind.clone(), target: rel.target.clone() });
     }
     if manifest.roots.is_empty() {
         return Ok(());
     }
-    manifest.parts = preserve_graph(pkg, main, manifest.roots.iter().map(|r| r.target.as_str()), doc)?;
+    manifest.parts = preserve_graph(pkg, main, targets.iter().map(String::as_str), doc)?;
     let metadata = serde_json::to_vec(&manifest).map_err(|e| invalid(&e.to_string()))?;
     if metadata.len() > MAX_MANIFEST {
         return Err(limit());
@@ -175,6 +193,7 @@ pub(crate) fn write(
     doc: &Document,
     entries: &mut Vec<(String, Vec<u8>)>,
     types: &mut Vec<(String, String)>,
+    package_rels: &mut PartRels,
     rels: &mut PartRels,
 ) -> Result<(), DocxError> {
     let Some(bytes) = doc.passthrough.get(MANIFEST) else { return Ok(()) };
@@ -215,7 +234,8 @@ pub(crate) fn write(
         entries.push((part.name, bytes.to_vec()));
     }
     for root in manifest.roots {
-        rels.add(&root.kind, &format!("/{}", root.target), false);
+        let owner = if root.package { &mut *package_rels } else { &mut *rels };
+        owner.add(&root.kind, &format!("/{}", root.target), false);
     }
     Ok(())
 }
@@ -231,25 +251,25 @@ mod tests {
             d.passthrough.insert(MANIFEST.into(), Arc::new(serde_json::to_vec(&manifest).unwrap()));
             d.passthrough.insert(name.into(), Arc::new(b"evil".to_vec()));
             let mut entries = vec![];
-            assert!(write(&d, &mut entries, &mut vec![], &mut PartRels::default()).is_err());
+            assert!(write(&d, &mut entries, &mut vec![], &mut PartRels::default(), &mut PartRels::default()).is_err());
             assert!(entries.is_empty());
         }
         let mut d = Document::new();
         d.passthrough.insert(MANIFEST.into(), Arc::new(vec![b' '; MAX_MANIFEST + 1]));
-        assert!(write(&d, &mut vec![], &mut vec![], &mut PartRels::default()).is_err());
+        assert!(write(&d, &mut vec![], &mut vec![], &mut PartRels::default(), &mut PartRels::default()).is_err());
     }
     #[test]
     fn collisions_and_missing_parts_fail_before_appending() {
         let mut d = Document::new();
         let manifest = Manifest {
-            roots: vec![Root { kind: CUSTOM_XML.into(), target: "data/item.xml".into() }],
+            roots: vec![Root { kind: CUSTOM_XML.into(), target: "data/item.xml".into(), package: false }],
             parts: vec![Part { name: "data/item.xml".into(), content_type: "application/xml".into() }],
         };
         d.passthrough.insert(MANIFEST.into(), Arc::new(serde_json::to_vec(&manifest).unwrap()));
-        assert!(write(&d, &mut vec![], &mut vec![], &mut PartRels::default()).is_err());
+        assert!(write(&d, &mut vec![], &mut vec![], &mut PartRels::default(), &mut PartRels::default()).is_err());
         d.passthrough.insert("data/item.xml".into(), Arc::new(vec![]));
         let mut entries = vec![("DATA/ITEM.XML".into(), b"generated".to_vec())];
-        assert!(write(&d, &mut entries, &mut vec![], &mut PartRels::default()).is_err());
+        assert!(write(&d, &mut entries, &mut vec![], &mut PartRels::default(), &mut PartRels::default()).is_err());
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].1, b"generated");
     }
@@ -268,6 +288,6 @@ mod tests {
         assert!(doc.passthrough.is_empty());
         manifest.parts.push(Part { name: "data/one-too-many.xml".into(), content_type: "application/xml".into() });
         doc.passthrough.insert(MANIFEST.into(), Arc::new(serde_json::to_vec(&manifest).unwrap()));
-        assert!(matches!(write(&doc, &mut vec![], &mut vec![], &mut PartRels::default()), Err(DocxError::Limit(_))));
+        assert!(matches!(write(&doc, &mut vec![], &mut vec![], &mut PartRels::default(), &mut PartRels::default()), Err(DocxError::Limit(_))));
     }
 }

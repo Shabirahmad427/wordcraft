@@ -12,6 +12,7 @@ mod chart_spec;
 mod crypt;
 mod custom;
 mod custom_xml;
+mod flat;
 mod opaque;
 mod package;
 mod preservation;

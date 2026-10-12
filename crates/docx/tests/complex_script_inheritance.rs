@@ -12,8 +12,10 @@ fn package(run: &str, defaults: &str, styles: &str, paragraph_style: &str) -> Ve
         r#"<w:document {ns}><w:body><w:p><w:pPr>{paragraph_style}<w:bidi/></w:pPr><w:r><w:rPr>{run}</w:rPr><w:t>שָׁלוֹם ABC 123</w:t></w:r></w:p></w:body></w:document>"#
     );
     let styles = format!("<w:styles {ns}><w:docDefaults><w:rPrDefault><w:rPr>{defaults}</w:rPr></w:rPrDefault></w:docDefaults>{styles}</w:styles>");
+    let content_types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
     let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for (name, data) in [
+        ("[Content_Types].xml", content_types),
         ("_rels/.rels", root),
         ("word/_rels/document.xml.rels", rels),
         ("word/document.xml", document.as_str()),

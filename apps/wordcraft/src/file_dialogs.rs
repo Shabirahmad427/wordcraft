@@ -6,12 +6,6 @@
 //! is queued; the frame (which has the window) builds an `rfd::AsyncFileDialog` parented to the
 //! window, and a background thread waits for the answer, hands it to the app and wakes the UI.
 //!
-//! On Linux and the BSDs rfd asks the xdg-desktop-portal FileChooser and, failing that, runs
-//! `zenity`; with neither (a minimal Wayland compositor such as labwc with only
-//! xdg-desktop-portal-wlr, #576) it answers "cancelled" and nothing ever shows. So the waiting
-//! thread first checks that one of them is there and otherwise answers with an error, and the app
-//! shows its built-in file browser. `WORDCRAFT_FILE_DIALOG=builtin` always uses the built-in one.
-//!
 //! [`Services::file_dialog`]: wordcraft_ui_egui::Services::file_dialog
 
 use std::future::Future;
@@ -57,19 +51,12 @@ impl Launcher {
             let dialog = rfd::AsyncFileDialog::new().set_parent(parent);
             let picking: Picking = match req {
                 FileDialogRequest::Open { purpose } => Box::pin(open_filters(dialog, &purpose).pick_file()),
-                FileDialogRequest::Save { name } => {
-                    let exts = save_exts(&name);
-                    Box::pin(dialog.set_file_name(name).add_filter("Documents", &exts).save_file())
-                }
+                FileDialogRequest::Save { name } => Box::pin(dialog.set_file_name(name).save_file()),
             };
             let ctx = self.ctx.clone();
             let waiting = std::thread::Builder::new().name("file dialog".into()).spawn(move || {
-                // The picker only starts when first polled: without a system dialog it never does.
-                let picked = match no_system_dialog() {
-                    Some(reason) => Err(reason),
-                    None => Ok(pollster::block_on(picking).map(|f| f.path().to_string_lossy().to_string())),
-                };
-                let _ = answer.send(picked);
+                let picked = pollster::block_on(picking).map(|f| f.path().to_string_lossy().to_string());
+                let _ = answer.send(Ok(picked));
                 ctx.request_repaint();
             });
             // The answer's sender went with the closure, so the app sees the dialog as cancelled.

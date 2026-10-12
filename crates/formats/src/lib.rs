@@ -10,6 +10,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod citations;
+pub mod comments;
 pub mod html;
 pub mod latex;
 pub mod markdown;

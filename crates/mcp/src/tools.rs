@@ -4,14 +4,6 @@ use serde_json::{Value, json};
 
 use crate::backend::Backend;
 
-/// An image tool result from a reply carrying base64 PNG in `png`.
-fn png_result(v: &Value, info: &Value) -> ToolResult {
-    match v.get("png").and_then(Value::as_str) {
-        Some(png) if !png.is_empty() => ToolResult::image(png.to_string(), info),
-        _ => ToolResult::error("the reply carried no picture"),
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolResult {
     pub content: Vec<Value>,

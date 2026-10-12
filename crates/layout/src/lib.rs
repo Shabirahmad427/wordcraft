@@ -48,6 +48,8 @@ pub enum ViewMode {
     Web,
     /// Draft/Outline: like web, page breaks shown as rules.
     Draft,
+    /// One page at a time with a continuous, reflowed reading column.
+    Read,
     /// Outline: a continuous view showing document hierarchy.
     Outline,
 }
@@ -146,6 +148,8 @@ pub struct LayoutOptions {
     pub show_hidden: bool,
     /// Final text ("No Markup"): tracked deletions take no space and draw nothing.
     pub hide_deleted: bool,
+    /// Show revisions in balloons: body deletions take no space; other stories remain inline.
+    pub deletions_in_balloons: bool,
     /// Check spelling and grammar (squiggles).
     pub proofing: bool,
     /// How digits look on screen (display only; the text is untouched). Callers resolve
@@ -597,6 +601,7 @@ struct Ctx<'a> {
     doc: &'a Document,
     cache: &'a mut LayoutCache,
     opts: &'a LayoutOptions,
+    hide_deleted: bool,
     counters: Counters,
     fields: FieldCtx,
     notes_hash: u64,
@@ -612,6 +617,7 @@ struct Ctx<'a> {
     /// Text-box content found outside its frame before the fit pass. The anchor keys let
     /// the final page pass attach each report after tables and floating objects are positioned.
     box_clips: Vec<(StoryRef, Path, usize, OverflowAxis)>,
+    quiet_marks: Vec<usize>,
 }
 
 impl Ctx<'_> {
@@ -1255,7 +1261,9 @@ struct PageBuilder<'a> {
     /// Body bottom after reserving the tallest applicable footer story.
     clearance_bottom: f32,
     /// The previous paragraph: (style, contextual spacing, space after) for contextual spacing.
-    prev: Option<(String, bool, f32)>,
+    prev: Option<(String, bool, f32, bool, bool)>,
+    /// An empty paragraph mark after an explicit page/column break has already occupied a line.
+    after_break_mark: bool,
     /// Wrap areas of floating objects on this page (see [`wrap_area`]).
     excl: Vec<WrapArea>,
     /// Wrap areas of the floating tables on this page, which others may not overlap.
@@ -1463,7 +1471,7 @@ fn analyze_overflows(doc: &Document, pages: &[Page], box_clips: &[(StoryRef, Pat
             .chain(&page.header)
             .chain(&page.footer)
             .filter_map(|item| match item {
-                Placed::Cell { rect, table, row, cell, story } => Some((rect, table, *row, *cell, *story)),
+                Placed::Cell { rect, table, row, cell, story, .. } => Some((rect, table, *row, *cell, *story)),
                 _ => None,
             })
             .collect();
@@ -2016,7 +2024,7 @@ enum BalanceOutcome {
     Skipped,
 }
 
-fn balance_final_columns(pb: &mut PageBuilder<'_>, doc: &Document, start_block: usize, end_block: usize) -> BalanceOutcome {
+fn balance_final_columns(pb: &mut PageBuilder<'_>, doc: &Document, start_block: usize, end_block: usize, quiet_marks: &[usize]) -> BalanceOutcome {
     if pb.cols.len() < 2 {
         return BalanceOutcome::NotNeeded;
     }
@@ -2038,9 +2046,12 @@ fn balance_final_columns(pb: &mut PageBuilder<'_>, doc: &Document, start_block: 
         match item {
             Placed::Lines { story: StoryRef::Body, path, para, l0, l1, .. } => {
                 let Some(block) = path.0.first().map(|value| *value as usize) else { return BalanceOutcome::Skipped };
+                // A continuous section can share its physical page with the section before it.
+                // Those already-laid paragraphs are outside the balancing range and stay fixed.
+                if block < start_block || block > end_block {
+                    continue;
+                }
                 if path.0.len() != 1
-                    || block < start_block
-                    || block > end_block
                     || *l0 != 0
                     || *l1 != para.lines.len()
                     || !seen.insert(path.clone())
@@ -2054,6 +2065,11 @@ fn balance_final_columns(pb: &mut PageBuilder<'_>, doc: &Document, start_block: 
                     || para.lines.iter().any(|line| matches!(line.end, LineEnd::ColumnBreak | LineEnd::PageBreak))
                 {
                     return BalanceOutcome::Skipped;
+                }
+                // Empty continuous-section paragraph marks do not occupy a line. They may be
+                // present at the end of the section being balanced; leave them out of the flow.
+                if quiet_marks.binary_search(&block).is_ok() {
+                    continue;
                 }
                 let Some(model) = doc.para(StoryRef::Body, path) else { return BalanceOutcome::Skipped };
                 if !model.objects.is_empty() {
@@ -2361,9 +2377,18 @@ fn layout_pass(
         box_clips: Vec::new(),
         chains: textbox::Chains::default(),
         grid: para::Grid::default(),
+        quiet_marks: Vec::new(),
     };
     let sections = doc.sections();
-    let web = opts.view != ViewMode::Print;
+    let web = matches!(opts.view, ViewMode::Web | ViewMode::Draft | ViewMode::Outline);
+    let read = opts.view == ViewMode::Read;
+    let reflow = web || read;
+    ctx.quiet_marks = sections
+        .windows(2)
+        .filter(|w| w[1].1.start == SectionStart::Continuous)
+        .map(|w| w[0].0)
+        .filter(|end| doc.body.get(*end).and_then(|b| b.as_para()).is_some_and(|p| p.text.is_empty()))
+        .collect();
     let default_sect = SectionProps::default();
     let mut web_sect;
     let first_sect = match sections.first() {
@@ -2441,7 +2466,7 @@ fn layout_pass(
         let turn = if reflow { TextDirection::Horizontal } else { sect.text_direction };
         let sect: &SectionProps = match turned.get(si) {
             Some(Some(unturned)) => unturned,
-            _ if web => sect_ref,
+            _ if reflow => sect_ref,
             _ => sect,
         };
         ctx.fields.section = u32::try_from(si).unwrap_or(u32::MAX).saturating_add(1);
@@ -2451,16 +2476,17 @@ fn layout_pass(
             // Close the outgoing page while its section still owns alignment and note geometry.
             pb.finish_page();
         }
+        let mut section_restart = sect.page_num_start;
         if !web && si > 0 && matches!(start, SectionStart::NextPage | SectionStart::EvenPage | SectionStart::OddPage) {
             // Finish the outgoing section while its margins, note area and vertical alignment
             // still describe the page being closed.
             pb.finish_page();
-            if matches!(start, SectionStart::EvenPage | SectionStart::OddPage) {
-                let next_is_even = pb.pages.len().saturating_add(1).is_multiple_of(2);
-                if next_is_even != (start == SectionStart::EvenPage) {
-                    pb.new_page(block, pb.sect.margin_top);
-                    pb.finish_page();
-                }
+            let (needs_filler, adjusted_restart) =
+                section_side(start, section_restart, pb.number, pb.pages.len(), ctx.doc.settings.even_odd_headers, ctx.doc.settings.mirror_margins);
+            section_restart = adjusted_restart;
+            if needs_filler {
+                pb.new_page(block, pb.sect.margin_top);
+                pb.finish_page();
             }
         }
         pb.sect = sect;
@@ -2476,7 +2502,7 @@ fn layout_pass(
             if web || turn.is_turned() || !sect.title_page { body_top } else { body_top_for(&mut ctx, sect, si, &sections, true, even_odd) };
         pb.clearance_bottom =
             if web || turn.is_turned() { sect.page_h - sect.margin_bottom } else { body_bottom_for(&mut ctx, sect, si, &sections, even_odd) };
-        let restart = sect.page_num_start;
+        let restart = section_restart;
         if sect.line_numbers.as_ref().is_some_and(|l| l.restart == wordcraft_doc::section::LineNumberRestart::Section) {
             pb.line_no = 0;
         }
@@ -2542,7 +2568,9 @@ fn layout_pass(
         }
         let ends_at_column_balance =
             !web && sect.columns.count > 1 && sections.get(si + 1).is_none_or(|(_, next)| next.start == SectionStart::Continuous);
-        if ends_at_column_balance && balance_final_columns(&mut pb, doc, section_first_block, last) == BalanceOutcome::Skipped && !pb.pages.is_empty()
+        if ends_at_column_balance
+            && balance_final_columns(&mut pb, doc, section_first_block, last, &ctx.quiet_marks) == BalanceOutcome::Skipped
+            && !pb.pages.is_empty()
         {
             let page = pb.pages.len() - 1;
             if !column_balance_skipped.contains(&page) {
@@ -2638,7 +2666,12 @@ fn layout_pass(
     overflow_pages.sort_unstable();
     overflow_pages.dedup();
     let note_heights = pb.page_note_heights.clone();
-    (DocLayout { pages, overflow_pages, overflows, column_balance_skipped, index, ms: now_ms() - t0, text_boxes: ctx.boxes.total() }, note_heights)
+    let mut layout = DocLayout { pages, overflow_pages, overflows, column_balance_skipped, index, ms: now_ms() - t0, text_boxes: ctx.boxes.total() };
+    if opts.comment_balloons && !matches!(opts.view, ViewMode::Web | ViewMode::Draft | ViewMode::Outline | ViewMode::Read) {
+        balloons::add(&mut ctx, &mut layout);
+    }
+    layout.text_boxes = ctx.boxes.total();
+    (layout, note_heights)
 }
 
 fn item_bottom(y: f32, para: &ParaLayout, l0: usize, l1: usize) -> Option<f32> {
@@ -2647,22 +2680,15 @@ fn item_bottom(y: f32, para: &ParaLayout, l0: usize, l1: usize) -> Option<f32> {
     Some(y + l.top + l.height - f.top)
 }
 
-/// Whether a section that starts on a new page needs a blank page first so it lands on the right
-/// side, and the page number it restarts at. `last` is the number of the page before it and
-/// `pages` how many pages there are so far.
-/// - An odd- or even-page break counts on from the previous section's numbers. A section that
-///   restarts its numbering gets no blank page unless the document prints both sides (different
-///   odd and even headers, or mirror margins); a restart at the wrong parity takes the next number.
-/// - With different odd and even headers, a next-page break that restarts the numbers at an odd
-///   (even) number starts on an odd (even) sheet.
-///
-/// (Word's output for docxide-pdf's fixtures: bush_fires_act_comparison has a blank page 2.)
+/// Whether a page-starting section needs a physical filler page to land on the requested side.
+/// Numbering restarts normally decouple page numbers from physical sides; an odd/even header set
+/// or mirrored margins makes the side visible again.
 fn section_side(start: SectionStart, restart: Option<u32>, last: u32, pages: usize, even_odd: bool, mirror: bool) -> (bool, Option<u32>) {
     match start {
         SectionStart::OddPage | SectionStart::EvenPage => {
             let want_odd = start == SectionStart::OddPage;
-            let continuing_odd = last.saturating_add(1) % 2 == 1;
-            let filler = pages > 0 && continuing_odd != want_odd && (restart.is_none() || even_odd || mirror);
+            let next_is_odd = last.saturating_add(1) % 2 == 1;
+            let filler = pages > 0 && next_is_odd != want_odd && (restart.is_none() || even_odd || mirror);
             let restart = restart.map(|n| if (n % 2 == 1) == want_odd { n } else { n.saturating_add(1) });
             (filler, restart)
         }

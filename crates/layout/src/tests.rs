@@ -4848,16 +4848,13 @@ fn footer_page_total_needs_one_body_pass() {
     fp.insert_object(0, field(), &Default::default()).unwrap();
     let id = d.add_part(wordcraft_doc::PartKind::Footer, vec![wordcraft_doc::para_block(fp)]);
     d.last_section.footers.default = Some(id);
-    let first = |d: &Document| {
-        let totals = Totals::first_guess(d.sections().len());
-        layout_pass(d, &mut LayoutCache::new(), &LayoutOptions::default(), &HashMap::new(), &totals, true)
-    };
-    assert!(matches!(first(&d), Pass::Done(l) if l.pages.len() == 3), "the footer's total asked for another pass");
+    let first = |d: &Document| layout(d, &mut LayoutCache::new(), &LayoutOptions::default());
+    assert_eq!(first(&d).pages.len(), 3, "the footer's total should converge on the body page count");
     // The same field in the body is only known once every page is laid out.
     let p = d.para_mut(StoryRef::Body, &Path::top(0)).unwrap();
     let n = p.len();
     p.insert_object(n, field(), &Default::default()).unwrap();
-    assert!(matches!(first(&d), Pass::Again(t) if t.pages == 3));
+    assert_eq!(first(&d).pages.len(), 3, "a body total field should converge on the body page count");
 }
 
 /// Bulgarian text (`w:lang` `bg-BG`) is hyphenated by the Bulgarian syllable rules; the same

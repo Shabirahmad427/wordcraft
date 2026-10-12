@@ -1,7 +1,11 @@
 //! Shared print preview state and platform print-service contract.
 
+use craft_ui::printing::Labels;
+pub use craft_ui::printing::{Discover, Duplex, Feedback, Printer, Settings, State};
+pub type Submit = Box<dyn Fn(Vec<u8>, craft_ui::printing::Settings, bool) -> std::sync::mpsc::Receiver<Result<String, String>>>;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Duplex {
+pub enum NativeDuplex {
     #[default]
     Simplex,
     LongEdge,
@@ -9,7 +13,7 @@ pub enum Duplex {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Printer {
+pub struct NativePrinter {
     pub name: String,
     pub is_default: bool,
 }
@@ -17,7 +21,7 @@ pub struct Printer {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PrinterCapabilities {
     pub media: Vec<String>,
-    pub duplex: Vec<Duplex>,
+    pub duplex: Vec<NativeDuplex>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -25,7 +29,7 @@ pub struct NativePrintOptions {
     pub printer: String,
     pub copies: u16,
     pub collated: bool,
-    pub duplex: Duplex,
+    pub duplex: NativeDuplex,
     pub media: Option<String>,
     pub landscape: bool,
     pub fit_to_page: bool,
@@ -39,7 +43,7 @@ pub struct PrintJob {
 
 /// Implemented by each desktop host. Calls are passed as data, never interpolated into a shell.
 pub trait PrintBackend {
-    fn printers(&self) -> Result<Vec<Printer>, String>;
+    fn printers(&self) -> Result<Vec<NativePrinter>, String>;
     fn capabilities(&self, printer: &str) -> Result<PrinterCapabilities, String>;
     fn submit(&self, pdf: &[u8], options: &NativePrintOptions) -> Result<PrintJob, String>;
     fn cancel(&self, job_id: &str) -> Result<(), String>;
@@ -67,15 +71,149 @@ pub fn media_label(display_name: Option<&str>, width_microns: u32, height_micron
         .unwrap_or_else(|| format!("{} × {} mm", width_microns / 1000, height_microns / 1000))
 }
 
+/// Compatibility bridge for the upstream print-settings widget. The fork's native print preview
+/// uses `PrintPreviewState`; this bridge keeps upstream keyboard/control integrations available.
+pub fn show(state: &mut State, ui: &mut egui::Ui, discover: &Discover, translate: impl Fn(&str) -> String) {
+    let labels = Labels {
+        printer: &translate("Printer"),
+        select_printer: &translate("Select a printer"),
+        refresh: &translate("Refresh printers"),
+        copies: &translate("Copies"),
+        duplex: &translate("Two-sided printing"),
+        printer_default: &translate("Printer default"),
+        one_sided: &translate("One-sided"),
+        long_edge: &translate("Two-sided: long edge"),
+        short_edge: &translate("Two-sided: short edge"),
+        grayscale: &translate("Grayscale"),
+    };
+    state.show(ui, egui::Id::new("wordcraft_print_settings"), discover, &labels);
+    if let Some(message) = &state.message {
+        ui.label(feedback(message, translate));
+    }
+}
+
+pub fn settings(state: &mut State, params: &serde_json::Value, discover: Option<&Discover>) -> Result<serde_json::Value, String> {
+    use craft_ui::printing::{Duplex as UiDuplex, Settings};
+    use serde_json::{Value, json};
+    let object = params.as_object().ok_or("print settings must be an object")?;
+    if object.keys().any(|key| !["printer", "copies", "duplex", "grayscale", "refresh"].contains(&key.as_str())) {
+        return Err("unknown print setting; use printer, copies, duplex, grayscale or refresh".into());
+    }
+    if state.busy() && !object.is_empty() {
+        return Err("wait for the active print submission before changing settings".into());
+    }
+    let mut next = state.settings.clone();
+    if let Some(value) = object.get("printer") {
+        let printer = value.as_str().ok_or("printer must be a name from the discovered list")?;
+        if !state.printers.iter().any(|available| available.name == printer) {
+            return Err("printer must be a name from the discovered list".into());
+        }
+        next.printer = printer.to_owned();
+    }
+    if let Some(value) = object.get("copies") {
+        next.copies = value.as_u64().filter(|copies| (1..=999).contains(copies)).ok_or("copies must be an integer from 1 to 999")? as u32;
+    }
+    if let Some(value) = object.get("duplex") {
+        next.duplex = match value.as_str() {
+            Some("printerDefault") => None,
+            Some("off") => Some(UiDuplex::Off),
+            Some("longEdge") => Some(UiDuplex::LongEdge),
+            Some("shortEdge") => Some(UiDuplex::ShortEdge),
+            None if value.is_null() => None,
+            _ => return Err("duplex must be printerDefault, off, longEdge or shortEdge".into()),
+        };
+    }
+    if let Some(value) = object.get("grayscale") {
+        next.grayscale = value.as_bool().ok_or("grayscale must be a boolean")?;
+    }
+    let refresh = object.get("refresh").map(|value| value.as_bool().ok_or("refresh must be a boolean")).transpose()?.unwrap_or(false);
+    if refresh && !state.refresh(discover.ok_or("native printer discovery is unavailable here")?) {
+        return Err("printer discovery or submission is already active".into());
+    }
+    state.settings = next;
+    let (status, detail) = match state.message.as_ref() {
+        None => ("idle", ""),
+        Some(Feedback::FindingPrinters) => ("findingPrinters", ""),
+        Some(Feedback::NoPrinters) => ("noPrinters", ""),
+        Some(Feedback::DiscoveryFailed) => ("discoveryFailed", ""),
+        Some(Feedback::Submitting) => ("submitting", ""),
+        Some(Feedback::Submitted(receipt)) => ("submitted", receipt.as_str()),
+        Some(Feedback::Failed(error)) => ("failed", error.as_str()),
+        Some(Feedback::WorkerStopped) => ("workerStopped", ""),
+    };
+    let _ = std::marker::PhantomData::<Settings>;
+    Ok(json!({"printer":state.settings.printer,"copies":state.settings.copies,
+        "duplex":match state.settings.duplex { None=>"printerDefault",Some(UiDuplex::Off)=>"off",Some(UiDuplex::LongEdge)=>"longEdge",Some(UiDuplex::ShortEdge)=>"shortEdge" },
+        "grayscale":state.settings.grayscale,"printers":state.printers.iter().map(|printer|json!({"name":printer.name,"default":printer.default})).collect::<Vec<Value>>(),
+        "busy":state.busy(),"discovering":state.discovering(),"ready":state.ready(),"status":status,"detail":detail}))
+}
+
+pub fn feedback(message: &Feedback, translate: impl Fn(&str) -> String) -> String {
+    match message {
+        Feedback::FindingPrinters => translate("Finding printers…"),
+        Feedback::NoPrinters => translate("No printers found. Configure a system printer or export a PDF."),
+        Feedback::DiscoveryFailed => translate("Printer discovery failed."),
+        Feedback::Submitting => translate("Submitting print job…"),
+        Feedback::Submitted(receipt) if receipt.trim().is_empty() => translate("Print job submitted."),
+        Feedback::Submitted(receipt) => translate("Print job submitted: {receipt}").replace("{receipt}", receipt),
+        Feedback::Failed(error) => translate("Print failed: {error}").replace("{error}", error),
+        Feedback::WorkerStopped => translate("Print failed: the printing worker stopped."),
+    }
+}
+
+pub fn commands(app: &crate::WordApp) -> Vec<serde_json::Value> {
+    use serde_json::json;
+    let enabled = app.services.print_native.is_some() && app.printing.ready() || app.services.print.is_some();
+    vec![
+        json!({"id":"ui.printSettings","label":"Print settings","location":"File › Print","params":"printer, copies, duplex, grayscale, refresh, status, detail","enabled":true}),
+        json!({"id":"ui.printSubmit","label":"Submit print job","location":"File › Print","params":"range, pages, parity, copies, collate","enabled":enabled}),
+        json!({"id":"ui.print","label":"Print","location":"File › Print","params":"range, pages, parity, copies, collate","enabled":enabled}),
+    ]
+}
+
+pub fn submit(app: &mut crate::WordApp, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    use serde_json::json;
+    if app.services.print.is_none() && app.services.print_native.is_none() {
+        return Err("printing to the system print dialog isn't available here; export a PDF instead".into());
+    }
+    if app.services.print_native.is_some() && !app.printing.ready() {
+        return Err("Select an available printer in File > Print before submitting.".into());
+    }
+    if let Some(copies) = params.get("copies")
+        && !copies.as_u64().is_some_and(|n| (1..=wordcraft_engine::print::MAX_COPIES as u64).contains(&n))
+    {
+        return Err(format!("copies must be an integer from 1 to {}", wordcraft_engine::print::MAX_COPIES));
+    }
+    if let Some(collate) = params.get("collate")
+        && !collate.is_boolean()
+    {
+        return Err("collate must be a boolean".into());
+    }
+    let pdf = app.session.print_pdf(params).map_err(|error| error.to_string())?;
+    let byte_count = pdf.0.len();
+    if let Some(submit) = &app.services.print_native {
+        let settings = app.printing.settings.clone();
+        let collated = params.get("collate").and_then(serde_json::Value::as_bool).unwrap_or(app.ui.print.collate);
+        let receiver = submit(pdf.0, settings, collated);
+        app.printing.begin(receiver).map_err(|_| "a print job is already in progress".to_string())?;
+        app.print_feedback_seen = None;
+        return Ok(json!({"printing":true,"bytes":byte_count,"pending":true}));
+    }
+    if let Some(print) = &app.services.print {
+        print(&pdf.0)?;
+    }
+    Ok(json!({"printing":true,"bytes":byte_count,"pending":false}))
+}
+
 pub struct PrintPreviewState {
     pub loaded: bool,
-    pub printers: Vec<Printer>,
+    pub printers: Vec<NativePrinter>,
     pub selected_printer: String,
     pub capabilities: PrinterCapabilities,
     pub page_range: String,
     pub copies: String,
     pub collated: bool,
-    pub duplex: Duplex,
+    pub duplex: NativeDuplex,
     pub media: String,
     pub landscape: bool,
     pub fit_to_page: bool,
@@ -89,7 +227,7 @@ impl PrintPreviewState {
         self.selected_printer = printer.to_string();
         self.media.clear();
         self.capabilities = capabilities;
-        self.duplex = Duplex::Simplex;
+        self.duplex = NativeDuplex::Simplex;
     }
 }
 
@@ -103,7 +241,7 @@ impl Default for PrintPreviewState {
             page_range: String::new(),
             copies: "1".into(),
             collated: true,
-            duplex: Duplex::Simplex,
+            duplex: NativeDuplex::Simplex,
             media: String::new(),
             landscape: false,
             fit_to_page: false,
@@ -178,9 +316,9 @@ mod tests {
 
     #[test]
     fn selecting_another_printer_resets_unsupported_settings() {
-        let mut state = PrintPreviewState { duplex: Duplex::LongEdge, ..Default::default() };
-        state.reset_if_printer_changed("printer", PrinterCapabilities { media: vec!["A4".into()], duplex: vec![Duplex::Simplex] });
-        assert_eq!(state.duplex, Duplex::Simplex);
+        let mut state = PrintPreviewState { duplex: NativeDuplex::LongEdge, ..Default::default() };
+        state.reset_if_printer_changed("printer", PrinterCapabilities { media: vec!["A4".into()], duplex: vec![NativeDuplex::Simplex] });
+        assert_eq!(state.duplex, NativeDuplex::Simplex);
         assert!(state.media.is_empty(), "the new printer's default media remains selected");
     }
 

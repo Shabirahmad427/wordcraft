@@ -1471,7 +1471,6 @@
 	Export Bibliography Sources	Ekspordi bibliograafiaallikad
 	Edit Chart Data	Muuda diagrammi andmeid
 	Apply	Rakenda
-	Category	Kategooria
 	Value	Väärtus
 	Series	Andmerida
 	Series name	Andmerea nimi
@@ -1780,14 +1779,12 @@
 	Browse in WordCraft…	Sirvi WordCraftis…
 	Open a file with WordCraft's own browser when the system file dialog doesn't appear.	Ava fail WordCrafti enda failisirvijaga, kui süsteemi failidialoog ei ilmu.
 	Hide White Space	Peida tühi ala lehtede vahel
-	All pages	Kõik leheküljed
 	Current page	Praegune lehekülg
 	Selected pages	Valitud leheküljed
 	Custom range	Kohandatud vahemik
 	All pages in the range	Kõik vahemiku leheküljed
 	Odd pages only	Ainult paaritud leheküljed
 	Even pages only	Ainult paarisleheküljed
-	Copies	Koopiad
 	Collate copies	Järjesta koopiad
 	Pages like 1-3, 5	Leheküljed, nt 1-3, 5
 	{count} of {total} pages will print	Prinditakse {count} lehekülge {total}-st

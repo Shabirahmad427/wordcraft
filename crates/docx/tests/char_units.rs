@@ -18,11 +18,12 @@ fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
 
 /// A package whose body is `body`.
 fn docx(body: &str) -> Vec<u8> {
+    let content_types = r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
     let root = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
     let doc = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#
     );
-    zip(&[("_rels/.rels", root.as_bytes()), ("word/document.xml", doc.as_bytes())])
+    zip(&[("[Content_Types].xml", content_types.as_bytes()), ("_rels/.rels", root.as_bytes()), ("word/document.xml", doc.as_bytes())])
 }
 
 fn props(d: &Document) -> Vec<ParaProps> {

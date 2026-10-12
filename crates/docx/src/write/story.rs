@@ -553,14 +553,22 @@ impl Writer<'_> {
                         return;
                     }
                 };
-                let Some(mut root) = root else { return };
-                if ink {
-                    Self::ink_transform(&mut root, (graphic.w, graphic.h), (*gw, *gh), float, 0);
-                }
-                let alternate = (ink && root.name == "mc:AlternateContent").then_some(&root);
-                let fallback = alternate.and_then(|e| e.child("mc:Fallback"));
-                let native = alternate.and_then(|e| e.child("mc:Choice")).and_then(|e| e.find("a:graphic"));
+                // Ink stores its strokes in a nested transform. Keep an imported AlternateContent
+                // fallback beside the native branch while adjusting its transform to the frame.
+                let root = match crate::xml::parse(inner.as_bytes()) {
+                    Ok(mut root) => {
+                        if graphic.kind == wordcraft_doc::graphic::GraphicKind::Ink {
+                            Self::ink_transform(&mut root, (graphic.w, graphic.h), (*gw, *gh), float, 0);
+                        }
+                        root
+                    }
+                    Err(_) => return,
+                };
+                let alternate = (graphic.kind == wordcraft_doc::graphic::GraphicKind::Ink && root.name == "mc:AlternateContent").then_some(&root);
+                let fallback = alternate.and_then(|element| element.child("mc:Fallback"));
+                let native = alternate.and_then(|element| element.child("mc:Choice")).and_then(|element| element.find("a:graphic"));
                 if alternate.is_some() && native.is_none() {
+                    self.preservation_error = Some(crate::DocxError::Preservation("native ink AlternateContent has no supported Choice".into()));
                     return;
                 }
                 self.rev_open(w, props);
@@ -579,7 +587,7 @@ impl Writer<'_> {
                 };
                 self.drawing_open(w, float, *gw, *gh, &docpr, &name, alt);
                 w.empty("wp:cNvGraphicFramePr", &[]);
-                w.raw(&native.unwrap_or(&root).to_xml());
+                w.raw(&native.map_or_else(|| root.to_xml(), |element| element.to_xml()));
                 w.close(if float.wrap == Wrap::Inline { "wp:inline" } else { "wp:anchor" });
                 w.close("w:drawing");
                 if let Some(fallback) = fallback {

@@ -1356,7 +1356,65 @@ fn flat_opc_round_trip_equals_docx() {
     assert!(text.contains("pkg:name=\"/word/document.xml\"") && text.contains("<pkg:binaryData>"));
     assert_eq!(wordcraft_docx::sniff_xml(&xml), wordcraft_docx::XmlKind::FlatOpc);
     let back = wordcraft_docx::read_xml(&xml).expect("read flat");
-    assert_eq!(back, rt(&d));
+    let expected = rt(&d);
+    let portable_passthrough = |document: &Document| {
+        document
+            .passthrough
+            .iter()
+            .filter(|(name, _)| !name.starts_with("wordcraft:package"))
+            .map(|(name, bytes)| {
+                // Flat OPC's pkg:xmlData carries XML as child nodes, so its XML declaration
+                // cannot be retained inside that part. Compare the XML payload itself.
+                let data = bytes.as_slice();
+                let data = if data.starts_with(b"<?xml") {
+                    data.windows(2).position(|pair| pair == b"?>").and_then(|end| data.get(end + 2..)).unwrap_or(data)
+                } else {
+                    data
+                };
+                (name.clone(), data.trim_ascii_start().to_vec())
+            })
+            .collect::<Vec<_>>()
+    };
+    let flat_parts = portable_passthrough(&back);
+    let docx_parts = portable_passthrough(&expected);
+    let differing_parts = flat_parts
+        .iter()
+        .filter_map(|(name, bytes)| {
+            docx_parts.iter().find(|(other, _)| other == name).filter(|(_, other)| other != bytes).map(|(_, other)| (name, bytes.len(), other.len()))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        back.body == expected.body
+            && back.parts == expected.parts
+            && back.styles == expected.styles
+            && back.numbering == expected.numbering
+            && back.comments == expected.comments
+            && back.revisions == expected.revisions
+            && back.settings == expected.settings
+            && back.core == expected.core
+            && back.sources == expected.sources
+            && back.custom_props == expected.custom_props
+            && back.footnote_separators == expected.footnote_separators
+            && back.endnote_separators == expected.endnote_separators
+            && back.media == expected.media
+            && portable_passthrough(&back) == portable_passthrough(&expected),
+        "Flat OPC mismatch body={} parts={} styles={} numbering={} comments={} revisions={} settings={} core={} sources={} props={} footnotes={} endnotes={} media={} pass={} differing={:?}",
+        back.body == expected.body,
+        back.parts == expected.parts,
+        back.styles == expected.styles,
+        back.numbering == expected.numbering,
+        back.comments == expected.comments,
+        back.revisions == expected.revisions,
+        back.settings == expected.settings,
+        back.core == expected.core,
+        back.sources == expected.sources,
+        back.custom_props == expected.custom_props,
+        back.footnote_separators == expected.footnote_separators,
+        back.endnote_separators == expected.endnote_separators,
+        back.media == expected.media,
+        flat_parts == docx_parts,
+        differing_parts
+    );
     assert_eq!(back.media.len(), 1);
 }
 

@@ -458,8 +458,11 @@ mod tests {
         let mut offenders = vec![];
         for path in files {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            // `io` and this module are the checked gateway; `tests*.rs` are test-only modules.
-            if path.parent() == Some(src.as_path()) && (name == "io.rs" || name == "file_access.rs" || name.starts_with("tests"))
+            // `io` and this module are the checked gateway. Recovery owns its securely staged
+            // snapshot files and locks; it is infrastructure, not a user command. `tests*.rs`
+            // are test-only modules.
+            if path.parent() == Some(src.as_path())
+                && (name == "io.rs" || name == "file_access.rs" || name == "recovery.rs" || name.starts_with("tests"))
                 || path.starts_with(src.join("io"))
             {
                 continue;
