@@ -6413,6 +6413,7 @@ dependencies = [
 name = "wordcraft-cli"
 version = "0.6.1"
 dependencies = [
+ "image",
  "serde_json",
  "wordcraft-doc",
  "wordcraft-engine",

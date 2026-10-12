@@ -20,3 +20,6 @@ wordcraft-render = { workspace = true }
 wordcraft-mcp = { workspace = true }
 wordcraft-zotero = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+image = { workspace = true }
