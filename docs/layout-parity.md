@@ -20,11 +20,16 @@ font can't match Word's metrics.
 |---|---|---|---|
 | Line breaking (UAX #14 with Word's exceptions: no break after `/`) | ✅ | `layout::tests::no_line_break_right_after_a_slash` | — |
 | Justification, Word 2013+ space shrinking (compat mode 15) | ✅ | #109 | — |
+| Complex scripts (Myanmar, Khmer, Indic): shaped per script run with OpenType fallback fonts, one cluster per syllable, Myanmar wraps between syllables | 🟡 | `layout::tests_complex` (#604). Khmer, Thai and Lao still wrap only at spaces (need a dictionary) | 4–8 |
 | Kashida justification (Arabic) | ❌ | no kashida in `crates/layout` | 3–5 |
 | Distributed / Thai distributed alignment | 🟡 | read; layout untested | 1–2 |
 | Default font metrics (Aptos, Calibri, Cambria…) | 🟡 | Carlito/Caladea/Liberation are metric-compatible for Calibri/Cambria/Arial/Times/Courier; **Aptos (Word's default since 2024) has no metric-compatible open substitute**, so new Word documents wrap differently ([typing-parity.md](typing-parity.md) Known gaps). Needs an owner decision (commission or license a metric-matched font) | 6–10 + owner |
+| Symbol fonts (Symbol, Wingdings, Wingdings 2/3, Webdings) without the proprietary font: each character, stored as U+F020–U+F0FF or a plain 8-bit code, is drawn as its Unicode equivalent from a face that has it; PDF text and copies read as those symbols | ✅ | `doc::symbol_fonts` tables (Adobe Symbol table and Unicode L2/12-368), `layout::tests::wingdings_text_draws_and_reads_as_its_unicode_symbols` (#776). Shapes come from Noto Sans Symbols / Symbols 2, DejaVu Sans or Segoe UI Symbol, so they differ from Word's; Wingdings 0xFF (not in Unicode) still has no symbol | — |
+| Indents in characters (`w:firstLineChars`, `w:leftChars`…), measured in the paragraph mark's font size | ✅ | #534, `layout::tests::character_indents_use_the_paragraph_mark_size`; spacing in lines (`w:beforeLines`/`w:afterLines`) uses the stored points (needs the document grid) | — |
 | Line spacing (single, 1.5, double, at least, exactly, multiple), spacing before/after, contextual spacing | 🟡 | Word puts multiple-spacing extra below the text and collapses spacing differently (#135, #108 open) | 3–5 |
-| Widow/orphan control, keep with next, keep lines together, page break before | ✅ | `lib.rs` keep_next/keep_lines | — |
+| Kerning only where Kerning for fonts asks for it (`w:kern`, at or above its size) | ✅ | Measured in Word for Windows: no `w:kern` or `w:kern="0"` is unkerned; WordCraft kerned every run, so its lines held more text than Word's. `layout::tests::kerning_follows_kerning_for_fonts_like_word` | — |
+| Automatic (HTML-style) paragraph spacing (`w:beforeAutospacing`, `w:afterAutospacing`) | ✅ | Measured in Word for Windows: 14 pt at any size, none at the top of the document or a cell or after a cell's last paragraph, the larger of two neighbouring spaces. `layout::tests::automatic_paragraph_spacing_like_word`, `…_drops_at_cell_edges` | — |
+| Widow/orphan control, keep with next, keep lines together, page break before | ✅ | `lib.rs` keep_next/keep_lines; a line holding only a page break stays at the bottom of a full page instead of leaving a blank page (#534) | — |
 | Tabs (left, center, right, decimal, bar), leaders | 🟡 | Bar tabs untested | 1–2 |
 | Hyphenation (automatic, zone from the document, words in capitals, soft hyphens, consecutive limit, Manual Hyphenation, #407) | 🟡 | English patterns only; other languages hyphenate wrongly or not at all | in localization |
 | Drop caps | ✅ | 2026-10-06 | — |
@@ -34,7 +39,7 @@ font can't match Word's metrics.
 | Footnotes at the page bottom, endnotes at the end, note numbering | 🟡 | Footnotes continue at line boundaries and later-column anchors reserve space page-wide; document-end endnotes now continue in order across columns/pages with a continuation rule and body/footer clearance. Undo/redo, recovery, DOCX reopen/raster equality and PDF export are tested. Number formats are modeled; continuous numbering is the only active endnote restart behavior. Endnote position/restart properties, section-end placement, custom continuation separator/notice and section-specific overrides are not modeled. No Microsoft Word reference comparison | 4–6 |
 | Tables: row heights (at least/exact), rows split across pages, header rows repeat, Can't Split | ✅ | 2026-10-06, #138 | — |
 | Tables: autofit to contents/window, fixed widths, Word 2013 edge | 🟡 | #137; #44: AutoFit Contents measures each column's narrowest and widest text and shares the width like Word, once (not live as you type); cell preferred widths and spans still differ | 3–5 |
-| Floating tables (`w:tblpPr`) | 🟡 | #137; overlap rules untested | 2–3 |
+| Floating tables (`w:tblpPr`) | 🟡 | #137; one placed on the page or margin that would cover the text before it and doesn't fit below it moves to the next page (#534); overlap rules untested | 2–3 |
 | Nested tables | 🟡 | render; polish missing | 2–4 |
 | Floating pictures/shapes placement (relative to page/margin/column/paragraph/line/character) | ✅ | #136 | — |
 | Text wrap: square, top-and-bottom, behind, in front | ✅ | 2026-10-06 | — |
@@ -65,6 +70,7 @@ font can't match Word's metrics.
 | Relayout after an edit | 1.4 ms | not measured | measured 2026-10-06 |
 | Font picker with many installed fonts | fixed freezes (#233) | instant | issue #31, #59 |
 | Large real-world documents (500+ pages, many pictures) | not measured | | gap |
+| Scrolling a 1,096-page document that is one 5,300-row table (#811) | ~2.4 ms idle, ~4.5 ms median scroll frame (was ~600 ms); opening still lays out for ~4–8 s | not measured | measured 2026-10-12, release, headless (`tests_perf::big_table_scroll_bench`) |
 
 ## Revision history
 

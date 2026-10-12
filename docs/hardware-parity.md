@@ -1,6 +1,8 @@
 # Hardware parity with Microsoft Word
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first version) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4 and Word for Windows
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** trivial (32-bit Windows starts on OpenGL; previously major: first version) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4 and Word for Windows
+
+> **Printing update:** 2026-10-12 · direct desktop printing through craft-print; details below.
 
 Word is not a hardware-heavy app, but a few devices matter to its users: printers above all, then
 pens, microphones (Dictate) and speakers (Read Aloud), and displays.
@@ -23,6 +25,8 @@ pens, microphones (Dictate) and speakers (Read Aloud), and displays.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | trivial | 32-bit Windows starts on OpenGL: DirectX 12 graphics pipeline creation returns "The parameter is incorrect" and the app exited before the window appeared |
+| 2026-10-12 | minor | Desktop File > Print now discovers printers and submits PDF jobs through pinned craft-print with printer choice, copies, duplex and grayscale; browser printing and PDF export remain available. The upstream preview, page ranges, parity and Print Markup remain available. Remaining print parity includes driver-specific tray/options and pages-per-sheet UI; physical printer fidelity needs hardware validation. |
 | 2026-10-10 | trivial | Windows falls back to OpenGL when DirectX 12 offers only the software adapter (#316) |
 | 2026-10-10 | trivial | Desktop File › Print opens the PDF in the system viewer (#286) |
 | 2026-10-10 | major | Linux File › Print adds a shared-layout preview and CUPS job controls; macOS command path is unverified |

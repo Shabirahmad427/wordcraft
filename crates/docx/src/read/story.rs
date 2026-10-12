@@ -13,10 +13,14 @@ use wordcraft_doc::{Block, Blocks, InlineObject, Paragraph, PartKind, RevisionKi
 
 use super::Reader;
 use super::props::{sectpr, tcpr, trpr};
-use crate::package::{Rels, rt};
+use super::shape_style::{preset_kind, shape_paint, vml_color};
+use crate::package::{ContentTypes, Rels, rt};
 use crate::units::{int, measure, u32_of};
-use crate::xml::El;
+use crate::xml::{El, Node};
 use wordcraft_doc::wordart::TextWarp;
+
+const INK_URI: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingInk";
+const INK_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
 
 /// Deepest table nesting we build (deeper tables become plain paragraphs).
 const MAX_TABLE_DEPTH: usize = 24;
@@ -82,9 +86,9 @@ fn enclosure(f: &FieldState) -> Option<wordcraft_doc::eq::Enclosure> {
 }
 
 /// Fields kept as ranges: those whose result another program writes, with formatting and often
-/// several paragraphs (citation managers' `ADDIN` fields: Zotero, Mendeley, EndNote).
+/// several paragraphs (TOCs and citation managers' `ADDIN` fields).
 fn is_range_instr(instr: &str) -> bool {
-    instr.trim_start().get(..5).is_some_and(|k| k.eq_ignore_ascii_case("ADDIN"))
+    super::is_toc(instr) || instr.trim_start().get(..5).is_some_and(|k| k.eq_ignore_ascii_case("ADDIN"))
 }
 
 /// The last paragraph of a block list: its last block, or inside a final table the last
@@ -164,7 +168,7 @@ fn clean_text(s: &str) -> String {
 
 fn children_of_choice(ac: &El) -> Option<&El> {
     // Prefer a Choice whose requirements we understand; else the Fallback; else any Choice.
-    const KNOWN: &[&str] = &["wps", "wpg", "wpc", "w14", "w15", "wp14", "a14", "w16se", "w16cid", "w16", "w16cex", "w16sdtdh", "v"];
+    const KNOWN: &[&str] = &["wps", "wpg", "wpc", "wpi", "w14", "w15", "wp14", "a14", "w16se", "w16cid", "w16", "w16cex", "w16sdtdh", "v"];
     let ok = |c: &El| c.attr("Requires").unwrap_or("").split_whitespace().all(|r| KNOWN.contains(&r));
     ac.children("mc:Choice").find(|c| ok(c)).or_else(|| ac.child("mc:Fallback")).or_else(|| ac.child("mc:Choice"))
 }
@@ -332,7 +336,8 @@ impl Reader<'_> {
             pb.push_obj(o, &CharProps::default());
         }
         if let Some(ppr) = e.child("w:pPr") {
-            let (props, mark) = self.pc.ppr(ppr);
+            let (mut props, mark) = self.pc.ppr(ppr);
+            super::props::resolve_level_only(&self.doc.styles, &mut props, "Normal");
             para.props = props;
             para.mark = mark;
             if let Some(rpr) = ppr.child("w:rPr") {
@@ -352,7 +357,14 @@ impl Reader<'_> {
             // Tracked formatting changes (§17.13.5.29, §17.13.5.19): the paragraph properties
             // before the change, and a change of the list numbering.
             if let Some(ch) = ppr.child("w:pPrChange") {
-                let old = ch.child("w:pPr").map(|o| self.pc.ppr(o).0.formatting()).unwrap_or_default();
+                let old = ch
+                    .child("w:pPr")
+                    .map(|o| {
+                        let mut old = self.pc.ppr(o).0;
+                        super::props::resolve_level_only(&self.doc.styles, &mut old, "Normal");
+                        old.formatting()
+                    })
+                    .unwrap_or_default();
                 para.props.fmt_change = PropChange::boxed(self.revision(RevisionKind::Format, ch), old);
             }
             if para.props.numbering.is_some()
@@ -502,7 +514,10 @@ impl Reader<'_> {
                 }
             }
             "mc:AlternateContent" => {
-                if let Some(c) = children_of_choice(k) {
+                if let Some(o) = self.read_ink_alternate(sc, k, rels) {
+                    let props = self.run_props_none(ctx);
+                    self.emit_obj(sc, pb, o, &props);
+                } else if let Some(c) = children_of_choice(k) {
                     self.read_inline_children(sc, pb, c, rels, ctx, depth + 1);
                 }
             }
@@ -663,7 +678,9 @@ impl Reader<'_> {
             }
             "w:ruby" => self.read_ruby(sc, pb, k, props),
             "mc:AlternateContent" => {
-                if let Some(c) = children_of_choice(k) {
+                if let Some(o) = self.read_ink_alternate(sc, k, rels) {
+                    self.emit_obj(sc, pb, o, props);
+                } else if let Some(c) = children_of_choice(k) {
                     for x in c.els() {
                         self.read_run_child(sc, pb, x, props, rels, note, depth + 1);
                     }
@@ -928,7 +945,7 @@ impl Reader<'_> {
             // Kept so saving writes the chart or diagram back: the frame around it is written
             // from the object's (possibly moved or resized) size and position.
             let extra: Vec<String> = match kind {
-                GraphicKind::Chart => Vec::new(),
+                GraphicKind::Chart | GraphicKind::Ink => Vec::new(),
                 GraphicKind::Diagram => self.diagram_drawing_rel(gd, rels).into_iter().collect(),
             };
             let source = c.child("a:graphic").and_then(|g| self.keep_embedded(g, rels, &extra));
@@ -950,17 +967,14 @@ impl Reader<'_> {
         } else {
             let wsp = gd.find("wps:wsp")?;
             let mut obj = self.read_wsp(sc, wsp, rels, w, h, float);
-            // A freeform: its custom geometry, and whether it's ink WordCraft wrote.
-            if let InlineObject::Shape { kind, freeform, .. } = &mut obj
-                && let Some(sppr) = wsp.child("wps:spPr")
-                && let Some(mut f) = super::freeform::cust_geom(sppr, w, h)
+            // A freeform: whether it's ink WordCraft wrote.
+            if let InlineObject::Shape { freeform: Some(f), .. } = &mut obj
+                && let Some(name) = c.child("wp:docPr").and_then(|p| p.attr("name"))
+                && let Some(tool) = super::freeform::ink_tool(name)
             {
-                f.alpha = super::freeform::line_alpha(sppr.child("a:ln"));
-                let name = c.child("wp:docPr").and_then(|p| p.attr("name"));
-                f.ink = name.and_then(super::freeform::ink_tool);
-                f.order = name.filter(|_| f.ink.is_some()).and_then(super::freeform::ink_order);
-                *kind = ShapeKind::Freeform;
-                *freeform = Some(Arc::new(f));
+                let f = Arc::make_mut(f);
+                f.ink = Some(tool);
+                f.order = super::freeform::ink_order(name);
             }
             obj
         };
@@ -979,6 +993,34 @@ impl Reader<'_> {
         Some(obj)
     }
 
+    /// Keep the selected native-ink branch and its picture fallback as one object. Reading only
+    /// the fallback flattens the ink; reading only the choice loses its preview on the next save.
+    fn read_ink_alternate(&mut self, sc: &mut StoryCtx, ac: &El, rels: &Rels) -> Option<InlineObject> {
+        let choice = children_of_choice(ac).filter(|e| e.name == "mc:Choice")?;
+        let drawing = choice.child("w:drawing")?;
+        if drawing.find("a:graphicData")?.attr("uri") != Some(INK_URI) {
+            return None;
+        }
+        let fallback = ac.child("mc:Fallback");
+        let preview = fallback.and_then(|f| f.child("w:pict")).and_then(|p| self.read_vml(sc, p, rels));
+        let Some(mut object) = self.read_drawing(sc, drawing, rels) else { return preview };
+        if let InlineObject::Graphic { w, h, graphic, .. } = &mut object {
+            let graphic = Arc::make_mut(graphic);
+            if let Some(InlineObject::Image { media, .. }) = preview {
+                graphic.items = vec![GraphicItem::Image { rect: [0.0, 0.0, *w, *h], media }];
+            }
+            if let Some(fallback) = fallback {
+                let kept =
+                    El { name: "mc:AlternateContent".into(), attrs: Vec::new(), kids: vec![Node::El(choice.clone()), Node::El(fallback.clone())] };
+                if let Some(source) = self.keep_embedded(&kept, rels, &[]) {
+                    graphic.source = Some(source);
+                }
+                // A malformed or over-budget fallback must not discard a valid native part.
+            }
+        }
+        Some(object)
+    }
+
     /// The chart or SmartArt diagram in an `a:graphicData`, as items in points from its top-left
     /// corner. Charts are drawn from their cached data, SmartArt diagrams from the drawing Word
     /// stores beside them. Built once per part and size; once the file's graphic budget is spent,
@@ -987,6 +1029,7 @@ impl Reader<'_> {
         let part = match kind {
             GraphicKind::Chart => gd.child("c:chart").and_then(|c| c.attr("r:id")).and_then(|id| super::part_of(rels, id, rt::CHART)),
             GraphicKind::Diagram => self.diagram_part(gd, rels),
+            GraphicKind::Ink => None,
         };
         let Some(path) = part else { return Arc::new(Graphic { kind, items: Vec::new(), w, h, source, chart: None, smart_art: None }) };
         let key = (kind, path, w.to_bits(), h.to_bits());
@@ -1029,6 +1072,7 @@ impl Reader<'_> {
                 None => Vec::new(),
             },
             GraphicKind::Diagram => self.diagram_drawing(path, w, h),
+            GraphicKind::Ink => Vec::new(),
         }
     }
 
@@ -1175,31 +1219,16 @@ impl Reader<'_> {
         float.set_spin(xfrm_spin(sppr));
         let prst = sppr.and_then(|s| s.child("a:prstGeom")).and_then(|g| g.attr("prst")).unwrap_or("rect");
         let txbx = wsp.child("wps:txbx").and_then(|t| t.child("w:txbxContent"));
-        let mut kind = match prst {
-            "roundRect" => ShapeKind::RoundedRectangle,
-            "ellipse" => ShapeKind::Ellipse,
-            "triangle" | "rtTriangle" => ShapeKind::Triangle,
-            "diamond" => ShapeKind::Diamond,
-            "line" => ShapeKind::Line,
-            "straightConnector1" => ShapeKind::StraightConnector,
-            "bentConnector2" | "bentConnector3" | "bentConnector4" | "bentConnector5" => ShapeKind::ElbowConnector,
-            "curvedConnector2" | "curvedConnector3" | "curvedConnector4" | "curvedConnector5" => ShapeKind::CurvedConnector,
-            "rightArrow" | "leftArrow" | "upArrow" | "downArrow" => ShapeKind::Arrow,
-            "star5" | "star4" | "star6" => ShapeKind::Star,
-            "heart" => ShapeKind::Heart,
-            _ => ShapeKind::Rectangle,
-        };
+        let mut kind = preset_kind(prst);
         let is_tb = wsp.child("wps:cNvSpPr").and_then(|c| c.attr("txBox")).is_some_and(|v| v == "1" || v == "true");
         if is_tb || (txbx.is_some() && kind == ShapeKind::Rectangle) {
             kind = ShapeKind::TextBox;
         }
-        let solid = |e: Option<&El>| {
-            e.and_then(|f| f.child("a:solidFill")).and_then(|f| f.child("a:srgbClr")).and_then(|c| c.attr("val")).and_then(Rgb::parse)
-        };
-        let fill = solid(sppr);
+        // Explicit paint, else the theme's through the style references (#611).
+        let paint = shape_paint(sppr, wsp.child("wps:style"), &self.doc.settings.theme_colors);
+        let (stroke, stroke_width) = (paint.stroke, paint.stroke_width);
+        let fill = if kind.is_open() { None } else { paint.fill };
         let ln = sppr.and_then(|s| s.child("a:ln"));
-        let stroke = solid(ln);
-        let stroke_width = ln.and_then(|l| l.attr("w")).and_then(|v| measure(v, 12_700.0)).unwrap_or(0.0).clamp(0.0, 100.0);
         let effects = sppr.and_then(|s| s.child("a:effectLst")).map(effect_list).unwrap_or_default();
         let story = match txbx {
             Some(t) if sc.story_depth < MAX_STORY_DEPTH => Some(self.read_textbox(sc, t, rels)),
@@ -1239,6 +1268,15 @@ impl Reader<'_> {
             if let Some(a) = bp.attr("anchor") {
                 part.body.anchor = wordcraft_doc::props::valign_from_anchor(a);
             }
+            // Internal margins, each defaulting to Word's (#743).
+            let mut inset = wordcraft_doc::TEXT_BOX_INSET;
+            for (slot, n) in inset.iter_mut().zip(["lIns", "tIns", "rIns", "bIns"]) {
+                if let Some(v) = bp.attr(n).and_then(int) {
+                    *slot = u32::try_from(v.clamp(0, i64::from(wordcraft_doc::MAX_TEXT_BOX_INSET))).unwrap_or(0);
+                }
+            }
+            part.body.inset = (inset != wordcraft_doc::TEXT_BOX_INSET).then_some(inset);
+            part.body.auto_fit = bp.child("a:spAutoFit").is_some();
         }
         let mut extra = ShapeExtra::default();
         // Arrowheads: any end type but `none` (ECMA-376 §20.1.10.33) is drawn as a triangle.
@@ -1258,7 +1296,13 @@ impl Reader<'_> {
             self.glued.extend(extra.start.iter().chain(extra.end.iter()).map(|e| e.id));
         }
         extra.warp = wsp.child("wps:bodyPr").and_then(|b| b.child("a:prstTxWarp")).and_then(text_warp);
-        InlineObject::Shape { kind, w, h, fill, stroke, stroke_width, float, story, freeform: None, effects, extra }
+        // A freeform: its custom geometry (#743: in a group too).
+        let freeform = sppr.and_then(|s| super::freeform::cust_geom(s, w, h)).map(|mut f| {
+            f.alpha = super::freeform::line_alpha(ln);
+            kind = ShapeKind::Freeform;
+            Arc::new(f)
+        });
+        InlineObject::Shape { kind, w, h, fill, stroke, stroke_width, float, story, freeform, effects, extra }
     }
 
     /// Keep drawing id `id` on a shape read from a file (see [`Reader::glued`]).
@@ -1279,32 +1323,34 @@ impl Reader<'_> {
         self.doc.add_part(PartKind::TextBox, blocks)
     }
 
-    /// Legacy VML pictures and text boxes (best effort).
+    /// Legacy VML pictures, text boxes, lines, rectangles and ovals (best effort).
     fn read_vml(&mut self, sc: &mut StoryCtx, pict: &El, rels: &Rels) -> Option<InlineObject> {
         let shape = pict.els().find(|e| e.name.starts_with("v:") && e.local() != "shapetype")?;
         let style = shape.attr("style").unwrap_or("");
         let len = |k: &str| vml_style(style, k).and_then(|v| measure(v, 1.0)).unwrap_or(0.0).clamp(0.0, crate::units::MAX_LEN_PT);
-        let (w, h) = (len("width"), len("height"));
-        let float = vml_float(shape, style);
+        let (mut w, mut h) = (len("width"), len("height"));
+        let mut float = vml_float(shape, style);
         if let Some(img) = shape.find("v:imagedata") {
             let id = img.attr("r:id").or_else(|| img.attr("r:pict"))?;
             let media = self.media_for(rels, id)?;
             let alt = shape.attr("alt").or_else(|| img.attr("o:title")).unwrap_or("").to_string();
             return Some(InlineObject::Image { media, w, h, alt, float, crop: [0.0; 4], ole: None });
         }
+        let on = |name: &str| shape.attr(name).is_none_or(|v| !matches!(v, "f" | "false" | "0"));
+        let stroke = on("stroked").then(|| shape.attr("strokecolor").map_or(Some(Rgb::BLACK), vml_color)).flatten();
+        let stroke_width = shape.attr("strokeweight").and_then(|v| measure(v, 1.0)).unwrap_or(0.75).clamp(0.0, 100.0);
+        let fill = on("filled").then(|| shape.attr("fillcolor").map_or(Some(Rgb::WHITE), vml_color)).flatten();
         if let Some(t) = shape.find("w:txbxContent")
             && sc.story_depth < MAX_STORY_DEPTH
         {
             let story = Some(self.read_textbox(sc, t, rels));
-            let fill = shape.attr("fillcolor").and_then(Rgb::parse);
-            let stroke = shape.attr("strokecolor").and_then(Rgb::parse);
             return Some(InlineObject::Shape {
                 kind: ShapeKind::TextBox,
                 w,
                 h,
                 fill,
                 stroke,
-                stroke_width: 0.75,
+                stroke_width,
                 float,
                 story,
                 freeform: None,
@@ -1312,7 +1358,51 @@ impl Reader<'_> {
                 extra: Default::default(),
             });
         }
-        None
+        let kind = match shape.local() {
+            "line" => ShapeKind::Line,
+            "rect" => ShapeKind::Rectangle,
+            "roundrect" => ShapeKind::RoundedRectangle,
+            "oval" => ShapeKind::Ellipse,
+            _ => return None,
+        };
+        let mut extra = ShapeExtra::default();
+        if kind == ShapeKind::Line {
+            // A line runs `from` → `to` (points, offsets from where its style places it).
+            let pt = |name: &str| -> (f32, f32) {
+                let v = shape.attr(name).unwrap_or("0,0");
+                let (x, y) = v.split_once(',').unwrap_or((v, "0"));
+                let m = |s: &str| measure(s, 1.0).map_or(0.0, wordcraft_geom::finite).clamp(-crate::units::MAX_LEN_PT, crate::units::MAX_LEN_PT);
+                (m(x), m(y))
+            };
+            let ((x0, y0), (x1, y1)) = (pt("from"), pt("to"));
+            let max = crate::units::MAX_LEN_PT;
+            (w, h) = ((x1 - x0).abs().min(max), (y1 - y0).abs().min(max));
+            float.x = (float.x + x0.min(x1)).clamp(-max, max);
+            float.y = (float.y + y0.min(y1)).clamp(-max, max);
+            // Drawn top-left to bottom-right; flipped for the other directions.
+            float.flip_h ^= x1 < x0;
+            float.flip_v ^= y1 < y0;
+            // Arrowheads (`v:stroke` startarrow / endarrow): any but `none` is drawn.
+            let arrow = |name: &str| shape.child("v:stroke").and_then(|s| s.attr(name)).is_some_and(|v| v != "none");
+            extra.arrow_start = arrow("startarrow");
+            extra.arrow_end = arrow("endarrow");
+        }
+        if stroke.is_none() && (fill.is_none() || kind == ShapeKind::Line) {
+            return None;
+        }
+        Some(InlineObject::Shape {
+            kind,
+            w,
+            h,
+            fill: fill.filter(|_| kind != ShapeKind::Line),
+            stroke,
+            stroke_width,
+            float,
+            story: None,
+            freeform: None,
+            effects: Default::default(),
+            extra,
+        })
     }
 
     /// An OLE object (`w:object`, ECMA-376 §17.3.3.19): shown as its picture (VML, or a DrawingML
@@ -1365,10 +1455,12 @@ impl Reader<'_> {
             let mut tcs = Vec::new();
             collect(tr, "w:tc", &mut tcs, &mut Vec::new(), 0);
             for (tc, cell_controls) in tcs.into_iter().take(MAX_COLS) {
-                let (mut props, hcont) =
-                    tc.child("w:tcPr").map(tcpr).unwrap_or_else(|| (wordcraft_doc::props::CellProps { span: 1, ..Default::default() }, false));
+                let (mut props, hcont) = tc
+                    .child("w:tcPr")
+                    .map(|p| tcpr(&self.pc, p))
+                    .unwrap_or_else(|| (wordcraft_doc::props::CellProps { span: 1, ..Default::default() }, false));
                 if let Some(ch) = tc.child("w:tcPr").and_then(|p| p.child("w:tcPrChange")) {
-                    let old = ch.child("w:tcPr").map(|o| tcpr(o).0).unwrap_or_default();
+                    let old = ch.child("w:tcPr").map(|o| tcpr(&self.pc, o).0).unwrap_or_default();
                     props.fmt_change = PropChange::boxed(self.revision(RevisionKind::Format, ch), old);
                 }
                 if hcont && let Some(prev) = row.cells.last_mut() {
@@ -1685,7 +1777,9 @@ struct Xfrm {
 /// The rotation and flips of the `a:xfrm` in shape properties `sppr` (ECMA-376 §20.1.7.6:
 /// `rot` in 60000ths of a degree, clockwise; `flipH`, `flipV`). None when missing or junk.
 fn xfrm_spin(sppr: Option<&El>) -> wordcraft_geom::Spin {
-    let Some(x) = sppr.and_then(|s| s.child("a:xfrm")) else { return wordcraft_geom::Spin::default() };
+    let Some(x) = sppr.and_then(|s| if matches!(s.name.as_str(), "a:xfrm" | "w14:xfrm") { Some(s) } else { s.child("a:xfrm") }) else {
+        return wordcraft_geom::Spin::default();
+    };
     let rot = x.attr("rot").and_then(int).map(|v| v.rem_euclid(21_600_000) as f32 / 60_000.0).unwrap_or(0.0);
     wordcraft_geom::Spin::new(rot, on_off_attr(x, "flipH"), on_off_attr(x, "flipV"))
 }

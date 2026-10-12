@@ -7,6 +7,8 @@ The work list. One entry per shortfall, ranked by how much it stops a Word user 
 wall-clock estimate, and which parity document tracks it. Agents: pick from the top, check open PRs
 first (`gh pr list`), and update this file and the parity doc when a gap closes.
 
+Native save reliability: synthetic cases on macOS reproduced loss through the predictable temporary-file name. Saves now use owned, exclusively created siblings, synchronize before replacement and clean up on failure; originals survive pre-replacement errors. This narrows save-path reliability under gap #3; the listed field failures and broader stability work remain open. See [save-path guarantees](file-format-parity.md#native-save-path-guarantees).
+
 ## Ranked
 
 | # | Gap | B | Evidence | Impact | Hours | Doc |
@@ -30,13 +32,13 @@ first (`gh pr list`), and update this file and the parity doc when a gap closes.
 | 17 | **East Asian typography**: vertical text, ruby/Phonetic Guide, Enclose Characters, document grid, Asian Typography options | | Catalog misses `format.phonetic`, `format.enclose`, `para.asianTypography` | Chinese, Japanese and Korean documents | 20–30 | [layout-parity.md](layout-parity.md) |
 | 18 | **Screen-reader access** to the document canvas untested | | AccessKit enabled; no tests | Blind and low-vision users; public-sector procurement | 10–15 | [ui-parity.md](ui-parity.md) |
 | 19 | **RTF and ODT depth**: notes, comments, revisions, sections, RTL | | ~1,500 lines each in `crates/formats` | Users exchanging with LibreOffice or older tools | 18–27 | [file-format-parity.md](file-format-parity.md) |
-| 20 | **Performance on large real-world documents** unmeasured (500+ pages, many pictures) | | Only the 188-page sample benchmark | Thesis and book authors | 10–20 | [layout-parity.md](layout-parity.md) |
+| 20 | **Performance on large real-world documents** unmeasured (500+ pages, many pictures) | | Only the 188-page sample benchmark; scrolling a 1,096-page one-table document went from ~600 ms to ~2–5 ms a frame (#811), but opening it still lays out for seconds | Thesis and book authors | 10–20 | [layout-parity.md](layout-parity.md) |
 | 21 | **Mail merge data sources**: no Outlook/Contacts, Access or database sources, no email merge; CSV, typed lists (#247) and Excel/OpenDocument spreadsheets (#334) only | | Select Recipients reads .csv/.tsv, .xlsx/.xlsm and .ods | Office administrators | 4–8 | [target-app-parity.md](target-app-parity.md) |
 | 22 | **Ecosystem**: no VBA execution (macros preserved only), no Office add-ins, no cloud storage, no real-time co-authoring | | `.docm` keeps macros (#172) | Enterprise users with macro templates; teams | 40–80 + owner decisions | [target-app-parity.md](target-app-parity.md) |
 | 23 | **PDF Reflow** (open a PDF as an editable document, Word for Windows) | | | Users who edit PDFs they receive | 30–50 | [file-format-parity.md](file-format-parity.md) |
 | 24 | **Customize Ribbon / Keyboard**, Quick Access Toolbar customization; ~100 of Word's ~250 shortcuts | | [ui-parity.md](ui-parity.md) | Power users | 10–16 | [ui-parity.md](ui-parity.md) |
 | 25 | **In-app AI assistant** (Copilot-style draft, rewrite, summarize) | | Chat PR #178 open | Users expecting Copilot | 15–30 + owner (provider) | [target-app-parity.md](target-app-parity.md) |
-| 26 | **Minor formats**: Flat OPC XML, Word 2003 XML, MHT, Works/WordPerfect | | | Rare | 20–35 | [file-format-parity.md](file-format-parity.md) |
+| 26 | **Minor formats**: MHT, Works/WordPerfect, saving Word 2003 XML | | Word XML Document (Flat OPC) opens and saves, Word 2003 XML opens (#548) | Rare | 15–28 | [file-format-parity.md](file-format-parity.md) |
 | 27 | **View windows**: Side by Side, Synchronous Scrolling, Arrange All, Switch Windows | | [parity-checklist.md](parity-checklist.md) (View 25/29) | Comparing documents | 3–5 | [ui-parity.md](ui-parity.md) |
 | 28 | **Dictate** | | `tools.dictate` missing | Dictation users | 8–15 + owner (speech model) | [hardware-parity.md](hardware-parity.md) |
 | 29 | **Equations**: ink equations | | #191 notes; long display equations wrap at operators (#326) | Maths-heavy documents | 2–3 | [layout-parity.md](layout-parity.md) |
@@ -52,9 +54,14 @@ The same gaps grouped the way the parity documents are, for agents working in on
 - **Feature gaps:** #2 (preserve), #5, #10, #12, #13, #15, #17, #21, #25, #27, #28, #29; Clipboard
   pane, Manage Styles, Group (open PRs exist for the first three — review and merge before
   re-implementing). Paste Special, Advanced Find, Column Selection, Style Inspector, custom table
-  styles, and Draw Table and Eraser (#303) landed on 2026-10-10.
-- **UI/UX gaps:** #7, #18, #24; crop handles on the canvas (rotation handle landed, #332); table column drag on the
-  ruler (#49, #217); context menus for objects and tables; Linux title bar theming (#78).
+  styles, and Draw Table and Eraser (#303) landed on 2026-10-10. Paste from other programs keeps
+  their formatting (system clipboard HTML/RTF), Merge Formatting keeps emphasis, Paste Special lists
+  what the system clipboard holds, and Linux/Wayland clipboard pictures paste (#687, #833);
+  still missing: the Paste Options button after a paste, and RTF on macOS and X11.
+- **UI/UX gaps:** #7, #18, #24; crop handles on the canvas (rotation handle landed, #332); context menus for objects (the table's landed; it still lacks Border Styles); Linux title bar theming (#78); File ›
+  Options › Animation effects › Use system setting reads macOS (Reduce motion) and the Linux/BSD
+  desktops (`apps/wordcraft/src/animations.rs`) but hasn't been tried on a Mac or in a real
+  GNOME or KDE session yet.
 - **File-format gaps:** #1, #2, #5, #9, #14, #19, #23, #26; embedded fonts; glossary/building blocks.
 - **Hardware gaps:** #6, #12, #28; scanner/Continuity Camera insert; KDE soft text (#140).
 - **Localization gaps:** #8, #11, #16, #17; native-speaker review of every catalog (human).
@@ -66,6 +73,7 @@ The same gaps grouped the way the parity documents are, for agents working in on
 |---|---|---|
 | 2026-10-12 | minor | Added bounded DOCX package fingerprint and round-trip allowlist benchmark; no Word-created corpus or Word visual result is claimed |
 | 2026-10-11 | trivial | Formatting revisions landed (#41); gap #5 narrowed to move tracking and content controls, 8–12 h |
+| 2026-10-11 | trivial | Omitted `w:pPrDefault` stays omitted across saves; explicit empty/default properties and later spacing edits remain writable. Synthetic preservation checks only; readiness estimates unchanged |
 | 2026-10-11 | trivial | #12 narrowed: Lasso Select, Add Pen, Ink to Shape and Ink Replay landed (#395) |
 | 2026-10-10 | trivial | Draw Table and Eraser landed (#303); removed from the feature-gap list |
 | 2026-10-10 | trivial | Tabs and Borders and Shading dialogs landed (#320); removed from the dialog-depth list |
@@ -78,6 +86,7 @@ The same gaps grouped the way the parity documents are, for agents working in on
 | 2026-10-10 | trivial | #10: Drawing Canvas landed (#344); in-canvas dragging of members remains |
 | 2026-10-10 | trivial | #29: long display equations wrap across lines (#326) |
 | 2026-10-10 | trivial | #3: Windows lag on GPUs without a DirectX 12 driver fixed with an OpenGL fallback (#316) |
+| 2026-10-10 | minor | #8: Polish proofing (spelling, grammar, hyphenation) and a proofing language per run landed; the gap is now the other languages (20–40 h) |
 | 2026-10-10 | trivial | #6: desktop File › Print opens the system PDF viewer (#286) |
 | 2026-10-10 | trivial | Table Properties dialog landed (#44); removed from the dialog-depth list |
 | 2026-10-10 | trivial | Merged main: landed features removed from the feature-gap list |
@@ -85,3 +94,4 @@ The same gaps grouped the way the parity documents are, for agents working in on
 | 2026-10-11 | trivial | #491: vertical sections landed; vertical text removed from the East Asian gap |
 | 2026-10-10 | major | First version, from the full re-measure: 29 ranked gaps with evidence, impact and hours |
 | 2026-10-10 | trivial | #307: Draw tab pens, eraser and Hide Ink landed; ink gap narrowed |
+| 2026-10-12 | trivial | #811: large-table scrolling fixed; performance gap (#20) narrowed |

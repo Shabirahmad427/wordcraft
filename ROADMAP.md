@@ -102,7 +102,7 @@ owner actions (push to `github.com/storytold/wordcraft` and enable the release s
 
 | Area | Status | Parity |
 |---|---|---|
-| Ribbon/menu catalog coverage | **481 / 496 (97.0%)** | measured (`cargo xtask parity` → [`docs/parity-checklist.md`](docs/parity-checklist.md)) |
+| Ribbon/menu catalog coverage | **487 / 502 (97.0%)** | measured (`cargo xtask parity` → [`docs/parity-checklist.md`](docs/parity-checklist.md)) |
 | **Feature breadth** (weighted, incl. dialog options, styles, languages beyond the ribbon) | **~80%** | estimated |
 | **Ready for real work** (full target) | **~60%** (55–63%) | estimated, additive weighted sum over the dimensions |
 | **Mainstream practitioner** | **~55%** | estimated: weekly-work depth × discounts for interaction (×0.93), stability (×0.90), file exchange (×0.90) |
@@ -148,7 +148,7 @@ the two partial ones (real-world .docx, printing) complete, roughly.
 | File formats | 60% | 185–300 | [file-format-parity.md](docs/file-format-parity.md) |
 | Layout and pagination fidelity | 55% | 90–145 | [layout-parity.md](docs/layout-parity.md) |
 | Hardware | 40% | 20–40 | [hardware-parity.md](docs/hardware-parity.md) |
-| Localization | 25% | 80–130 + native review | [localization-parity.md](docs/localization-parity.md) |
+| Localization | 27% | 75–120 + native review | [localization-parity.md](docs/localization-parity.md) |
 | Performance | 75% | 10–20 | [layout-parity.md](docs/layout-parity.md#performance) |
 | Stability | 50% | 25–45 | [gaps.md](docs/gaps.md) (#3) |
 | Platforms | 95% (beyond Word on Linux, BSD, web) | 5–10 | this page |

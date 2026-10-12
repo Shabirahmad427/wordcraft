@@ -8,9 +8,15 @@ const FAMILY: &str = "Sysfont Sans3";
 
 /// A bundled Source Sans 3 file renamed [`FAMILY`] (as long as the original name).
 fn renamed(file: &str) -> Vec<u8> {
+    renamed_to(file, FAMILY)
+}
+
+/// A bundled Source Sans 3 file renamed `family` (13 characters, as long as the original name).
+fn renamed_to(file: &str, family: &str) -> Vec<u8> {
+    assert_eq!(family.len(), "Source Sans 3".len());
     let mut data = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts").join(file)).unwrap();
     let utf16 = |s: &str| s.encode_utf16().flat_map(u16::to_be_bytes).collect::<Vec<u8>>();
-    for (from, to) in [(utf16("Source Sans 3"), utf16(FAMILY)), (b"Source Sans 3".to_vec(), FAMILY.as_bytes().to_vec())] {
+    for (from, to) in [(utf16("Source Sans 3"), utf16(family)), (b"Source Sans 3".to_vec(), family.as_bytes().to_vec())] {
         let mut i = 0;
         while let Some(at) = data[i..].windows(from.len()).position(|w| w == from) {
             data[i + at..i + at + to.len()].copy_from_slice(&to);

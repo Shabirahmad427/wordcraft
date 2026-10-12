@@ -3,6 +3,7 @@
 //! of authorities, footnote options.
 
 use serde_json::{Value, json};
+use wordcraft_doc::collate::{SortKey, heading_letter, sort_key};
 use wordcraft_doc::para::InlineObject;
 use wordcraft_doc::props::{CharProps, TabAlign, TabLeader, TabStop};
 use wordcraft_doc::{Block, Document, Paragraph, Path, Pos, Source, StoryRef};
@@ -306,6 +307,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 CmdError::Params(format!("style must be one of {:?}", STYLES.iter().map(|x| x.name).collect::<Vec<_>>()))
             })?;
             s.bib_style = st.name.to_string();
+            // Recorded in the document too, so a save keeps it.
+            s.doc.settings.bib_style = Some(st.name.to_string());
             update_citations(s)?;
             Ok(json!({"style": s.bib_style}))
         })
@@ -341,6 +344,10 @@ pub fn specs() -> Vec<CommandSpec> {
         .key(super::non_mac("Alt+Shift+I")),
         CommandSpec::new("references.tableOfAuthorities", "Insert Table of Authorities", "References › Table of Authorities", |s, _| {
             generated_list(s, "TOA", "Table of Authorities")?;
+            sel_result(s)
+        }),
+        CommandSpec::new("references.updateAuthorities", "Update Table", "References › Table of Authorities", |s, _| {
+            update_generated(s)?;
             sel_result(s)
         }),
         CommandSpec::new("insert.crossReference", "Cross-reference", "Insert › Links", cross_ref)
@@ -656,7 +663,7 @@ fn citation(s: &mut Session, v: &Value) -> CmdResult {
     let src = s.doc.sources.iter().find(|x| x.tag == tag).cloned().ok_or_else(|| CmdError::Params(format!("no source `{tag}`")))?;
     let pages = p::str(v, "pages").unwrap_or("").to_string();
     let st = style(&s.bib_style);
-    let n = number_of(&s.doc, &bib_order(&s.doc, st), &tag);
+    let n = number_of(&s.doc, &bib_order(&s.doc, st, super::default_lang(s)), &tag);
     let props = s.typing_props();
     let at = delete_selection(s)?;
     let instr = if pages.is_empty() { format!("CITATION {tag}") } else { format!("CITATION {tag} \\p {pages}") };
@@ -701,7 +708,7 @@ fn author_key(src: &Source) -> String {
 
 /// Indices into `doc.sources` in bibliography order: the cited sources (every source while
 /// nothing is cited), sorted or in order of first citation as the style asks.
-fn bib_order(doc: &Document, st: &CiteStyle) -> Vec<usize> {
+fn bib_order(doc: &Document, st: &CiteStyle, lang: Option<String>) -> Vec<usize> {
     let cited = cited_tags(doc);
     let mut idx: Vec<usize> = if cited.is_empty() {
         (0..doc.sources.len()).collect()
@@ -711,8 +718,10 @@ fn bib_order(doc: &Document, st: &CiteStyle) -> Vec<usize> {
         let cited: std::collections::HashSet<&str> = cited.iter().map(String::as_str).collect();
         doc.sources.iter().enumerate().filter(|(_, x)| cited.contains(x.tag.as_str())).map(|(i, _)| i).collect()
     };
-    let key =
-        |i: &usize, by_title: bool| doc.sources.get(*i).map(|x| if by_title { x.title.to_lowercase() } else { author_key(x) }).unwrap_or_default();
+    // Sorted in the document's language (Polish authors `Łukasiewicz` before `Mazur`).
+    let key = |i: &usize, by_title: bool| {
+        sort_key(&doc.sources.get(*i).map(|x| if by_title { x.title.clone() } else { author_key(x) }).unwrap_or_default(), lang.as_deref())
+    };
     match st.order {
         Order::Author => idx.sort_by_cached_key(|i| key(i, false)),
         Order::Title => idx.sort_by_cached_key(|i| key(i, true)),
@@ -864,7 +873,7 @@ fn page_of(s: &mut Session, pos: &Pos) -> u32 {
 fn entries_for(s: &mut Session, kind: &str) -> Vec<(String, bool)> {
     if kind.starts_with("BIBLIOGRAPHY") {
         let st = style(&s.bib_style);
-        return bib_order(&s.doc, st)
+        return bib_order(&s.doc, st, super::default_lang(s))
             .into_iter()
             .enumerate()
             .filter_map(|(k, i)| s.doc.sources.get(i).map(|x| (entry(x, st.name, k.saturating_add(1)), !st.numbered())))
@@ -925,21 +934,22 @@ fn entries_for(s: &mut Session, kind: &str) -> Vec<(String, bool)> {
         return with_pages.into_iter().map(|(t, p)| (format!("{t}\t{p}"), false)).collect();
     }
     // Index / TOA: group by entry, sort, list pages.
-    let mut grouped: std::collections::BTreeMap<String, Vec<u32>> = Default::default();
+    let lang = super::default_lang(s);
+    let mut grouped: std::collections::BTreeMap<(SortKey, String), Vec<u32>> = Default::default();
     for (e, p) in with_pages {
-        let pages = grouped.entry(e).or_default();
+        let pages = grouped.entry((sort_key(&e, lang.as_deref()), e)).or_default();
         if !pages.contains(&p) {
             pages.push(p);
         }
     }
     let mut out = Vec::new();
     let mut letter = None;
-    for (e, pages) in grouped {
-        let first = e.chars().next().map(|c| c.to_ascii_uppercase());
+    for ((_, e), pages) in grouped {
+        let first = heading_letter(&e, lang.as_deref());
         if kind.starts_with("INDEX") && first != letter {
-            letter = first;
+            letter = first.clone();
             if let Some(l) = first {
-                out.push((l.to_string(), false));
+                out.push((l, false));
             }
         }
         let list = pages.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
@@ -1246,6 +1256,24 @@ mod tests {
         let (name, _) = s.doc.bookmarks().into_iter().find(|(n, _)| n.starts_with("_Ref")).unwrap();
         assert_eq!(crate::cmd::references::bookmark_text(&s.doc, &name).as_deref(), Some("Figure 1"));
         assert!(fields(&s).contains(&(format!("REF {name} \\h"), "Figure 1".to_string())), "{:?}", fields(&s));
+    }
+
+    /// #661: References › Table of Authorities › Update Table picks up citations marked after the table.
+    #[test]
+    fn table_of_authorities_updates() {
+        let mut s = Session::new(wordcraft_doc::Document::from_text("Smith v. Jones held it.\nDoe v. Roe agreed."));
+        s.run("select.text", &json!({"text": "Smith v. Jones"})).unwrap();
+        s.run("references.markCitation", &json!({})).unwrap();
+        s.run("caret.docEnd", &json!({})).unwrap();
+        s.run("text.newParagraph", &json!({})).unwrap();
+        s.run("references.tableOfAuthorities", &json!({})).unwrap();
+        let t = s.doc.plain_text(StoryRef::Body);
+        assert!(t.contains("Smith v. Jones") && !t.contains("Doe v. Roe, "), "{t}");
+        s.run("select.text", &json!({"text": "Doe v. Roe"})).unwrap();
+        s.run("references.markCitation", &json!({})).unwrap();
+        s.run("references.updateAuthorities", &json!({})).unwrap();
+        let after = s.doc.plain_text(StoryRef::Body);
+        assert!(after.matches("Doe v. Roe").count() > t.matches("Doe v. Roe").count(), "{after}");
     }
 
     /// Field instructions and results in the body, in order.

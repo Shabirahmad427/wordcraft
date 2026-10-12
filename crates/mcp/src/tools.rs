@@ -4,6 +4,14 @@ use serde_json::{Value, json};
 
 use crate::backend::Backend;
 
+/// An image tool result from a reply carrying base64 PNG in `png`.
+fn png_result(v: &Value, info: &Value) -> ToolResult {
+    match v.get("png").and_then(Value::as_str) {
+        Some(png) if !png.is_empty() => ToolResult::image(png.to_string(), info),
+        _ => ToolResult::error("the reply carried no picture"),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolResult {
     pub content: Vec<Value>,
@@ -80,7 +88,7 @@ pub fn tool_definitions() -> Value {
         tool(
             "open_document",
             "Open",
-            "Open a .docx, .odt, .rtf, .md, .tex, .html, .txt or .json file.",
+            "Open a .docx, .doc, .odt, .rtf, .md, .tex, .html, .txt or .json file, or any other text file (.m3u, .log, .ini…) as plain text.",
             obj(json!({"path": s("File path")}), &["path"]),
             false
         ),
@@ -244,6 +252,8 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         "get_text" => wrap(exec(b, "document.text", json!({}))),
         "inspect_document" => wrap(b.call("document.inspect", json!({}))),
         "parity" => wrap(b.call("ui.parity", json!({}))),
+        // Pictures travel inside the reply (`png`), headless or through the app: no file with a
+        // predictable name in the shared temporary folder.
         "render_page" => {
             if b.has_ui() {
                 match b.call(

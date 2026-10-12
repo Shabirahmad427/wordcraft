@@ -61,7 +61,7 @@ partial rows are fidelity gaps (beta work), not broken workflows. WordCraft stay
 | M12 | Formats breadth (PDF, ODT, RTF, HTML, MD, TXT, LaTeX, `.doc` import) | done (first versions); `.doc` write, encryption, minor formats missing | 60–100 h |
 | M13 | Performance budgets | on track (1.4 ms relayout); large real-world documents unmeasured | 10–20 h |
 | M14 | 1.0 polish, packaging, signing | releases v0.1.0–v0.4.0 published (signed macOS, Windows MSI x64/x86/arm64, Linux, FreeBSD, web) | — |
-| M15 | Localization (12 key languages, RTL interface, proofing languages) | 9 UI languages, English proofing | 80–130 h |
+| M15 | Localization (12 key languages, RTL interface, proofing languages) | 15 UI languages; English, Polish and Portuguese proofing, a proofing language per run | 70–115 h |
 | M16 | Right-to-left and East Asian typography | RTL paragraphs done (#207) | 30–45 h |
 
 ## Next after beta
@@ -75,6 +75,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 |---|---|---|
 | 2026-10-12 | minor | M1: reproducible package fingerprint/allowlist benchmark added; Word 365 corpus and visual comparison remain pending |
 | 2026-10-11 | trivial | M7: formatting revisions landed (#41) |
+| 2026-10-11 | trivial | Omitted `w:pPrDefault` stays omitted across saves; explicit empty/default properties and later spacing edits remain writable. Synthetic preservation checks only; readiness estimates unchanged |
 | 2026-10-10 | trivial | M5: Draw Table and Eraser landed (#303) |
 | 2026-10-10 | trivial | Merged main: PRs that landed removed from the Current focus list |
 | 2026-10-10 | minor | Current focus heading back to ~150–230 h to beta: full number restored to the additive weighted sum (~60%), method aligned with the standard, no new evidence |
