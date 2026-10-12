@@ -28,8 +28,8 @@ mod xml;
 /// a document editor must treat those bytes as one document edit and retain them with Undo and
 /// recovery state.
 pub use chart_mapping::{
-    AxisBoundChange, AxisChanges, ChartAxisSnapshot, ChartDataChanges, ChartDataSnapshot, ChartEditPlan, ChartSeriesSnapshot, SeriesChanges,
-    apply_chart_edit, document_has_chart, inspect_chart_data, prepare_chart_edit,
+    AxisBoundChange, AxisChanges, ChartAxisSnapshot, ChartDataChanges, ChartDataSnapshot, ChartEditPlan, ChartSeriesSnapshot, DataLabelChanges,
+    DataLabelSnapshot, SeriesChanges, apply_chart_edit, document_has_chart, inspect_chart_data, prepare_chart_edit,
 };
 /// Render an in-memory chart model through the same chart drawing engine as imported charts.
 pub use chart_spec::{chart_items, chart_xml};

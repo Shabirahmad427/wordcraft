@@ -109,13 +109,20 @@ marker formatting, unsupported symbols, implicit sizes, theme/gradient fills and
 non-scatter charts remain read-only. Supported marker shapes are drawn as vector geometry in the
 shared preview/PDF path.
 
-Dash patterns, data-label visibility/placement and error bars are not yet modeled as editable
-formatting. Existing OOXML is preserved unchanged for those properties. Marker, color and width
-changes use the same `chart.editData` atomic command and Undo unit, refresh the shared preview/PDF
-path, and do not alter chart caches or embedded XLSX parts. Synthetic tests cover all seven chart
-families, scatter marker mapping/rendering, read-only structures, workbook/cache preservation,
-Undo/redo, recovery, DOCX reopen and PDF export. No independent Word or Excel application
-comparison is available.
+Data-label settings are editable only within one existing per-series `c:dLbls` block when the
+requested `c:showVal`, `c:showCatName`, `c:showSerName` or `c:dLblPos` element already exists as a
+simple `@val` node. Value, category and series-name text, plus the safe position subset, render in
+the same chart display list used by preview and PDF. Bar/column support `ctr`, `inBase`, `inEnd`
+and `outEnd`; line/area/scatter support `ctr`, `t`, `b`, `l` and `r`; pie/doughnut support `ctr`
+and `inEnd`. The editor does not add missing label elements. Point-specific custom labels, deleted
+labels, duplicate/unknown structures, and unsupported positions remain unchanged and read-only.
+Only existing label-property `@val` attributes are spliced; chart cache and embedded XLSX bytes
+remain unchanged. Text style, custom number format and separator XML are preserved, while preview
+uses the renderer's supported default text style and separator. Placement and text extents are
+approximations and may clip on dense charts. Dash patterns and error bars remain read-only; error
+bars have no rendering model. Synthetic tests cover package edits, custom-label rejection, rendering,
+UI request generation, workbook preservation and existing chart families. No independent Word or
+Excel application comparison is available.
 
 Undo and recovery retain the opaque object and graph bytes. Recovery holds the current edited package parts in the model and retains the exact initially opened package independently. Removing a chart can leave preserved orphan parts in that save; preservation does not synchronize embedded workbook data with edits to nearby tables. Graphs shared with regenerated document parts, or colliding with custom XML graph output, can be rejected rather than rewritten unsafely.
 

@@ -427,6 +427,16 @@ struct ChartSeriesForm {
     marker_color: [u8; 3],
     original_marker_color: Option<[u8; 3]>,
     marker_color_editable: bool,
+    data_label_value: bool,
+    original_data_label_value: Option<bool>,
+    data_label_category: bool,
+    original_data_label_category: Option<bool>,
+    data_label_series: bool,
+    original_data_label_series: Option<bool>,
+    data_label_position: String,
+    original_data_label_position: Option<String>,
+    data_labels_editable: bool,
+    data_labels_diagnostic: Option<String>,
 }
 
 /// The Table Properties dialog's fields. Lengths are in the interface unit
@@ -1171,6 +1181,45 @@ impl Dialog {
                         marker_color: series.get("markerColor").and_then(Value::as_str).and_then(parse_rgb_hex).unwrap_or([80, 120, 180]),
                         original_marker_color: series.get("markerColor").and_then(Value::as_str).and_then(parse_rgb_hex),
                         marker_color_editable: series.get("markerColorEditable").and_then(Value::as_bool).unwrap_or(false),
+                        data_label_value: series
+                            .get("dataLabels")
+                            .and_then(|labels| labels.get("showValue"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        original_data_label_value: series.get("dataLabels").and_then(|labels| labels.get("showValue")).and_then(Value::as_bool),
+                        data_label_category: series
+                            .get("dataLabels")
+                            .and_then(|labels| labels.get("showCategory"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        original_data_label_category: series.get("dataLabels").and_then(|labels| labels.get("showCategory")).and_then(Value::as_bool),
+                        data_label_series: series
+                            .get("dataLabels")
+                            .and_then(|labels| labels.get("showSeriesName"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        original_data_label_series: series.get("dataLabels").and_then(|labels| labels.get("showSeriesName")).and_then(Value::as_bool),
+                        data_label_position: series
+                            .get("dataLabels")
+                            .and_then(|labels| labels.get("position"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        original_data_label_position: series
+                            .get("dataLabels")
+                            .and_then(|labels| labels.get("position"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        data_labels_editable: series
+                            .get("dataLabels")
+                            .and_then(|labels| labels.get("editable"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        data_labels_diagnostic: series
+                            .get("dataLabels")
+                            .and_then(|labels| labels.get("diagnostic"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
                         categories: series
                             .get("categories")
                             .and_then(Value::as_array)
@@ -1691,6 +1740,30 @@ fn chart_series_changes(chart_kind: &str, series: &[ChartSeriesForm], original: 
                 }
                 changes.insert("markerColor".into(), json!(rgb_hex(series.marker_color)));
             }
+            let mut data_labels = serde_json::Map::new();
+            for (key, value, original_value) in [
+                ("showValue", series.data_label_value, series.original_data_label_value),
+                ("showCategory", series.data_label_category, series.original_data_label_category),
+                ("showSeriesName", series.data_label_series, series.original_data_label_series),
+            ] {
+                if let Some(original_value) = original_value
+                    && value != original_value
+                {
+                    if !series.data_labels_editable {
+                        return None;
+                    }
+                    data_labels.insert(key.into(), json!(value));
+                }
+            }
+            if series.data_label_position != series.original_data_label_position.as_deref().unwrap_or_default() {
+                if !series.data_labels_editable || series.original_data_label_position.is_none() {
+                    return None;
+                }
+                data_labels.insert("position".into(), json!(series.data_label_position));
+            }
+            if !data_labels.is_empty() {
+                changes.insert("dataLabels".into(), Value::Object(data_labels));
+            }
             if chart_kind == "scatter" {
                 if series.x_values.len() != original.x_values.len() || series.values.len() != original.values.len() {
                     return None;
@@ -1841,6 +1914,43 @@ fn chart_data(app: &mut WordApp, ui: &mut Ui, form: &mut ChartDataForm) -> bool 
                                     });
                                 });
                             }
+                            ui.horizontal(|ui| {
+                                ui.label(tl!(tl!("Data labels")));
+                                ui.add_enabled_ui(series.data_labels_editable, |ui| {
+                                    if series.original_data_label_value.is_some() {
+                                        ui.checkbox(&mut series.data_label_value, tl!(tl!("Value")));
+                                    }
+                                    if series.original_data_label_category.is_some() {
+                                        ui.checkbox(&mut series.data_label_category, tl!(tl!("Category")));
+                                    }
+                                    if series.original_data_label_series.is_some() {
+                                        ui.checkbox(&mut series.data_label_series, tl!(tl!("Series name")));
+                                    }
+                                    if let Some(original) = &series.original_data_label_position {
+                                        let positions: &[&str] = match form.chart_kind.as_str() {
+                                            "bar" | "column" => &["ctr", "inBase", "inEnd", "outEnd"],
+                                            "line" | "area" | "scatter" => &["ctr", "t", "b", "l", "r"],
+                                            "pie" | "doughnut" => &["ctr", "inEnd"],
+                                            _ => &[],
+                                        };
+                                        if positions.contains(&original.as_str()) {
+                                            egui::ComboBox::from_id_salt(("chart_data_label_position", series_index))
+                                                .selected_text(series.data_label_position.as_str())
+                                                .show_ui(ui, |ui| {
+                                                    for position in positions {
+                                                        ui.selectable_value(&mut series.data_label_position, (*position).to_string(), *position);
+                                                    }
+                                                });
+                                        }
+                                    }
+                                });
+                                ui.label(tl!(tl!("Only explicitly stored data-label properties can be changed; missing settings are not added.")));
+                                if let Some(diagnostic) = &series.data_labels_diagnostic {
+                                    ui.label(tl!(tl!(diagnostic.as_str())));
+                                } else if !series.data_labels_editable {
+                                    ui.label(tl!(tl!("Data labels are read-only for this OOXML structure.")));
+                                }
+                            });
                             ui.horizontal(|ui| {
                                 ui.label(format!("{} {}", tl!(tl!("Series")), series_index + 1));
                                 let label = ui.label(tl!(tl!("Series name")));
@@ -3974,6 +4084,30 @@ mod tests {
         let locked = ChartSeriesForm { marker_symbol_editable: false, ..ChartSeriesForm::default() };
         let invalid = ChartSeriesForm { marker_symbol: "star".into(), ..locked.clone() };
         assert_eq!(chart_series_changes("scatter", &[invalid], &[locked]), None);
+    }
+
+    #[test]
+    fn data_label_controls_emit_only_existing_supported_properties() {
+        let original = ChartSeriesForm {
+            data_label_value: true,
+            original_data_label_value: Some(true),
+            data_label_category: false,
+            original_data_label_category: Some(false),
+            data_label_series: false,
+            original_data_label_series: Some(false),
+            data_label_position: "outEnd".into(),
+            original_data_label_position: Some("outEnd".into()),
+            data_labels_editable: true,
+            ..ChartSeriesForm::default()
+        };
+        let changed = ChartSeriesForm { data_label_value: false, data_label_category: true, data_label_position: "inEnd".into(), ..original.clone() };
+        assert_eq!(
+            chart_series_changes("column", &[changed], &[original]),
+            Some(vec![json!({"dataLabels":{"showValue":false,"showCategory":true,"position":"inEnd"}})])
+        );
+        let locked = ChartSeriesForm { data_labels_editable: false, ..ChartSeriesForm::default() };
+        let invalid = ChartSeriesForm { data_label_value: true, original_data_label_value: Some(false), ..locked.clone() };
+        assert_eq!(chart_series_changes("column", &[invalid], &[locked]), None);
     }
 
     #[test]

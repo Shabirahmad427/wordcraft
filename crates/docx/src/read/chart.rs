@@ -85,6 +85,7 @@ struct DataLabel {
     y: f32,
     text: String,
     inside: bool,
+    position: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,6 +172,9 @@ struct Series {
     x_fmt: Option<String>,
     /// Data labels on or off for this series (`c:dLbls` of its own), when it says.
     labels: Option<bool>,
+    label_categories: Option<bool>,
+    label_series_name: Option<bool>,
+    label_position: Option<String>,
     /// The values as the file has them, for data labels (`values` become shares in a 100%
     /// stacked chart); empty when the series shows no labels.
     raw: Vec<Option<f64>>,
@@ -261,11 +265,18 @@ impl Chart {
         };
         let mut cats = cats;
         cats.resize(n, String::new());
-        let type_labels = show_values(ty.child("c:dLbls"));
+        let type_label_block = ty.child("c:dLbls");
+        let type_labels = show_values(type_label_block);
+        let type_categories = show_flag(type_label_block, "c:showCatName");
+        let type_series_name = show_flag(type_label_block, "c:showSerName");
+        let type_position = type_label_block.and_then(|block| block.child("c:dLblPos")).and_then(|position| position.attr("val")).map(str::to_string);
         for s in &mut series {
             s.values.resize(n, None);
             s.xs.resize(n, None);
             s.labels = Some(s.labels.or(type_labels).unwrap_or(false));
+            s.label_categories = s.label_categories.or(type_categories);
+            s.label_series_name = s.label_series_name.or(type_series_name);
+            s.label_position = s.label_position.take().or_else(|| type_position.clone());
             if s.labels == Some(true) {
                 s.raw = s.values.clone();
             }
@@ -504,6 +515,14 @@ fn show_values(d: Option<&El>) -> Option<bool> {
     d.child("c:showVal").map(|v| v.attr("val").is_none_or(truthy))
 }
 
+fn show_flag(d: Option<&El>, name: &str) -> Option<bool> {
+    let d = d?;
+    if d.child("c:delete").and_then(|element| element.attr("val")).is_some_and(truthy) {
+        return Some(false);
+    }
+    d.child(name).map(|element| element.attr("val").is_none_or(truthy))
+}
+
 fn legend_pos(chart: &El) -> Option<Pos> {
     chart.child("c:legend").map(|l| match l.child("c:legendPos").and_then(|p| p.attr("val")).unwrap_or("r") {
         "l" => Pos::Left,
@@ -574,6 +593,10 @@ impl Series {
             }
         }
         let labels = show_values(ser.child("c:dLbls"));
+        let label_categories = show_flag(ser.child("c:dLbls"), "c:showCatName");
+        let label_series_name = show_flag(ser.child("c:dLbls"), "c:showSerName");
+        let label_position =
+            ser.child("c:dLbls").and_then(|block| block.child("c:dLblPos")).and_then(|position| position.attr("val")).map(str::to_string);
         Series {
             name,
             color,
@@ -588,6 +611,9 @@ impl Series {
             fmt,
             x_fmt,
             labels,
+            label_categories,
+            label_series_name,
+            label_position,
             raw: Vec::new(),
         }
     }
@@ -1690,16 +1716,31 @@ fn bars(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, labels: &mut Vec<DataL
             let (p0, p1) = (p0.min(p1), p0.max(p1));
             let segs = if g.horiz { rect_segs(p0, a, p1, a + thick) } else { rect_segs(a, p0, a + thick, p1) };
             fill(out, segs, c.point_colour(j, i));
-            if let Some(text) = label_of(s, i) {
+            if let Some(text) = label_of(s, i, &c.cats) {
                 let mid = a + thick / 2.0;
-                let (x, y) = match (g.horiz, stacked) {
+                let base = g.val(v0);
+                let end = g.val(v1);
+                let position = s.label_position.as_deref();
+                let along = match position {
+                    Some("ctr") => (p0 + p1) / 2.0,
+                    Some("inBase") => base + (end - base).signum() * (GAP + 2.0),
+                    Some("inEnd") => end - (end - base).signum() * (GAP + 2.0),
+                    _ if stacked => (p0 + p1) / 2.0,
+                    _ => end,
+                };
+                let (x, y) = match g.horiz {
+                    true => (along, mid),
+                    false => (mid, along),
+                };
+                let fallback = match (g.horiz, stacked) {
                     (true, true) => ((p0 + p1) / 2.0, mid),
                     (false, true) => (mid, (p0 + p1) / 2.0),
                     // Beyond the bar's end: right of a positive bar, above a positive column.
                     (true, false) => (if v >= 0.0 { p1 } else { p0 }, mid),
                     (false, false) => (mid, if v >= 0.0 { p0 } else { p1 }),
                 };
-                labels.push(DataLabel { x, y, text, inside: stacked });
+                let (x, y) = if position.is_some() { (x, y) } else { fallback };
+                labels.push(DataLabel { x, y, text, inside: label_inside(position, stacked), position: s.label_position.clone() });
             }
         }
     }
@@ -1728,8 +1769,8 @@ fn lines(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, labels: &mut Vec<Data
             })
             .collect();
         for (i, p) in pts.iter().enumerate() {
-            if let (Some((x, y)), Some(text)) = (p, label_of(s, i)) {
-                labels.push(DataLabel { x: *x, y: *y, text, inside: false });
+            if let (Some((x, y)), Some(text)) = (p, label_of(s, i, &c.cats)) {
+                labels.push(DataLabel { x: *x, y: *y, text, inside: false, position: s.label_position.clone() });
             }
         }
         stroke(out, runs(pts.into_iter()), c.series_colour(j), s.line_w);
@@ -1752,8 +1793,14 @@ fn areas(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, labels: &mut Vec<Data
         segs.push(PathSeg::Close);
         fill(out, segs, c.series_colour(j));
         for (i, (t, b)) in top.iter().zip(&base).enumerate() {
-            if let Some(text) = label_of(s, i) {
-                labels.push(DataLabel { x: g.cat_x(i), y: g.val((t + b) / 2.0), text, inside: true });
+            if let Some(text) = label_of(s, i, &c.cats) {
+                labels.push(DataLabel {
+                    x: g.cat_x(i),
+                    y: g.val((t + b) / 2.0),
+                    text,
+                    inside: label_inside(s.label_position.as_deref(), true),
+                    position: s.label_position.clone(),
+                });
             }
         }
         if c.stacked() {
@@ -1774,8 +1821,8 @@ fn draw_scatter(out: &mut Vec<GraphicItem>, c: &Chart, g: &Frame, labels: &mut V
                 })
                 .collect();
         for (i, p) in pts.iter().enumerate() {
-            if let (Some((x, y)), Some(text)) = (p, label_of(s, i)) {
-                labels.push(DataLabel { x: *x, y: *y - s.marker_size / 2.0, text, inside: false });
+            if let (Some((x, y)), Some(text)) = (p, label_of(s, i, &c.cats)) {
+                labels.push(DataLabel { x: *x, y: *y - s.marker_size / 2.0, text, inside: false, position: s.label_position.clone() });
             }
         }
         if s.line {
@@ -1852,11 +1899,17 @@ fn pie(out: &mut Vec<GraphicItem>, c: &Chart, area: Rect) {
         }
         segs.push(PathSeg::Close);
         fill(out, segs, c.point_colour(0, i));
-        if let Some(text) = label_of(s, i) {
+        if let Some(text) = label_of(s, i, &c.cats) {
             // Halfway across the ring (pie: two thirds out from the centre).
             let at = if inner > 0.0 { (r + inner) / 2.0 } else { r * 0.65 };
             let (x, y) = polar(cx, cy, at, (a + b) / 2.0);
-            labels.push(DataLabel { x: x as f32, y: y as f32, text, inside: true });
+            labels.push(DataLabel {
+                x: x as f32,
+                y: y as f32,
+                text,
+                inside: label_inside(s.label_position.as_deref(), true),
+                position: s.label_position.clone(),
+            });
         }
         a = b;
     }
@@ -1865,16 +1918,34 @@ fn pie(out: &mut Vec<GraphicItem>, c: &Chart, area: Rect) {
 
 /// The data label of point `i` of series `s`, when it shows one: the value as the file has it,
 /// in the series' number format.
-fn label_of(s: &Series, i: usize) -> Option<String> {
-    if s.labels != Some(true) {
-        return None;
+fn label_of(s: &Series, i: usize, categories: &[String]) -> Option<String> {
+    let mut parts = Vec::new();
+    if s.labels == Some(true)
+        && let Some(value) = s.raw.get(i).copied().flatten()
+    {
+        let fmt = s.fmt.as_deref().filter(|f| !f.eq_ignore_ascii_case("General"));
+        parts.push(match fmt {
+            Some(format) => format_value(value, format, 1.0),
+            None => general_value(value),
+        });
     }
-    let v = s.raw.get(i).copied().flatten()?;
-    let fmt = s.fmt.as_deref().filter(|f| !f.eq_ignore_ascii_case("General"));
-    Some(match fmt {
-        Some(f) => format_value(v, f, 1.0),
-        None => general_value(v),
-    })
+    if s.label_categories == Some(true)
+        && let Some(category) = categories.get(i).filter(|category| !category.is_empty())
+    {
+        parts.push(category.clone());
+    }
+    if s.label_series_name == Some(true) && !s.name.is_empty() {
+        parts.push(s.name.clone());
+    }
+    (!parts.is_empty()).then(|| parts.join("\n"))
+}
+
+fn label_inside(position: Option<&str>, fallback: bool) -> bool {
+    match position {
+        Some("ctr" | "inBase" | "inEnd") => true,
+        Some("outEnd" | "t" | "b" | "l" | "r") => false,
+        _ => fallback,
+    }
 }
 
 /// A value in the `General` format: whole numbers without decimals, others with up to six.
@@ -1892,13 +1963,33 @@ fn general_value(v: f64) -> String {
 fn draw_data_labels(out: &mut Vec<GraphicItem>, labels: &[DataLabel], fs: f32, beside_right: bool) {
     let lh = fs * LINE;
     for l in labels {
-        let w = text_w(&l.text, fs) + 4.0;
-        let (rect, align) = if l.inside {
-            (Rect { x: l.x - w / 2.0, y: l.y - lh / 2.0, w, h: lh }, TextAlign::Center)
-        } else if beside_right {
-            (Rect { x: l.x + GAP / 2.0, y: l.y - lh / 2.0, w, h: lh }, TextAlign::Left)
-        } else {
-            (Rect { x: l.x - w / 2.0, y: l.y - lh, w, h: lh }, TextAlign::Center)
+        let h = lh * l.text.lines().count().max(1) as f32;
+        let w = l.text.lines().map(|line| text_w(line, fs)).fold(0.0, f32::max) + 4.0;
+        let (rect, align) = match l.position.as_deref() {
+            Some("t") => (Rect { x: l.x - w / 2.0, y: l.y - h - GAP / 2.0, w, h }, TextAlign::Center),
+            Some("b") => (Rect { x: l.x - w / 2.0, y: l.y + GAP / 2.0, w, h }, TextAlign::Center),
+            Some("l") => (Rect { x: l.x - w - GAP / 2.0, y: l.y - h / 2.0, w, h }, TextAlign::Right),
+            Some("r") => (Rect { x: l.x + GAP / 2.0, y: l.y - h / 2.0, w, h }, TextAlign::Left),
+            Some("ctr" | "inBase" | "inEnd") => (Rect { x: l.x - w / 2.0, y: l.y - h / 2.0, w, h }, TextAlign::Center),
+            Some("outEnd") if beside_right => (Rect { x: l.x + GAP / 2.0, y: l.y - h / 2.0, w, h }, TextAlign::Left),
+            Some("outEnd") | None => {
+                if l.inside {
+                    (Rect { x: l.x - w / 2.0, y: l.y - h / 2.0, w, h }, TextAlign::Center)
+                } else if beside_right {
+                    (Rect { x: l.x + GAP / 2.0, y: l.y - h / 2.0, w, h }, TextAlign::Left)
+                } else {
+                    (Rect { x: l.x - w / 2.0, y: l.y - h, w, h }, TextAlign::Center)
+                }
+            }
+            _ => {
+                if l.inside {
+                    (Rect { x: l.x - w / 2.0, y: l.y - h / 2.0, w, h }, TextAlign::Center)
+                } else if beside_right {
+                    (Rect { x: l.x + GAP / 2.0, y: l.y - h / 2.0, w, h }, TextAlign::Left)
+                } else {
+                    (Rect { x: l.x - w / 2.0, y: l.y - h, w, h }, TextAlign::Center)
+                }
+            }
         };
         let color = if l.inside { Rgb::WHITE } else { TEXT };
         out.push(GraphicItem::Text { rect: rect.arr(), text: l.text.clone(), size: fs, color, rotation: 0.0, bold: false, align, font: None });
@@ -2003,6 +2094,28 @@ mod tests {
         assert_eq!(bars[0].0, Rgb(0xFF, 0, 0));
         assert_eq!(bars[3].0, Rgb(0, 0xFF, 0));
         assert!(items.iter().any(|it| matches!(it, GraphicItem::Text { text, .. } if text == "Q2")));
+    }
+
+    #[test]
+    fn category_series_and_numeric_data_labels_render_with_requested_position() {
+        let series = ser(0, "Dose", Some("FF0000"), &["Control", "Treatment"], &["4", "8"]).replace(
+            "</c:ser>",
+            r#"<c:dLbls><c:showVal val="1"/><c:showCatName val="1"/><c:showSerName val="1"/><c:dLblPos val="t"/></c:dLbls></c:ser>"#,
+        );
+        let plot = format!(r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>{series}</c:barChart>"#);
+        let chart = Chart::parse(&space(&plot), &theme()).expect("chart");
+        let labels = chart.series.first().expect("series");
+        assert_eq!(label_of(labels, 0, &chart.cats).as_deref(), Some("4\nControl\nDose"));
+        assert_eq!(labels.label_position.as_deref(), Some("t"));
+        let mut items = Vec::new();
+        draw_data_labels(
+            &mut items,
+            &[DataLabel { x: 100.0, y: 80.0, text: "A long label".into(), inside: false, position: Some("t".into()) }],
+            10.0,
+            false,
+        );
+        let GraphicItem::Text { rect, .. } = items.first().expect("drawn label") else { panic!("expected label text") };
+        assert!(rect[1] < 80.0, "top labels should sit above the data point: {rect:?}");
     }
 
     #[test]

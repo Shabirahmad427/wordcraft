@@ -56,6 +56,16 @@ fn editable_chart_fixture_with_titles() -> Vec<u8> {
     archive(&files)
 }
 
+fn editable_chart_fixture_with_data_labels() -> Vec<u8> {
+    let mut files = unpack(&editable_chart_fixture());
+    let chart = String::from_utf8(files["word/charts/chart1.xml"].clone()).unwrap().replace(
+        "</c:ser>",
+        r#"<c:dLbls><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:dLblPos val="outEnd"/></c:dLbls></c:ser>"#,
+    );
+    files.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+    archive(&files)
+}
+
 fn editable_line_chart_fixture() -> Vec<u8> {
     let mut files = unpack(&editable_chart_fixture());
     let chart = String::from_utf8(files["word/charts/chart1.xml"].clone())
@@ -557,6 +567,67 @@ fn chart_series_color_and_line_width_survive_undo_recovery_save_and_pdf() {
     let pdf = directory.join("edited.pdf");
     reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
     assert!(std::fs::metadata(pdf).unwrap().len() > 100);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn data_label_edits_refresh_render_and_survive_undo_recovery_docx_and_pdf() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-data-labels-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.docx");
+    let destination = directory.join("edited.docx");
+    let original = editable_chart_fixture_with_data_labels();
+    std::fs::write(&source, &original).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source})).unwrap();
+    let document_id = session.document_id();
+    let before_package = wordcraft_docx::write(&session.doc).unwrap();
+    let before_parts = unpack(&before_package);
+    let snapshot = session.run("chart.inspectData", &json!({"documentId": document_id, "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(snapshot["series"][0]["dataLabels"]["showValue"], true);
+    let before_layout = session.layout();
+    let before_pixels = wordcraft_render::render_page(&session.doc, &before_layout.pages[0], 1.0, &Default::default()).to_straight();
+    session
+        .run(
+            "chart.editData",
+            &json!({
+                "documentId": document_id,
+                "chartPart": "word/charts/chart1.xml",
+                "expected": snapshot,
+                "series": [{"dataLabels":{"showValue":false,"showCategory":true,"showSeriesName":true,"position":"inEnd"}}]
+            }),
+        )
+        .unwrap();
+    let edited_package = wordcraft_docx::write(&session.doc).unwrap();
+    let edited_parts = unpack(&edited_package);
+    assert_eq!(edited_parts["word/embeddings/data.xlsx"], before_parts["word/embeddings/data.xlsx"]);
+    let after_layout = session.layout();
+    let after_pixels = wordcraft_render::render_page(&session.doc, &after_layout.pages[0], 1.0, &Default::default()).to_straight();
+    assert_ne!(before_pixels, after_pixels, "label content/placement refreshes the displayed chart");
+
+    let store = Store::new(directory.join("recovery")).unwrap();
+    let recovery_id = store.save(&unique_id(), document_id, &Snapshot::capture(&session)).unwrap();
+    let mut recovered = Session::new(Document::new());
+    store.load(&recovery_id).unwrap().restore(&mut recovered);
+    let recovered_snapshot =
+        recovered.run("chart.inspectData", &json!({"documentId": recovered.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(recovered_snapshot["series"][0]["dataLabels"]["showCategory"], true);
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), before_package);
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(wordcraft_docx::write(&session.doc).unwrap(), edited_package);
+    session.run("file.save", &json!({"path": destination})).unwrap();
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": directory.join("edited.docx")})).unwrap();
+    let reopened_snapshot =
+        reopened.run("chart.inspectData", &json!({"documentId": reopened.document_id(), "chartPart": "word/charts/chart1.xml"})).unwrap();
+    assert_eq!(reopened_snapshot["series"][0]["dataLabels"]["position"], "inEnd");
+    let reopened_layout = reopened.layout();
+    assert_eq!(wordcraft_render::render_page(&reopened.doc, &reopened_layout.pages[0], 1.0, &Default::default()).to_straight(), after_pixels);
+    let pdf = directory.join("edited.pdf");
+    reopened.run("file.exportPdf", &json!({"path": pdf})).unwrap();
+    assert!(std::fs::metadata(pdf).unwrap().len() > 100);
+    assert_eq!(std::fs::read(source).unwrap(), original);
     std::fs::remove_dir_all(directory).unwrap();
 }
 

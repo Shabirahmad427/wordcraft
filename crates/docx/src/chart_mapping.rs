@@ -88,7 +88,31 @@ pub struct SeriesFormatSnapshot {
     pub marker_size_editable: bool,
     pub marker_color: Option<String>,
     pub marker_color_editable: bool,
+    #[serde(default)]
+    pub data_labels: Option<DataLabelSnapshot>,
     pub diagnostic: Option<String>,
+}
+
+/// Editable only when the source has one plain per-series `c:dLbls` block with explicit
+/// attributes. We deliberately do not synthesize label XML or rewrite point-level/custom labels.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataLabelSnapshot {
+    pub show_value: Option<bool>,
+    pub show_category: Option<bool>,
+    pub show_series_name: Option<bool>,
+    pub position: Option<String>,
+    pub editable: bool,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DataLabelChanges {
+    pub show_value: Option<bool>,
+    pub show_category: Option<bool>,
+    pub show_series_name: Option<bool>,
+    pub position: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -557,6 +581,7 @@ fn inspect_series_format(series: &El, chart_kind: &str, chart_type: &El) -> Seri
     let marker_color = marker_fill.and_then(simple_srgb_value);
     let marker_color_editable =
         marker_color.is_some() && !color_target.is_some_and(|target| marker_fill.is_some_and(|fill| std::ptr::eq(target, fill)));
+    let data_labels = inspect_data_labels(series, chart_kind);
     let diagnostic = if pie_varies {
         Some("Pie and doughnut charts use per-slice colors; series color editing is read-only.".into())
     } else if !color_editable {
@@ -577,8 +602,72 @@ fn inspect_series_format(series: &El, chart_kind: &str, chart_type: &El) -> Seri
         marker_size_editable,
         marker_color,
         marker_color_editable,
+        data_labels,
         diagnostic,
     }
+}
+
+fn inspect_data_labels(series: &El, chart_kind: &str) -> Option<DataLabelSnapshot> {
+    let blocks: Vec<_> = series.children("c:dLbls").collect();
+    let block = blocks.first().copied()?;
+    let supported_positions: &[&str] = match chart_kind {
+        "bar" | "column" => &["ctr", "inBase", "inEnd", "outEnd"],
+        "line" | "area" | "scatter" => &["ctr", "t", "b", "l", "r"],
+        "pie" | "doughnut" => &["ctr", "inEnd"],
+        _ => &[],
+    };
+    let known = [
+        "c:delete",
+        "c:showLegendKey",
+        "c:showVal",
+        "c:showCatName",
+        "c:showSerName",
+        "c:showPercent",
+        "c:showLeaderLines",
+        "c:dLblPos",
+        "c:numFmt",
+        "c:separator",
+        "c:showBubbleSize",
+        "c:spPr",
+        "c:txPr",
+    ];
+    let has_custom_points = block.children("c:dLbl").next().is_some();
+    let has_unknown = block.els().any(|child| !known.contains(&child.name.as_str()));
+    let deleted = block.child("c:delete").and_then(|node| node.attr("val")).is_some_and(|value| matches!(value, "1" | "true"));
+    let simple = |name: &str| -> Option<bool> {
+        let children: Vec<_> = block.children(name).collect();
+        let node = children.first().copied()?;
+        if children.len() != 1 || node.els().next().is_some() || !node.kids.is_empty() {
+            return None;
+        }
+        match node.attr("val")? {
+            "1" | "true" => Some(true),
+            "0" | "false" => Some(false),
+            _ => None,
+        }
+    };
+    let pos_nodes: Vec<_> = block.children("c:dLblPos").collect();
+    let position = pos_nodes.first().and_then(|node| node.attr("val")).filter(|value| supported_positions.contains(value)).map(str::to_string);
+    let editable = blocks.len() == 1 && !has_custom_points && !has_unknown && !deleted;
+    let diagnostic = (!editable).then(|| {
+        if has_custom_points {
+            "Custom per-point data labels are preserved and read-only.".to_string()
+        } else if deleted {
+            "This series' labels are explicitly deleted and remain read-only.".to_string()
+        } else {
+            "This data-label structure is ambiguous or contains unsupported OOXML and remains read-only.".to_string()
+        }
+    });
+    Some(DataLabelSnapshot {
+        show_value: simple("c:showVal"),
+        show_category: simple("c:showCatName"),
+        show_series_name: simple("c:showSerName"),
+        position: (pos_nodes.len() == 1).then_some(position.clone()).flatten(),
+        editable: editable
+            && (simple("c:showVal").is_some() || simple("c:showCatName").is_some() || simple("c:showSerName").is_some() || position.is_some()),
+        diagnostic: diagnostic
+            .or_else(|| (position.is_none() && pos_nodes.len() == 1).then(|| "This label position is not supported for the chart family.".into())),
+    })
 }
 
 fn supported_marker_symbol(symbol: &str) -> bool {
@@ -1161,6 +1250,8 @@ pub struct SeriesChanges {
     #[serde(default)]
     pub marker_color: Option<String>,
     #[serde(default)]
+    pub data_labels: Option<DataLabelChanges>,
+    #[serde(default)]
     pub x_values: Option<Vec<f64>>,
     pub values: Option<Vec<f64>>,
 }
@@ -1213,6 +1304,8 @@ pub struct ChartSeriesSnapshot {
     pub marker_color: Option<String>,
     #[serde(default)]
     pub marker_color_editable: bool,
+    #[serde(default)]
+    pub data_labels: Option<DataLabelSnapshot>,
     #[serde(default)]
     pub formatting_diagnostic: Option<String>,
     #[serde(default)]
@@ -1319,6 +1412,7 @@ pub fn inspect_chart_data(docx: &[u8], chart_part: &str) -> Result<ChartDataSnap
                     marker_size_editable: series.formatting.marker_size_editable,
                     marker_color: series.formatting.marker_color,
                     marker_color_editable: series.formatting.marker_color_editable,
+                    data_labels: series.formatting.data_labels,
                     formatting_diagnostic: series.formatting.diagnostic,
                     x_values,
                     values,
@@ -1363,6 +1457,7 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
     let mut expected = fresh.clone();
     let chart_bytes = update_chart_caches(chart, &fresh, changes)?;
     let chart_bytes = apply_series_format_changes(&chart_bytes, &fresh, changes)?;
+    let chart_bytes = apply_data_label_changes(&chart_bytes, &fresh, changes)?;
     let chart_bytes = apply_axis_changes(&chart_bytes, &fresh, changes)?;
     let cell_edits = build_cell_edits(&fresh, changes, &mut expected)?;
     for (index, change) in changes.series.iter().enumerate() {
@@ -1386,6 +1481,20 @@ pub fn apply_chart_edit(docx: &[u8], plan: &ChartEditPlan, changes: &ChartDataCh
         }
         if let Some(color) = &change.marker_color {
             expected_series.formatting.marker_color = Some(color.to_ascii_uppercase());
+        }
+        if let (Some(label_changes), Some(labels)) = (&change.data_labels, expected_series.formatting.data_labels.as_mut()) {
+            if let Some(value) = label_changes.show_value {
+                labels.show_value = Some(value);
+            }
+            if let Some(value) = label_changes.show_category {
+                labels.show_category = Some(value);
+            }
+            if let Some(value) = label_changes.show_series_name {
+                labels.show_series_name = Some(value);
+            }
+            if let Some(value) = &label_changes.position {
+                labels.position = Some(value.clone());
+            }
         }
     }
     if let Some(position) = &changes.legend_position {
@@ -1523,6 +1632,32 @@ fn validate_changes(mapping: &ChartMapping, changes: &ChartDataChanges) -> Resul
             any = true;
             if !source.formatting.marker_color_editable || !valid_rgb_hex(color) {
                 return Err(transaction_error("scatter marker color has no safe explicit RGB target"));
+            }
+        }
+        if let Some(labels) = &change.data_labels {
+            any |= labels.show_value.is_some() || labels.show_category.is_some() || labels.show_series_name.is_some() || labels.position.is_some();
+            let Some(snapshot) = source.formatting.data_labels.as_ref().filter(|snapshot| snapshot.editable) else {
+                return Err(transaction_error("this series' data labels contain unsupported OOXML or lack explicit editable properties"));
+            };
+            for (requested, existing, label) in [
+                (labels.show_value, snapshot.show_value, "numeric-value"),
+                (labels.show_category, snapshot.show_category, "category-name"),
+                (labels.show_series_name, snapshot.show_series_name, "series-name"),
+            ] {
+                if requested.is_some() && existing.is_none() {
+                    return Err(transaction_error(format!("the {label} label setting is not explicitly present and cannot be changed safely")));
+                }
+            }
+            if let Some(position) = labels.position.as_deref() {
+                let supported: &[&str] = match mapping.chart_kind.as_str() {
+                    "bar" | "column" => &["ctr", "inBase", "inEnd", "outEnd"],
+                    "line" | "area" | "scatter" => &["ctr", "t", "b", "l", "r"],
+                    "pie" | "doughnut" => &["ctr", "inEnd"],
+                    _ => &[],
+                };
+                if snapshot.position.is_none() || !supported.contains(&position) {
+                    return Err(transaction_error("data-label position is absent or unsupported for this chart family"));
+                }
             }
         }
         if let Some(name) = &change.name {
@@ -1851,6 +1986,43 @@ fn apply_series_format_changes(chart: &[u8], mapping: &ChartMapping, changes: &C
             let target = marker_color_target_node(&nodes, series_index)?
                 .ok_or_else(|| transaction_error("scatter marker color no longer has a safe explicit RGB target"))?;
             current = set_xml_attribute(&current, &nodes, target, "val", &color.to_ascii_uppercase())?;
+        }
+    }
+    Ok(current)
+}
+
+fn apply_data_label_changes(chart: &[u8], mapping: &ChartMapping, changes: &ChartDataChanges) -> Result<Vec<u8>, DocxError> {
+    let mut current = chart.to_vec();
+    for (series_index, change) in changes.series.iter().enumerate() {
+        let Some(labels) = change.data_labels.as_ref() else { continue };
+        for (field, value) in [
+            ("showVal", labels.show_value.map(|value| if value { "1" } else { "0" })),
+            ("showCatName", labels.show_category.map(|value| if value { "1" } else { "0" })),
+            ("showSerName", labels.show_series_name.map(|value| if value { "1" } else { "0" })),
+            ("dLblPos", labels.position.as_deref()),
+        ] {
+            let Some(value) = value else { continue };
+            let nodes = preserved_xml::inspect(&current)?;
+            let series = chart_series_nodes(&nodes, &mapping.chart_kind)?;
+            let index = *series.get(series_index).ok_or_else(|| transaction_error("series index is out of range"))?;
+            let blocks = child_indices(&nodes, index, CHART_NS, "dLbls");
+            if blocks.len() != 1 {
+                return Err(transaction_error("data-label block changed after validation"));
+            }
+            let block = *blocks.first().ok_or_else(|| transaction_error("data-label block is missing"))?;
+            let local = if field == "dLblPos" { "dLblPos" } else { field };
+            let targets = child_indices(&nodes, block, CHART_NS, local);
+            if targets.len() != 1 {
+                return Err(transaction_error(format!("data-label property `{field}` no longer has one explicit target")));
+            }
+            let target = *targets.first().ok_or_else(|| transaction_error("data-label property target is missing"))?;
+            if !nodes
+                .get(target)
+                .is_some_and(|node| node.children.is_empty() && node.text.trim().is_empty() && node.attrs.contains_key(&qualified("", "val")))
+            {
+                return Err(transaction_error(format!("data-label property `{field}` has unsupported formatting")));
+            }
+            current = set_xml_attribute(&current, &nodes, target, "val", value)?;
         }
     }
     Ok(current)
@@ -3697,6 +3869,75 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn simple_per_series_data_labels_edit_without_touching_workbook() {
+        let base = docx_fixture(false, false, false, false);
+        let mut parts = Package::open(&base).unwrap().entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let chart = String::from_utf8(parts["word/charts/chart1.xml"].clone()).unwrap().replace(
+            "</c:ser>",
+            r#"<c:dLbls><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:dLblPos val="outEnd"/></c:dLbls></c:ser>"#,
+        );
+        parts.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+        let source = zip(&parts);
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        let label_snapshot = plan.mapping.series[0].formatting.data_labels.as_ref().unwrap();
+        assert!(label_snapshot.editable);
+        assert_eq!(label_snapshot.show_value, Some(true));
+        assert_eq!(label_snapshot.position.as_deref(), Some("outEnd"));
+        let workbook_before = Package::open(&source).unwrap().get("word/embeddings/book.xlsx").unwrap().to_vec();
+        let output = apply_chart_edit(
+            &source,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges {
+                    data_labels: Some(DataLabelChanges {
+                        show_value: Some(false),
+                        show_category: Some(true),
+                        show_series_name: Some(true),
+                        position: Some("inEnd".into()),
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let package = Package::open(&output).unwrap();
+        assert_eq!(package.get("word/embeddings/book.xlsx"), Some(workbook_before.as_slice()));
+        let snapshot = inspect_chart_data(&output, "word/charts/chart1.xml").unwrap();
+        let labels = snapshot.series[0].data_labels.as_ref().unwrap();
+        assert_eq!(labels.show_value, Some(false));
+        assert_eq!(labels.show_category, Some(true));
+        assert_eq!(labels.show_series_name, Some(true));
+        assert_eq!(labels.position.as_deref(), Some("inEnd"));
+    }
+
+    #[test]
+    fn custom_point_label_xml_is_preserved_and_read_only() {
+        let base = docx_fixture(false, false, false, false);
+        let mut parts = Package::open(&base).unwrap().entries().map(|(name, bytes)| (name.to_string(), bytes.to_vec())).collect::<BTreeMap<_, _>>();
+        let chart = String::from_utf8(parts["word/charts/chart1.xml"].clone())
+            .unwrap()
+            .replace("</c:ser>", r#"<c:dLbls><c:showVal val="1"/><c:dLbl><c:idx val="0"/><c:tx><c:v>custom</c:v></c:tx></c:dLbl></c:dLbls></c:ser>"#);
+        parts.insert("word/charts/chart1.xml".into(), chart.into_bytes());
+        let source = zip(&parts);
+        let plan = prepare_chart_edit(&source, "word/charts/chart1.xml").unwrap();
+        assert!(!plan.mapping.series[0].formatting.data_labels.as_ref().unwrap().editable);
+        let result = apply_chart_edit(
+            &source,
+            &plan,
+            &ChartDataChanges {
+                series: vec![SeriesChanges {
+                    data_labels: Some(DataLabelChanges { show_value: Some(false), ..Default::default() }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(source, zip(&parts));
     }
 
     #[test]
