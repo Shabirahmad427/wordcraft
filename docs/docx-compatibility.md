@@ -17,6 +17,16 @@ This is synthetic model and package evidence; it does not establish Word 365 int
 Guarded imported packages remain read-only for edits that cannot be represented by a verified safe
 splice, preserving unsupported OOXML rather than silently rewriting it.
 
+## Phase 7O structured table clipboard
+
+Whole-cell selections copied through WordCraft's internal clipboard retain selected table rows and
+cells, including modeled properties and nested blocks. Partial clips clear vertical-merge markers
+whose paired rows are outside the selection. DOCX round-trip and PDF export are checked with
+synthetic engine fixtures. This does not preserve arbitrary unmodeled OOXML attached to an edited
+table, and imported packages guarded against unsafe rewrites continue to reject those edits rather
+than silently dropping package content. The OS clipboard currently receives plain text for Copy;
+rich HTML/RTF table export is not implemented. No Microsoft Word clipboard behavior is inferred.
+
 ## Phase 7M theme bindings and style preservation
 
 The importer resolves theme fonts and `w:themeColor` against the theme present at open. Before

@@ -189,6 +189,12 @@ pub(crate) fn dispatch(s: &mut Session, id: &str, mutates: bool, run: fn(&mut Se
 
 /// Copy: one paragraph per block row (formatting kept); the plain text joins rows with newlines.
 fn copy(s: &mut Session, segs: &[(Pos, Pos)]) -> CmdResult {
+    if let Some(fragment) = copy_cells(s) {
+        s.clipboard_text = fragment.clipboard_text();
+        s.clip_history.push(&fragment, &s.clipboard_text);
+        s.clipboard = Some(fragment);
+        return Ok(json!({"text": s.clipboard_text}));
+    }
     let mut blocks = Vec::new();
     let mut parts = std::collections::BTreeMap::new();
     let mut rows = Vec::new();
@@ -210,8 +216,94 @@ fn copy(s: &mut Session, segs: &[(Pos, Pos)]) -> CmdResult {
         blocks.push(Block::Para(para));
     }
     s.clipboard_text = rows.join("\n");
-    s.clipboard = Some(Fragment { blocks, parts });
+    let fragment = Fragment { blocks, parts };
+    s.clip_history.push(&fragment, &s.clipboard_text);
+    s.clipboard = Some(fragment);
     Ok(json!({"text": s.clipboard_text}))
+}
+
+/// Copy a whole-cell selection as a clipped table, keeping the selected cells in row/column
+/// order. A clipped selection cannot safely retain vertical-merge links to omitted rows, so those
+/// links are cleared while each selected cell's content and other properties remain intact.
+pub(crate) fn copy_cells(s: &Session) -> Option<Fragment> {
+    let range = s.cell_range()?;
+    let source = s.doc.table(range.story, &range.table)?;
+    let selected: std::collections::BTreeSet<_> = range.cells(source).into_iter().collect();
+    if selected.is_empty() {
+        return None;
+    }
+
+    let mut starts = Vec::new();
+    let mut ends = Vec::new();
+    for &(row, cell) in &selected {
+        let selected_cell = source.rows.get(row)?.cells.get(cell)?;
+        let start = source.grid_col(row, cell);
+        starts.push(start);
+        ends.push(start.saturating_add(selected_cell.span()));
+    }
+    let first_col = starts.into_iter().min()?;
+    let end_col = ends.into_iter().max()?;
+    let grid: Vec<f32> =
+        (first_col..end_col).map(|col| source.grid.get(col).copied().filter(|width| width.is_finite() && *width > 0.0).unwrap_or(72.0)).collect();
+    let whole_table = selected.len() == source.rows.iter().map(|row| row.cells.len()).sum::<usize>();
+
+    let mut table = source.clone();
+    table.grid = grid.clone();
+    table.rows = source
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(row_index, _)| range.rows.0 <= *row_index && *row_index <= range.rows.1)
+        .map(|(row_index, row)| {
+            let mut cells = Vec::new();
+            let mut next_col = first_col;
+            for (cell_index, source_cell) in row.cells.iter().enumerate() {
+                if !selected.contains(&(row_index, cell_index)) {
+                    continue;
+                }
+                let start = source.grid_col(row_index, cell_index);
+                let end = start.saturating_add(source_cell.span());
+                if start > next_col {
+                    cells.extend(empty_grid_cells(&grid, next_col.saturating_sub(first_col), start.saturating_sub(first_col)));
+                }
+                let mut cell = source_cell.clone();
+                if !whole_table {
+                    cell.props.vmerge = wordcraft_doc::props::VMerge::None;
+                }
+                cells.push(cell);
+                next_col = next_col.max(end);
+            }
+            if next_col < end_col {
+                cells.extend(empty_grid_cells(&grid, next_col.saturating_sub(first_col), end_col.saturating_sub(first_col)));
+            }
+            wordcraft_doc::Row { cells, ..row.clone() }
+        })
+        .collect();
+    let mut blocks = vec![Block::Table(table)];
+    wordcraft_doc::control::balance_blocks(&mut blocks);
+    let parts = s.doc.text_box_parts_for(&blocks);
+    Some(Fragment { blocks, parts })
+}
+
+/// Blank cells keep selected rows aligned when a merged cell makes the copied grid wider than
+/// the cells selected in another row.
+fn empty_grid_cells(grid: &[f32], start: usize, end: usize) -> Vec<wordcraft_doc::Cell> {
+    let mut cells = Vec::new();
+    let mut col = start;
+    while col < end {
+        let span = end.saturating_sub(col).min(63);
+        let width = grid
+            .get(col..col.saturating_add(span))
+            .map(|widths| widths.iter().sum())
+            .filter(|width: &f32| width.is_finite() && *width > 0.0)
+            .unwrap_or(72.0);
+        let mut cell = wordcraft_doc::Cell::empty();
+        cell.props.span = span as u32;
+        cell.props.width = Some(width);
+        cells.push(cell);
+        col = col.saturating_add(span);
+    }
+    cells
 }
 
 /// Delete each row's piece (bottom up, so earlier positions stay valid) and leave the caret at

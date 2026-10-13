@@ -65,6 +65,160 @@ fn copying_a_table_range_into_following_text_preserves_cells_through_edit_undo_d
 }
 
 #[test]
+fn copying_partial_table_selections_keeps_cell_structure_through_paste_undo_and_docx() {
+    use wordcraft_doc::props::{Border, Borders, CharProps, Rgb};
+    use wordcraft_doc::{Block, Paragraph, Path, Table, para_block};
+
+    let mut doc = wordcraft_doc::Document::from_text("Before\nAfter");
+    let mut table = Table::new(2, 3, 360.0);
+    for (row, values) in [["α", "bold", "third"], ["fourth", "fifth", "sixth"]].iter().enumerate() {
+        for (col, value) in values.iter().enumerate() {
+            let mut para = Paragraph::with_text(value, CharProps { bold: (row == 0 && col == 1).then_some(true), ..Default::default() });
+            if row == 0 && col == 1 {
+                para.props.borders =
+                    Some(Borders { bottom: Some(Border { color: Some(Rgb(26, 43, 60)), ..Default::default() }), ..Default::default() });
+            }
+            table.rows[row].cells[col].blocks = vec![para_block(para)];
+        }
+    }
+    doc.insert_block(StoryRef::Body, &Path::top(1), Block::Table(table)).unwrap();
+
+    for (select, expected_rows, expected_cells, expected_text) in
+        [("table.selectCell", 1, 1, "bold"), ("table.selectRow", 1, 3, "α\tbold\tthird"), ("table.selectColumn", 2, 1, "bold\nfifth")]
+    {
+        let mut session = Session::new(doc.clone());
+        let cell = Pos { story: StoryRef::Body, path: Path(vec![1, 0, 1, 0]), off: 0 };
+        run(&mut session, "caret.set", json!({"pos": cell}));
+        run(&mut session, select, json!({}));
+        run(&mut session, "edit.copy", json!({}));
+        assert_eq!(session.clipboard_text, expected_text);
+        let fragment = session.clipboard.as_ref().unwrap();
+        let Some(Block::Table(copied)) = fragment.blocks.first() else { panic!("cell selection was flattened") };
+        assert_eq!(copied.rows.len(), expected_rows);
+        assert_eq!(copied.rows[0].cells.len(), expected_cells);
+        if select == "table.selectRow" {
+            let copied_cell = &copied.rows[0].cells[1];
+            let copied_para = copied_cell.blocks[0].as_para().unwrap();
+            assert_eq!(copied_para.props_of_char(0).bold, Some(true));
+            assert_eq!(copied_para.props.borders.as_ref().and_then(|b| b.bottom.as_ref()).and_then(|b| b.color), Some(Rgb(26, 43, 60)));
+        }
+
+        let mut blank = Session::new(wordcraft_doc::Document::new());
+        blank.clipboard = session.clipboard.clone();
+        blank.clipboard_text = session.clipboard_text.clone();
+        run(&mut blank, "edit.paste", json!({}));
+        assert_eq!(blank.doc.body.iter().filter(|block| matches!(block.as_ref(), Block::Table(_))).count(), 1);
+        assert_eq!(blank.doc.body.iter().filter_map(|block| block.as_table()).next().unwrap().rows.len(), expected_rows);
+
+        run(&mut session, "caret.set", json!({"pos": Pos::body(2, 5)}));
+        run(&mut session, "edit.paste", json!({}));
+        assert!(text(&session).contains("After"), "paste must keep adjacent paragraph content");
+        let copied_tables: Vec<_> = session.doc.body.iter().filter_map(|block| block.as_table()).collect();
+        assert_eq!(copied_tables.len(), 2);
+        assert_eq!(copied_tables[1].rows.len(), expected_rows);
+        assert_eq!(copied_tables[1].rows[0].cells.len(), expected_cells);
+        run(&mut session, "edit.undo", json!({}));
+        assert_eq!(session.doc.body.iter().filter(|block| matches!(block.as_ref(), Block::Table(_))).count(), 1);
+        run(&mut session, "edit.redo", json!({}));
+        let bytes = wordcraft_docx::write(&session.doc).unwrap();
+        let reopened = wordcraft_docx::read(&bytes).unwrap();
+        let tables: Vec<_> = reopened.body.iter().filter_map(|block| block.as_table()).collect();
+        assert_eq!(tables.len(), 2);
+        assert!(
+            tables[1]
+                .rows
+                .iter()
+                .flat_map(|row| &row.cells)
+                .flat_map(|cell| &cell.blocks)
+                .filter_map(|block| block.as_para())
+                .any(|para| para.props_of_char(0).bold == Some(true))
+        );
+        if select == "table.selectRow" {
+            let copied_para = tables[1].rows[0].cells[1].blocks[0].as_para().unwrap();
+            assert_eq!(copied_para.props.borders.as_ref().and_then(|b| b.bottom.as_ref()).and_then(|b| b.color), Some(Rgb(26, 43, 60)));
+        }
+        let copied_text = tables[1]
+            .rows
+            .iter()
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .filter_map(|cell| cell.blocks.first().and_then(|block| block.as_para()))
+                    .map(|para| para.plain_text())
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(copied_text, expected_text);
+        assert!(wordcraft_pdf::export(&reopened, &wordcraft_pdf::PdfOptions::default()).is_ok());
+    }
+
+    let mut cut = Session::new(doc);
+    let cell = Pos { story: StoryRef::Body, path: Path(vec![1, 0, 1, 0]), off: 0 };
+    run(&mut cut, "caret.set", json!({"pos": cell}));
+    run(&mut cut, "table.selectCell", json!({}));
+    run(&mut cut, "edit.cut", json!({}));
+    assert!(
+        matches!(cut.clipboard.as_ref().and_then(|f| f.blocks.first()), Some(Block::Table(_))),
+        "Cut keeps a structured internal clipboard fragment"
+    );
+    let original_table = cut.doc.body.iter().filter_map(|block| block.as_table()).next().unwrap();
+    assert_eq!(original_table.rows[0].cells[1].blocks[0].as_para().unwrap().plain_text(), "");
+}
+
+#[test]
+fn copying_a_clipped_vertical_merge_keeps_cell_content_and_removes_dangling_merge_links() {
+    use wordcraft_doc::props::{CharProps, VMerge};
+    use wordcraft_doc::{Block, Path, Table};
+
+    let mut doc = wordcraft_doc::Document::from_text("Before\nAfter");
+    let mut table = Table::new(2, 2, 240.0);
+    table.rows[0].cells[0].props.vmerge = VMerge::Restart;
+    table.rows[1].cells[0].props.vmerge = VMerge::Continue;
+    table.rows[0].cells[0].blocks = vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text("merged head", CharProps::default()))];
+    table.rows[1].cells[0].blocks = vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text("merged tail", CharProps::default()))];
+    doc.insert_block(StoryRef::Body, &Path::top(1), Block::Table(table)).unwrap();
+    let mut session = Session::new(doc);
+    let tail = Pos { story: StoryRef::Body, path: Path(vec![1, 1, 0, 0]), off: 0 };
+    run(&mut session, "caret.set", json!({"pos": tail}));
+    run(&mut session, "table.selectCell", json!({}));
+    run(&mut session, "edit.copy", json!({}));
+
+    let Some(Block::Table(copied)) = session.clipboard.as_ref().and_then(|f| f.blocks.first()) else { panic!("cell selection was flattened") };
+    assert_eq!(copied.rows.len(), 1);
+    assert_eq!(copied.rows[0].cells.len(), 1);
+    assert_eq!(copied.rows[0].cells[0].props.vmerge, VMerge::None);
+    assert_eq!(copied.rows[0].cells[0].blocks[0].as_para().unwrap().plain_text(), "merged tail");
+}
+
+#[test]
+fn copying_a_column_crossing_a_horizontal_merge_keeps_grid_alignment() {
+    use wordcraft_doc::{Block, Path, Table};
+
+    let mut doc = wordcraft_doc::Document::from_text("Before\nAfter");
+    let mut table = Table::new(2, 2, 240.0);
+    table.rows[0].cells[0].props.span = 2;
+    table.rows[0].cells.remove(1);
+    table.rows[1].cells[1].blocks = vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text("selected", Default::default()))];
+    doc.insert_block(StoryRef::Body, &Path::top(1), Block::Table(table)).unwrap();
+    let mut session = Session::new(doc);
+    let lower_right = Pos { story: StoryRef::Body, path: Path(vec![1, 1, 1, 0]), off: 0 };
+    run(&mut session, "caret.set", json!({"pos": lower_right}));
+    run(&mut session, "table.selectColumn", json!({}));
+    run(&mut session, "edit.copy", json!({}));
+
+    let Some(Block::Table(copied)) = session.clipboard.as_ref().and_then(|f| f.blocks.first()) else { panic!("column selection was flattened") };
+    assert_eq!(copied.grid.len(), 2);
+    assert_eq!(copied.rows.len(), 2);
+    assert_eq!(copied.rows[0].cells.len(), 1);
+    assert_eq!(copied.rows[0].cells[0].span(), 2);
+    assert_eq!(copied.rows[1].cells.len(), 2);
+    assert_eq!(copied.rows[1].cells[0].blocks[0].as_para().unwrap().plain_text(), "");
+    assert_eq!(copied.rows[1].cells[1].blocks[0].as_para().unwrap().plain_text(), "selected");
+}
+
+#[test]
 fn theme_rebinding_is_undoable_and_preserves_explicit_style_formatting() {
     use wordcraft_doc::props::{CharProps, Rgb, TextColor, ThemeColorRef, ThemeFontRef};
     let mut session = s();

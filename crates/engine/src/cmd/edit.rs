@@ -158,7 +158,7 @@ fn copy(s: &mut Session, _: &Value) -> CmdResult {
     if a == b {
         return Ok(json!({"text": ""}));
     }
-    let f = s.doc.copy_range(&a, &b);
+    let f = super::column::copy_cells(s).unwrap_or_else(|| s.doc.copy_range(&a, &b));
     s.clipboard_text = f.clipboard_text();
     s.clip_history.push(&f, &s.clipboard_text);
     s.clipboard = Some(f);
@@ -252,7 +252,7 @@ impl ClipHistory {
         self.items.is_empty()
     }
 
-    fn push(&mut self, f: &Fragment, text: &str) {
+    pub(crate) fn push(&mut self, f: &Fragment, text: &str) {
         // Text plus per-paragraph overhead; pictures are references into the document.
         let paras = text.matches('\n').count().saturating_add(f.blocks.len()).saturating_add(f.parts.len()).saturating_add(1);
         let bytes = text.len().saturating_mul(2).saturating_add(paras.saturating_mul(256));

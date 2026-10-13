@@ -1,5 +1,12 @@
 # WordCraft roadmap
 
+## Phase 7O — structured table selection and clipboard (2026-10-13)
+
+- Reproduced a shared-core regression: Copy ignored an active whole-cell `CellRange` and serialized only paragraph runs, so selecting one cell, a row, or a column lost the table structure. The new cell-fragment builder clips the source table to the selected cells in order and retains row/cell/table properties, cell contents, nested blocks, and text-box stories. It pads omitted grid gaps exposed by horizontal merges, preserves merges on complete-table copies, and clears dangling vertical-merge links in clipped copies.
+- Added fail-first engine coverage for single-cell, row, and multi-row column selection, blank-document and in-place paste, rich text and borders, horizontal/vertical merge clipping, adjacent content, Undo/Redo, DOCX reopen, and PDF export. The prior Phase 7N whole-table cross-container copy regression remains covered.
+- Internal WordCraft clipboard fragments now preserve table structure. Native Copy still publishes plain text through egui; native Paste can import HTML/RTF when the platform clipboard provides them. Structured table data is not yet exported to the OS clipboard, so external applications receive flattened text. No platform-specific table logic or Word clipboard-format compatibility is claimed. Nested cell blocks are copied by model cloning but do not yet have dedicated round-trip fixtures.
+- All six local `cargo xtask ci` gates pass on Apple Silicon macOS, including workspace tests, assets, layers and WASM checks. The native Apple Silicon GUI/CLI release build and CLI version smokes pass. Hosted Linux/macOS/Windows results are pending. The `.git/refs/remotes/origin/main` lock attempt fails because the execution environment restricts writes to `.git`, despite the ref and parent directories being owned by the current user with mode 0644/0755 and no ACL; no ownership or permission changes were made. See [editing workflow regressions](docs/editing-workflows.md).
+
 ## Phase 7N — editing workflow reliability (2026-10-13)
 
 - Reproduced a shared range-copy defect: when a selection began in a table cell and continued into the following body paragraph, `Document::copy_blocks` flattened the table cells into ordinary paragraphs. The copied fragment lost its rows and cells. Copy now retains a table as a table when the selection covers the whole table; partial ranges whose endpoints are inside the table retain their prior text-only behavior.

@@ -431,19 +431,21 @@ impl Document {
         let mut blocks = self.copy_blocks(a, b);
         // Half a content control (one marker without the other) isn't copied.
         crate::control::balance_blocks(&mut blocks);
-        let parts = self.text_box_parts(&blocks);
+        let parts = self.text_box_parts_for(&blocks);
         Fragment { blocks, parts }
     }
 
     /// The whole body as a fragment (with its text boxes), to insert into another document.
     pub fn body_fragment(&self) -> Fragment {
         let blocks: Vec<Block> = self.body.iter().map(|b| (**b).clone()).collect();
-        let parts = self.text_box_parts(&blocks);
+        let parts = self.text_box_parts_for(&blocks);
         Fragment { blocks, parts }
     }
 
     /// Copies of the text box stories shapes in `blocks` show, nested boxes included.
-    fn text_box_parts(&self, blocks: &[Block]) -> BTreeMap<u32, Part> {
+    /// Copies the text-box stories referenced by a set of blocks. Clipboard builders use this
+    /// when they construct a structured fragment without going through [`Self::copy_range`].
+    pub fn text_box_parts_for(&self, blocks: &[Block]) -> BTreeMap<u32, Part> {
         let mut out = BTreeMap::new();
         let mut todo = Vec::new();
         for b in blocks {
