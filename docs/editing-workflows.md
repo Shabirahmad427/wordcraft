@@ -23,6 +23,14 @@ changes, clipboard text, Undo/Redo and document recovery in `crates/engine/src/t
 claim of Microsoft Word 365 editing compatibility follows without genuine reference documents and
 application-level comparison.
 
+## Platform validation for Phase 7N
+
+On native Apple Silicon macOS, all six `cargo xtask ci` gates, workspace tests, a release GUI/CLI
+build, and CLI version smokes passed. Hosted [Document regressions run 38390805361](https://github.com/Shabirahmad427/wordcraft/actions/runs/38390805361)
+passed the document/session suites and native CLI smoke on Linux, macOS and Windows, plus the Linux
+GUI/CLI release build, visual regression and advisory performance jobs. The hosted Linux GUI target
+was built but not launched. This phase has no native Linux or Windows GUI runtime evidence.
+
 ## DOCX preservation boundary
 
 For imported packages whose unsupported OOXML cannot be mapped safely, the package-preservation
