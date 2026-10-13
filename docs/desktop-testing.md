@@ -1,6 +1,6 @@
 # Desktop GUI validation
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7S native picker target discovery · **Target:** WordCraft desktop on Linux, macOS and Windows
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7S three-OS native smoke passed · **Target:** WordCraft desktop on Linux, macOS and Windows
 
 This document separates a live desktop window, egui event-driven tests, offscreen rendering and
 hosted builds. A CI job that compiles or tests the GUI is not evidence that a person used a desktop
@@ -44,24 +44,30 @@ dictionary are created there. The separate shutdown regression enables normal pr
 inside another new temporary profile and confirms the latest unsaved text is recoverable. No
 developer preferences, logs or recovery entries were accessed or removed.
 
-Hosted Printing run [38473251845](https://github.com/Shabirahmad427/wordcraft/actions/runs/38473251845)
-showed Linux initially lacked X11 window focus; the subsequent Openbox setup resolved that, and
-run [38475004494](https://github.com/Shabirahmad427/wordcraft/actions/runs/38475004494) passed Linux's
-native document workflow. The same run passed macOS. Windows reached native focus, Unicode and bold
-editing, Insert-tab activation, table insertion and cell text; it then failed at the immediate Undo
-assertion. The run's separate recovery-shutdown test exited normally, but the editing app was force
-terminated after that assertion.
+Hosted Printing run [38476284508](https://github.com/Shabirahmad427/wordcraft/actions/runs/38476284508)
+passed the complete native smoke matrix. Linux ran under Xvfb, Openbox and software GL; it reported
+focused window/canvas, inserted Unicode and bold text, inserted a table and cell text, passed
+Undo/Redo, completed DOCX/PDF checks, and exited with status 0 after the eframe exit callback.
+Windows ran with its native window and DirectX 12 software adapter, completed the same editing,
+table, Undo/Redo, DOCX/PDF and normal `app.quit` sequence, and exited with status 0 after the exit
+callback. macOS Apple Silicon passed both isolated native-window tests; the `open -W` waiter returned
+status 0 after `app.quit` and the eframe exit callback. All three separate isolated-profile recovery
+shutdown tests also passed.
 
-The table-grid failure root cause was test geometry: the fixed point `(166, 190)` landed in the
-vertical gap between the 2×2 grid rows. The UI reported the second-row cell center as `(166, 200)`.
-The harness now discovers the rendered Insert › Table button and grid-cell bounds from
-`ui.inspect`, then sends pointer events at their centers. The Windows log also showed two synthetic
-pointer events still pending shortly after the grid click. The Undo/Redo checks now wait for bounded
-document-state changes instead of treating a fixed 180 ms delay as completion, and timeouts report
-the active document, selection/caret, focus, pending events and screenshot. This Windows timing
-adjustment still needs hosted validation. All six local CI gates and the release GUI/CLI build pass;
-Phase 7S stays open until all three native runners pass text editing, table insertion, Undo/Redo and
-graceful `app.quit` shutdown.
+The earlier Linux and Windows table failures were harness geometry: fixed point `(166, 190)` fell
+between the second-row grid cell's hit bounds on those runners. `ui.inspect` now reports the rendered
+Insert › Table button and grid-cell bounds, and the test clicks their centers. Linux/Windows
+reported `(166, 200)`; macOS reported `(166, 190)` because its popup was positioned higher. Windows
+also exposed that the old immediate Undo assertion could run before the window processed the key;
+the smoke now polls bounded document-state transitions for Undo/Redo and reports document, focus,
+caret/selection, pending events and a screenshot on timeout. This validates the harness behavior;
+it does not change shared editing logic.
+
+Local `cargo xtask ci` passed all six gates and Apple Silicon release GUI/CLI builds plus version
+commands passed. Native desktop evidence above is from the hosted GUI matrix; workspace egui tests
+and offscreen screenshots remain headless coverage and are not counted as desktop interaction.
+Phase 7S native smoke acceptance is met on this run; platform gaps outside this workflow remain in
+the support matrix below.
 
 The explicit macOS quit path now stops the recovery worker and writes its final checkpoint before
 calling `NSApplication.terminate`, since AppKit can bypass eframe's exit callback. The isolated
@@ -81,11 +87,10 @@ endpoint and first frame, and passed isolated recovery shutdown; its editing smo
 document empty after the injected page click/text and the harness forcibly terminated the app.
 Windows reached the first frame and typed/formatted text, but the tab state remained Home. The
 original click used `y=30`, the boundary between WordCraft's title row and tab strip; the harness
-then forced termination after the table assertion. The latest code changes click at `y=45` and
-assert the Insert tab is active. The Linux screenshot/focus diagnostic and runner-temp profile path
-are also corrected for the next hosted run; the previous Linux/Windows artifact upload had pointed
-at a different temporary directory and produced no artifact. Both hosted native editing smokes still
-need to pass before they count as validated. See
+then forced termination after the table assertion. The click moved to `y=45` with an Insert-tab
+assertion, Linux focus diagnostics and a runner-temp artifact path. Those fixes were intermediate;
+the later run [38476284508](https://github.com/Shabirahmad427/wordcraft/actions/runs/38476284508) passed
+the complete Linux/Windows native workflows as recorded above. See
 [native desktop platform support](platform-support.md) for the platform-by-platform evidence.
 
 No physical mouse/keyboard input, native Open/Save panel interaction, system clipboard exchange or
@@ -177,3 +182,4 @@ This protocol has not been run. No Word 365 compatibility result is claimed.
 | 2026-10-13 | minor | Found Windows ribbon click hit the title/tab boundary; corrected it and added an active-tab check. Linux hosted startup is fixed, but first page text input remains unresolved |
 | 2026-10-13 | minor | Confirmed Linux Xvfb had no OS/window focus; added Openbox and a focus readiness assertion. Confirmed Windows text editing passes but the later table picker click fails; added a picker screenshot for hosted diagnosis |
 | 2026-10-13 | minor | Linux Openbox and picker target discovery passed its full native workflow; Windows now reaches table cell editing and exposed an immediate Undo assertion race, so bounded Undo/Redo state waits were added pending hosted validation |
+| 2026-10-13 | minor | Printing run 38476284508 passed Linux, macOS and Windows native smoke workflows, including editing, table insertion, Undo/Redo and normal quit; recorded native versus headless evidence separately |

@@ -1,11 +1,11 @@
 # WordCraft roadmap
 
-## Phase 7S — Native desktop smoke across Linux, macOS and Windows (in progress)
+## Phase 7S — Native desktop smoke across Linux, macOS and Windows (complete)
 
-- Printing run 38475004494 passed Linux's complete native workflow under Xvfb/Openbox/software GL and passed both macOS native smokes. Linux had previously failed table selection because fixed `(166, 190)` was between the grid's rows; the discovered cell center `(166, 200)` selected it. Linux passed Unicode/bold editing, table-cell typing, Undo/Redo, DOCX/PDF checks and normal `app.quit`.
-- Windows reached the same table and text state with dynamic target discovery, then failed the immediate Undo assertion. The log showed synthetic pointer events still pending shortly after the picker click; the test now polls for Undo/Redo document-state transitions with an eight-second bound and diagnostic state on timeout. The separate Windows recovery-shutdown test passed normally; the editing child was force-terminated after the Undo assertion.
-- All six local CI gates and Apple Silicon release GUI/CLI builds pass. Phase 7S remains open until the Windows bounded Undo/Redo check and full native `app.quit` workflow pass; Linux, macOS and Windows runtime results remain separate from headless egui tests and offscreen rendering.
-- Native smoke evidence and platform-specific gaps are maintained in [desktop GUI validation](docs/desktop-testing.md) and [platform support](docs/platform-support.md). Headless/egui event tests and offscreen rendering remain distinct from native-window validation.
+- Printing run 38476284508 passed the native GUI workflow on Linux, macOS and Windows. It verified native window and editor focus, Unicode and bold text, Insert › Table, typing in a table cell, Undo/Redo, DOCX save/reopen, PDF export and normal `app.quit` shutdown. Linux used Xvfb/Openbox/software GL, macOS used LaunchServices on Apple Silicon, and Windows used its DirectX 12 software adapter.
+- The Linux/Windows table-selection failure came from a hard-coded point in the inter-row gap. The UI now reports rendered hit bounds through `ui.inspect` and the harness clicks the actual cell center. Windows also exposed a timing race in the old immediate Undo assertion; bounded document-state polling now waits for Undo/Redo.
+- The three runner profiles were isolated. The native smoke verified no preferences, recovery store, logs or user fonts were created in its no-preferences profile; separate recovery-shutdown checks used temporary data only. All six local CI gates and Apple Silicon release GUI/CLI builds and version commands passed. Native desktop evidence is separate from headless egui tests and offscreen rendering.
+- Detailed runner evidence and remaining platform-level coverage gaps are listed in [desktop GUI validation](docs/desktop-testing.md) and [platform support](docs/platform-support.md). No Phase 7T work was started.
 
 ## Phase 7R — Desktop GUI, ribbon and editing validation (2026-10-13)
 

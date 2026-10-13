@@ -1,6 +1,6 @@
 # Native desktop platform support
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7S native focus and picker diagnostics · **Target:** Linux, macOS and Windows desktop builds
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7S three-OS native smoke passed · **Target:** Linux, macOS and Windows desktop builds
 
 This matrix distinguishes source/build configuration, hosted checks, a running native window and
 physical desktop interaction. A passing shared-core test or cross-target build does not establish
@@ -10,12 +10,12 @@ that a desktop application launches or works on that target.
 
 | Target | Build and packaging support | Hosted checks | Native GUI launch and document workflow | Remaining runtime gaps |
 |---|---|---|---|---|
-| Linux x86_64, X11 | eframe/winit X11 support; Linux package script emits x86_64 packages. Main CI builds the Linux GUI/CLI. | Printing run 38475004494 passed native startup, focus, Unicode/bold editing, Insert › Table, cell text, Undo/Redo, DOCX/PDF workflow and normal `app.quit` under Xvfb/Openbox/software GL. The discovered 2×2 target center `(166, 200)` resolved the prior fixed point `(166, 190)`, which fell in the gap between rows. | Local physical Linux desktop not available. | No physical X11 desktop, Wayland compositor, desktop-entry install, open-with or printer workflow was run locally. |
+| Linux x86_64, X11 | eframe/winit X11 support; Linux package script emits x86_64 packages. Main CI builds the Linux GUI/CLI. | Printing run 38476284508 passed native startup, focus, Unicode/bold editing, Insert › Table, cell text, Undo/Redo, DOCX/PDF workflow and normal `app.quit` under Xvfb/Openbox/software GL. The discovered 2×2 target center `(166, 200)` resolved the prior fixed point `(166, 190)`, which landed between rows. | Local physical Linux desktop not available. | No physical X11 desktop, Wayland compositor, desktop-entry install, open-with or printer workflow was run locally. |
 | Linux x86_64, Wayland | eframe enables Wayland. Linux prefers X11 when `DISPLAY` is set for drag/drop; set `WORDCRAFT_WAYLAND=1` to select native Wayland. Clipboard has Wayland data-control support with X11 fallback. | No Wayland compositor job exists in current CI. | Not run. The Xvfb check is X11 and does not establish Wayland behavior. | Needs a compositor-backed job (for example, a controlled Weston session) and desktop-level drag/drop/dialog checks. |
 | Linux aarch64 | Linux release workflow builds/packages on an ARM64 runner; Flatpak and other package outputs are configured for ARM64. | Release workflow only; current document regression GUI build is x86_64. | Not run in this phase. | Native ARM64 GUI launch and editing remain unverified. |
-| macOS Apple Silicon (arm64) | Native Rust target and macOS app bundle script; local release GUI/CLI build. | Printing run 38475004494 passed both native-window smokes on `macos-latest`; the test reports OS and architecture. | Local LaunchServices smokes use fresh profiles; editing, DOCX/PDF workflow, `app.quit`, eframe exit callback, recovery snapshot, and focus readiness have passed. `open -W` waiters returned 0 and control keys were removed. A raw-executable launch from a non-interactive test launcher stalls in AppKit before winit resume; the same occurs in a minimal eframe probe with wgpu and glow. | The underlying macOS condition behind the raw-launch stall is not narrowed to a specific environment setting. The separate earlier release launch's reported exit 143 has no identified sender. Physical input, native panels, Finder association, printer and Word 365 comparison remain untested. |
-| macOS Intel (x86_64) | Release packaging script requests a universal app and compiles both Apple Silicon and Intel slices. | Current app/UI workflow uses `macos-latest` without logging its architecture; this is not evidence of Intel runtime. | Not run. | No Intel Mac runtime evidence. |
-| Windows x64 | Windows packaging supports x64 MSI/portable outputs; eframe Windows and Win32/WinRT adapters are configured. | Printing run 38475004494 confirmed native window/editor focus, Unicode/bold editing, Insert-tab activation, table insertion and cell text. It failed at the immediate Undo assertion; logs showed two pending synthetic pointer events after the grid click. A separate recovery-shutdown test exited normally. The harness now waits for bounded Undo/Redo document-state transitions; this timing correction awaits a new hosted run. | No local Windows machine. | Confirm Undo/Redo and normal `app.quit` in the complete hosted workflow. Physical user input remains untested. |
+| macOS Apple Silicon (arm64) | Native Rust target and macOS app bundle script; local release GUI/CLI build. | Printing run 38476284508 passed both native-window smokes on `macos-latest` and reported `macos-aarch64`. | Hosted LaunchServices smokes use fresh profiles; editing, DOCX/PDF workflow, `app.quit`, eframe exit callback, recovery snapshot and focus readiness passed. `open -W` waiters returned 0 and control keys were removed. A raw-executable launch from a non-interactive test launcher stalls in AppKit before winit resume; the same occurs in a minimal eframe probe with wgpu and glow. | The underlying macOS condition behind the raw-launch stall is not narrowed to a specific environment setting. The separate earlier release launch's reported exit 143 has no identified sender. Physical input, native panels, Finder association, printer and Word 365 comparison remain untested. |
+| macOS Intel (x86_64) | Release packaging script requests a universal app and compiles both Apple Silicon and Intel slices. | Printing run 38476284508 logged `macos-aarch64`; it did not exercise Intel. | Not run. | No Intel Mac runtime evidence. |
+| Windows x64 | Windows packaging supports x64 MSI/portable outputs; eframe Windows and Win32/WinRT adapters are configured. | Printing run 38476284508 passed native focus, Unicode/bold editing, Insert-tab activation, table insertion, cell text, Undo/Redo, DOCX/PDF workflow and normal `app.quit`. It reported `windows-x86_64`; the table-cell center was discovered from live widget bounds. | No local Windows machine. | Physical user input, native panels, file association, printer selection and Word 365 comparison remain untested. |
 | Windows ARM64 | Packaging cross-compiles the ARM64 executable and MSI from x64. | Scheduled Windows 11 ARM job installs/checks/uninstalls packages and runs the CLI natively. It does not launch the GUI. | Not run locally; Phase 7S window smoke is not yet configured on the ARM64 runner. | No GUI launch or interactive workflow evidence; do not infer it from package installation or CLI execution. |
 
 ## Shared and native integration boundaries
@@ -64,11 +64,13 @@ cleanup; none counts as a successful launch. The app-bundle smoke runs separatel
 interactive Terminal locally; the Printing workflow is configured to run Linux under Xvfb/software
 GL and macOS/Windows on their native hosted runners. Printing run
 [38467901780](https://github.com/Shabirahmad427/wordcraft/actions/runs/38467901780) passed both
-macOS smokes. Linux startup now succeeds but its initial page text input fails under Xvfb; Windows
-reaches its first frame but previously clicked the title/tab boundary and stayed on Home. A local
-macOS run passes after moving the click to `y=45`. The next hosted run will capture Linux failure
-state and use a profile directory under the runner's artifact root; Linux and Windows hosted editing
-are still unverified.
+macOS smokes. Printing run
+[38476284508](https://github.com/Shabirahmad427/wordcraft/actions/runs/38476284508) passed native
+editing on Linux, macOS and Windows, including table text, Undo/Redo, DOCX/PDF checks and normal
+quit. Linux ran with Xvfb/Openbox/software GL; Windows used its DirectX 12 software adapter; macOS
+used LaunchServices on Apple Silicon. Native results are distinct from headless tests and offscreen
+rendering. The profiles were isolated, and the recovery shutdown checks used only their own
+temporary test data.
 Control-channel pointer/key/text events exercise the actual app window and UI code, but they are
 injected events, not physical mouse or keyboard input. The harness records child status and stderr;
 timeout cleanup never counts as success. The smoke does not use the system clipboard or open a
@@ -85,4 +87,4 @@ comparisons remain open runtime checks.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-13 | minor | Recorded hosted Linux startup success but text-input failure, and Windows tab-boundary click root cause plus local macOS verification of the corrected coordinate |
-| 2026-10-13 | minor | Linux passed native editing/table/Undo/Redo/quit after target discovery; Windows reached table text but exposed a fixed-delay Undo assertion, now replaced by bounded state polling pending hosted validation |
+| 2026-10-13 | minor | Printing run 38476284508 passed all three native smoke jobs with editing, table insertion, Undo/Redo and normal quit; raw native input and broader desktop integration remain separate gaps |
