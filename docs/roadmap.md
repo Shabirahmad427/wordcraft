@@ -1,6 +1,6 @@
 # WordCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7M theme-linked style rebinding and safe unknown-style preservation checks; native CI passed, hosted matrix pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7T native package validation in progress; ranked beta estimates unchanged · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 Forward-looking plan. The summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is
 [`gaps.md`](gaps.md); the numbers are in [`target-app-parity.md`](target-app-parity.md). Hours are
@@ -11,6 +11,11 @@ Opus 5.5 agent wall-clock.
 Phase 7M adds shared theme rebinding and preservation regressions. Guarded imports still need a
 safe package XML merge before theme or style edits can be saved; see the
 [DOCX preservation contract](docx-compatibility.md#phase-7m-theme-bindings-and-style-preservation).
+
+Phase 7T is validating actual native packages. A local macOS DMG defect is corrected and an
+installed Apple Silicon app passed isolated edit/open/quit smokes; Linux DEB and Windows x64 MSI
+installed-app jobs are pending. See [native installation](native-installation.md). This work does
+not change the Word-feature estimates below.
 
 The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current five-gap evidence priority and distinguishes native runtime results from cross-builds.
 
@@ -66,7 +71,7 @@ partial rows are fidelity gaps (beta work), not broken workflows. WordCraft stay
 | M11 | Draw and objects | text wrap, text boxes, canvas handles, rotation (#332), ink pens and eraser (#307), group resize/orientation (#441–#445), and contour wrap (#354) landed; lasso and ink conversion remain | 35–55 h |
 | M12 | Formats breadth (PDF, ODT, RTF, HTML, MD, TXT, LaTeX, `.doc` import) | done (first versions); `.doc` write, encryption, minor formats missing | 60–100 h |
 | M13 | Performance budgets | on track (1.4 ms relayout); large real-world documents unmeasured | 10–20 h |
-| M14 | 1.0 polish, packaging, signing | releases v0.1.0–v0.4.0 published (signed macOS, Windows MSI x64/x86/arm64, Linux, FreeBSD, web) | — |
+| M14 | 1.0 polish, packaging, signing | releases v0.1.0–v0.4.0 published; Phase 7T installation/runtime checks in progress | Installed-package validation and remaining native integration checks |
 | M15 | Localization (12 key languages, RTL interface, proofing languages) | 15 UI languages; English, Polish and Portuguese proofing, a proofing language per run | 70–115 h |
 | M16 | Right-to-left and East Asian typography | RTL paragraphs done (#207) | 30–45 h |
 
@@ -79,6 +84,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Phase 7T local DMG correction and installed native app smoke; hosted DEB/MSI validation pending, no beta estimate change |
 | 2026-10-13 | minor | Phase 7M theme binding and style preservation regressions; native six-gate CI passes, hosted matrix pending |
 | 2026-10-12 | minor | Phase 7I synthetic DOCX/PDF corpus and native matrix gate; header-float clipping diagnostic fixed without changing pagination |
 | 2026-10-12 | minor | Added five-gap cross-platform audit; DOCX export safety improved in shared Rust, while native and Word 365 comparisons remain pending |

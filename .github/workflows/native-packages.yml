@@ -1,0 +1,230 @@
+# Exercise generated desktop packages on disposable hosted runners. This workflow never publishes
+# a release and never uses the developer's installed application or profile.
+name: Native packages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo*'
+      - 'apps/wordcraft/**'
+      - 'apps/wordcraft-cli/**'
+      - 'packaging/**'
+      - '.github/workflows/native-packages.yml'
+  pull_request:
+    paths:
+      - 'Cargo*'
+      - 'apps/wordcraft/**'
+      - 'apps/wordcraft-cli/**'
+      - 'packaging/**'
+      - '.github/workflows/native-packages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install desktop and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libgtk-3-dev libfontconfig1-dev libfreetype-dev libvulkan1 \
+            mesa-vulkan-drivers openbox x11-utils xvfb desktop-file-utils
+      - uses: storytold/craft-common-actions/actions/install-nfpm@8f081ff5db115de44313c9db09415c359bf2ca01
+        with:
+          deb-arch: amd64
+          nfpm-version: 2.47.0
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: native-packages-linux
+      - name: Build deb, rpm and tar packages
+        env:
+          WORDCRAFT_BUILD_SHA: ${{ github.sha }}
+        run: packaging/linux/package.sh --formats deb,rpm,tar
+      - name: Install deb and inspect desktop integration
+        run: |
+          set -euo pipefail
+          test -f dist/release/wordcraft-*-linux-x86_64.deb
+          test -f dist/release/wordcraft-*-linux-x86_64.rpm
+          test -f dist/release/wordcraft-*-linux-x86_64.tar.gz
+          sudo apt-get install -y ./dist/release/wordcraft-*-linux-x86_64.deb
+          test -x /usr/bin/wordcraft
+          test -x /usr/bin/wordcraft-cli
+          /usr/bin/wordcraft --version | grep "${GITHUB_SHA:0:8}"
+          /usr/bin/wordcraft-cli --version | grep '${{ github.sha }}'
+          desktop-file-validate /usr/share/applications/ai.storyteller.wordcraft.desktop
+          grep -q 'Exec=wordcraft %F' /usr/share/applications/ai.storyteller.wordcraft.desktop
+          grep -q 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' /usr/share/applications/ai.storyteller.wordcraft.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/ai.storyteller.wordcraft.png
+          mkdir -p '${{ runner.temp }}/documents'
+          printf 'owned by the user\n' > '${{ runner.temp }}/documents/keep.txt'
+      - name: Edit, save, export and quit the installed app under X11
+        env:
+          WORDCRAFT_NATIVE_EXECUTABLE: /usr/bin/wordcraft
+          WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
+          WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WGPU_BACKEND: gl
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          # shellcheck disable=SC2016
+          xvfb-run -a bash -euo pipefail -c '
+            openbox --sm-disable &
+            wm_pid=$!
+            trap "kill $wm_pid 2>/dev/null || true; wait $wm_pid 2>/dev/null || true" EXIT
+            for _ in {1..50}; do
+              if xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id"; then break; fi
+              sleep 0.1
+            done
+            xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"
+            cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
+          '
+      - name: Uninstall without deleting a user document
+        run: |
+          sudo apt-get remove -y wordcraft
+          test ! -e /usr/bin/wordcraft
+          test ! -e /usr/share/applications/ai.storyteller.wordcraft.desktop
+          grep -q 'owned by the user' '${{ runner.temp }}/documents/keep.txt'
+      - name: Preserve package failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-package-diagnostics
+          path: ${{ runner.temp }}/wordcraft-native-smoke-*
+          if-no-files-found: warn
+          retention-days: 7
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: native-packages-macos
+      - name: Build the Apple Silicon DMG
+        env:
+          WORDCRAFT_BUILD_SHA: ${{ github.sha }}
+        run: packaging/macos/package.sh --arch aarch64
+      - name: Install the actual DMG app into a disposable Applications directory
+        run: |
+          set -euo pipefail
+          dmg=(dist/release/wordcraft-*-macos-aarch64.dmg)
+          test "${#dmg[@]}" -eq 1
+          mkdir -p '${{ runner.temp }}/wordcraft-volume' '${{ runner.temp }}/Applications' '${{ runner.temp }}/documents'
+          hdiutil attach -nobrowse -readonly -mountpoint '${{ runner.temp }}/wordcraft-volume' "${dmg[0]}"
+          ditto '${{ runner.temp }}/wordcraft-volume/WordCraft.app' '${{ runner.temp }}/Applications/WordCraft.app'
+          hdiutil detach '${{ runner.temp }}/wordcraft-volume'
+          app='${{ runner.temp }}/Applications/WordCraft.app'
+          plutil -lint "$app/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")" = WordCraft
+          test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftBuildCommit' "$app/Contents/Info.plist")" = '${{ github.sha }}'
+          codesign --verify --strict --deep "$app"
+          lipo -verify_arch arm64 "$app/Contents/MacOS/WordCraft"
+          "$app/Contents/MacOS/WordCraft" --version | grep "${GITHUB_SHA:0:8}"
+          printf 'owned by the user\n' > '${{ runner.temp }}/documents/keep.txt'
+      - name: Edit, save, export and quit the installed app through LaunchServices
+        env:
+          WORDCRAFT_NATIVE_APP_BUNDLE: ${{ runner.temp }}/Applications/WordCraft.app
+          WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
+          WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+        run: cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
+      - name: Remove the app without deleting a user document
+        run: |
+          test -f '${{ runner.temp }}/documents/keep.txt'
+          rm -rf '${{ runner.temp }}/Applications/WordCraft.app'
+          test ! -e '${{ runner.temp }}/Applications/WordCraft.app'
+          grep -q 'owned by the user' '${{ runner.temp }}/documents/keep.txt'
+      - name: Preserve package failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-package-diagnostics
+          path: ${{ runner.temp }}/wordcraft-native-smoke-*
+          if-no-files-found: warn
+          retention-days: 7
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: native-packages-windows
+      - uses: storytold/craft-common-actions/actions/install-wix@8f081ff5db115de44313c9db09415c359bf2ca01
+        with:
+          wix-version: 5.0.2
+      - name: Build x64 MSI and portable ZIP
+        shell: pwsh
+        env:
+          WORDCRAFT_BUILD_SHA: ${{ github.sha }}
+        run: ./packaging/windows/package.ps1 -Arch x64
+      - name: Install MSI and inspect native integration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = (Get-ChildItem dist/release/*-windows-x64.msi | Select-Object -First 1).FullName
+          if (-not $msi) { throw 'x64 MSI was not produced' }
+          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-install.log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\wordcraft-install.log" -Tail 80; throw "MSI install exited $($p.ExitCode)" }
+          $dir = Join-Path $env:ProgramFiles 'WordCraft'
+          $exe = Join-Path $dir 'wordcraft.exe'
+          $cli = Join-Path $dir 'wordcraft-cli.exe'
+          if (-not ((Test-Path $exe) -and (Test-Path $cli))) { throw "installed binaries missing in $dir" }
+          if (-not (Test-Path (Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'WordCraft.lnk'))) { throw 'Start Menu shortcut missing' }
+          $open = (Get-Item 'HKLM:\Software\Classes\WordCraft.Document\shell\open\command').GetValue('')
+          if ($open -notlike '*wordcraft.exe*%1*') { throw "DOCX Open With command missing: $open" }
+          $version = & $cli --version | Out-String
+          if ($LASTEXITCODE -ne 0 -or $version -notlike '*${{ github.sha }}*') { throw "installed CLI has wrong commit: $version" }
+          $documents = Join-Path $env:RUNNER_TEMP 'documents'
+          New-Item -ItemType Directory -Force $documents | Out-Null
+          Set-Content (Join-Path $documents 'keep.txt') 'owned by the user'
+      - name: Edit, save, export and quit the installed GUI
+        shell: pwsh
+        env:
+          WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
+          WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+        run: |
+          $env:WORDCRAFT_NATIVE_EXECUTABLE = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
+          cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "installed GUI smoke exited $LASTEXITCODE" }
+      - name: Uninstall without deleting a user document
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem dist/release/*-windows-x64.msi | Select-Object -First 1).FullName
+          $p = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "MSI uninstall exited $($p.ExitCode)" }
+          if (Test-Path (Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe')) { throw 'uninstall left GUI executable' }
+          if ((Get-Content (Join-Path $env:RUNNER_TEMP 'documents\keep.txt')) -ne 'owned by the user') { throw 'uninstall changed user document' }
+      - name: Preserve package failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-package-diagnostics
+          path: ${{ runner.temp }}/wordcraft-native-smoke-*
+          if-no-files-found: warn
+          retention-days: 7

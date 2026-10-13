@@ -8,6 +8,7 @@
 #   $DIST/wordcraft-<version>-linux-<arch>.tar.gz    plain FHS-style tree (bin/, share/)
 #
 # Usage: packaging/linux/package.sh [--skip-build] [--formats "appimage deb rpm tar"]
+# Commas are also accepted, for example --formats deb,rpm,tar in the RISC-V release job.
 #
 # Needs: cargo; nfpm for deb/rpm (https://nfpm.goreleaser.com); appimagetool for the AppImage
 # (downloaded into $CARGO_TARGET_DIR if missing). Build on an old distro (CI: Ubuntu 22.04,
@@ -27,6 +28,19 @@ while [ $# -gt 0 ]; do
     --formats) FORMATS="$2"; shift 2 ;;
     -h | --help) sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+FORMATS="${FORMATS//,/ }"
+read -r -a REQUESTED_FORMATS <<<"$FORMATS"
+if [ "${#REQUESTED_FORMATS[@]}" -eq 0 ]; then
+  echo "error: --formats requires at least one of appimage, deb, rpm, tar" >&2
+  exit 2
+fi
+for format in "${REQUESTED_FORMATS[@]}"; do
+  case "$format" in
+    appimage | deb | rpm | tar) ;;
+    *) echo "error: unknown package format $format" >&2; exit 2 ;;
   esac
 done
 
@@ -75,7 +89,13 @@ if command -v appstreamcli >/dev/null; then
   appstreamcli validate --no-net --explain "$STAGE/usr/share/metainfo/$APP_ID.metainfo.xml"
 fi
 
-has() { case " $FORMATS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+has() {
+  local format
+  for format in "${REQUESTED_FORMATS[@]}"; do
+    [ "$format" = "$1" ] && return 0
+  done
+  return 1
+}
 
 # ---- .tar.gz ------------------------------------------------------------------------------------
 if has tar; then

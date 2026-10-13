@@ -20,6 +20,10 @@ fn main() {
         .set("LegalCopyright", "Copyright (c) the WordCraft authors. MIT OR Apache-2.0.")
         .set("OriginalFilename", "wordcraft.exe")
         .set("InternalName", "wordcraft");
+    if let Ok(sha) = std::env::var("WORDCRAFT_BUILD_SHA") {
+        res.set("BuildCommit", &sha);
+    }
+    println!("cargo:rerun-if-env-changed=WORDCRAFT_BUILD_SHA");
     if let Err(e) = res.compile() {
         if std::env::var_os("WORDCRAFT_REQUIRE_WINRES").is_some() {
             eprintln!("embedding Windows resources failed: {e}");

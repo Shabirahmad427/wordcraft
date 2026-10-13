@@ -375,10 +375,15 @@ fn run(args: &[String]) -> Result<(), Failure> {
             }
             Ok(())
         }
-        "--version" | "-V" => write_stdout(|o| writeln!(o, "wordcraft-cli {}", env!("CARGO_PKG_VERSION"))),
+        "--version" | "-V" => write_stdout(|o| writeln!(o, "wordcraft-cli {} ({})", env!("CARGO_PKG_VERSION"), build_commit())),
         "" | "help" | "--help" | "-h" => write_stdout(|o| write!(o, "{USAGE}")),
         other => Err(format!("unknown command `{other}`\n\n{USAGE}").into()),
     }
+}
+
+/// The commit embedded by packaging scripts, or `dev` for ordinary local builds.
+fn build_commit() -> &'static str {
+    option_env!("WORDCRAFT_BUILD_SHA").filter(|sha| !sha.is_empty()).unwrap_or("dev")
 }
 
 /// At most 400 characters of `s`, for traces.

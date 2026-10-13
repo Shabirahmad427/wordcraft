@@ -1,5 +1,11 @@
 # WordCraft roadmap
 
+## Phase 7T — Native installation and desktop integration (in progress)
+
+- Audited existing Linux AppImage/DEB/RPM/tarball/Flatpak, macOS DMG and Windows MSI/portable packaging. The Linux packager's comma-separated format argument produced no packages for the RISC-V release job; it now accepts and validates both comma- and space-separated lists. Release package checks now fail on missing artifacts or a failed AppImage version run.
+- A real local Apple Silicon DMG exposed a signed-app defect: HFS `makehybrid` added FinderInfo attributes to bundle files, so the app copied from the DMG failed strict code-signature verification. The packager now clears those attributes in a writable image and verifies the final mounted DMG. The corrected DMG and installed copy passed strict verification. The local artifact is ad-hoc signed and not notarized.
+- The app copied from that DMG passed both isolated native smokes: editing, bold text, table, Undo/Redo, DOCX save/reopen, PDF export, LaunchServices Open With, recovery checkpoint and normal `app.quit`. An opt-in packaged-app path lets the same smoke exercise installed DEB and MSI binaries on hosted runners. The new [native package workflow](.github/workflows/native-packages.yml) has not yet completed its Linux/macOS/Windows jobs; Phase 7T stays open until those results and remaining integration limits are reviewed. See [native installation](docs/native-installation.md).
+
 ## Phase 7S — Native desktop smoke across Linux, macOS and Windows (complete)
 
 - Printing run 38476284508 passed the native GUI workflow on Linux, macOS and Windows. It verified native window and editor focus, Unicode and bold text, Insert › Table, typing in a table cell, Undo/Redo, DOCX save/reopen, PDF export and normal `app.quit` shutdown. Linux used Xvfb/Openbox/software GL, macOS used LaunchServices on Apple Silicon, and Windows used its DirectX 12 software adapter.

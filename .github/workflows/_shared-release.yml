@@ -401,13 +401,16 @@ jobs:
         run: packaging/linux/package.sh
       - name: Check the packages
         run: |
-          dpkg-deb --info dist/release/*.deb || true
-          dpkg-deb --contents dist/release/*.deb | grep -E 'usr/bin/|metainfo|applications' || true
+          set -euo pipefail
+          test -f dist/release/wordcraft-*-linux-${{ matrix.arch }}.deb
+          test -f dist/release/wordcraft-*-linux-${{ matrix.arch }}.rpm
+          test -f dist/release/wordcraft-*-linux-${{ matrix.arch }}.tar.gz
+          dpkg-deb --info dist/release/*.deb
+          dpkg-deb --contents dist/release/*.deb | grep -E 'usr/bin/|metainfo|applications'
           for appimage in dist/release/*.AppImage; do
-            if [ -f "$appimage" ]; then
-              chmod +x "$appimage"
-              APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version || true
-            fi
+            test -f "$appimage"
+            chmod +x "$appimage"
+            APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version
           done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -767,8 +770,12 @@ jobs:
         run: packaging/linux/package.sh --formats deb,rpm,tar
       - name: Check the packages
         run: |
-          dpkg-deb --info dist/release/*-linux-riscv64.deb 2>/dev/null || true
-          dpkg-deb --contents dist/release/*-linux-riscv64.deb 2>/dev/null | grep -E 'usr/bin/|metainfo|applications' || true
+          set -euo pipefail
+          test -f dist/release/*-linux-riscv64.deb
+          test -f dist/release/*-linux-riscv64.rpm
+          test -f dist/release/*-linux-riscv64.tar.gz
+          dpkg-deb --info dist/release/*-linux-riscv64.deb
+          dpkg-deb --contents dist/release/*-linux-riscv64.deb | grep -E 'usr/bin/|metainfo|applications'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-linux-riscv64

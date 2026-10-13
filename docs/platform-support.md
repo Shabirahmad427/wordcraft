@@ -1,6 +1,6 @@
 # Native desktop platform support
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7S three-OS native smoke passed · **Target:** Linux, macOS and Windows desktop builds
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7T local macOS DMG validation and hosted package workflow added · **Target:** Linux, macOS and Windows desktop builds
 
 This matrix distinguishes source/build configuration, hosted checks, a running native window and
 physical desktop interaction. A passing shared-core test or cross-target build does not establish
@@ -82,9 +82,30 @@ No platform is considered fully validated by this matrix. Linux Wayland, macOS I
 ARM64 GUI, OS-level file association/dialog behavior, physical printer selection and Word 365
 comparisons remain open runtime checks.
 
+## Phase 7T installed-package checks
+
+The [native installation guide](native-installation.md) lists package formats, update and
+rollback behavior, and the separate profile locations. The
+[native package workflow](../.github/workflows/native-packages.yml) builds and installs a Linux
+DEB, macOS DMG app and Windows x64 MSI, then points the existing native-window smoke at the
+installed application. The Linux job also checks desktop and DOCX MIME metadata; the Windows job
+checks Start Menu and Open With registry entries; the macOS job checks bundle metadata, signing
+and a LaunchServices DOCX Open With event. These hosted jobs are pending at this revision; the
+workflow definition alone is not runtime evidence.
+
+Locally on Apple Silicon, the corrected arm64 DMG was mounted and copied into a disposable
+Applications directory. Its copied app passed strict code-signature verification and both
+isolated native smokes, including editing, DOCX/PDF output, Finder-style Open With and graceful
+quit. The first DMG failed verification because its HFS image introduced FinderInfo attributes
+after signing. The local corrected artifact uses an ad-hoc signature and has not been notarized.
+The earlier `kLSNoExecutableErr` remains unexplained; this successful packaged launch is a
+separate observation. Intel macOS, Windows ARM64 GUI, Linux Wayland and physical device behavior
+still need runtime checks.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-13 | minor | Recorded hosted Linux startup success but text-input failure, and Windows tab-boundary click root cause plus local macOS verification of the corrected coordinate |
 | 2026-10-13 | minor | Printing run 38476284508 passed all three native smoke jobs with editing, table insertion, Undo/Redo and normal quit; raw native input and broader desktop integration remain separate gaps |
+| 2026-10-13 | major | Began Phase 7T with a verified macOS DMG signature correction, installed-app native smoke and a pending three-OS package workflow |

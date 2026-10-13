@@ -107,12 +107,16 @@ fn free_port() -> u16 {
 fn spawn_native_app(profile: &Profile, port: u16, executable: &str, stderr_path: &Path, no_prefs: bool) -> Child {
     #[cfg(target_os = "macos")]
     {
+        if let Some(bundle) = std::env::var_os("WORDCRAFT_NATIVE_APP_BUNDLE") {
+            return spawn_packaged_macos_app(profile, port, &PathBuf::from(bundle), stderr_path, no_prefs);
+        }
         spawn_macos_app_bundle(profile, port, executable, stderr_path, no_prefs)
     }
     #[cfg(not(target_os = "macos"))]
     {
         let stderr = std::fs::File::create(stderr_path).expect("create isolated app stderr log");
-        let mut command = Command::new(executable);
+        let packaged_executable = std::env::var_os("WORDCRAFT_NATIVE_EXECUTABLE").map(PathBuf::from);
+        let mut command = Command::new(packaged_executable.as_deref().unwrap_or_else(|| Path::new(executable)));
         command
             .arg("--control")
             .arg(port.to_string())
@@ -131,6 +135,39 @@ fn spawn_native_app(profile: &Profile, port: u16, executable: &str, stderr_path:
         command.env("USERPROFILE", &profile.0);
         command.spawn().expect("launch native WordCraft GUI in the isolated test profile")
     }
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_packaged_macos_app(profile: &Profile, port: u16, bundle: &Path, stderr_path: &Path, no_prefs: bool) -> Child {
+    assert!(bundle.join("Contents/Info.plist").is_file(), "packaged app has no Info.plist: {}", bundle.display());
+    assert!(bundle.join("Contents/MacOS/WordCraft").is_file(), "packaged app has no executable: {}", bundle.display());
+    let empty_fonts = profile.0.join("empty-fonts");
+    std::fs::create_dir(&empty_fonts).expect("create isolated empty font directory");
+    let mut command = Command::new("/usr/bin/open");
+    command
+        .arg("-n")
+        .arg("-W")
+        .arg("--stderr")
+        .arg(stderr_path)
+        .arg("--env")
+        .arg(format!("HOME={}", profile.0.display()))
+        .arg("--env")
+        .arg(format!("CFFIXED_USER_HOME={}", profile.0.display()))
+        .arg("--env")
+        .arg(format!("XDG_CONFIG_HOME={}", profile.0.join("xdg").display()))
+        .arg("--env")
+        .arg(format!("APPDATA={}", profile.0.join("AppData").display()))
+        .arg("--env")
+        .arg(format!("WORDCRAFT_FONT_DIRS={}", empty_fonts.display()))
+        .stdout(Stdio::null());
+    if no_prefs {
+        command.arg("--env").arg("WORDCRAFT_NO_PREFS=1");
+    } else {
+        command.env_remove("WORDCRAFT_NO_PREFS");
+    }
+    command.arg(bundle).arg("--args").arg("--control").arg(port.to_string());
+    let launch_stderr = std::fs::OpenOptions::new().create(true).append(true).open(stderr_path).expect("capture packaged app stderr");
+    command.stderr(Stdio::from(launch_stderr)).spawn().expect("launch packaged WordCraft through LaunchServices")
 }
 
 #[cfg(target_os = "macos")]
@@ -448,6 +485,29 @@ fn isolated_native_window_smoke() {
     control.execute("file.exportPdf", json!({"path": pdf}));
     let pdf_bytes = std::fs::read(&pdf).expect("read PDF export");
     assert!(pdf_bytes.starts_with(b"%PDF-"), "export is a PDF file");
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = std::env::var_os("WORDCRAFT_NATIVE_APP_BUNDLE") {
+        // A Finder Open With action delivers an Apple open-documents event to the already running
+        // packaged app. This checks that handoff separately from the control API's file.open.
+        control.execute("file.new", json!({}));
+        let status = Command::new("/usr/bin/open")
+            .arg("-a")
+            .arg(PathBuf::from(bundle))
+            .arg(&docx)
+            .status()
+            .expect("send DOCX to packaged app through LaunchServices");
+        assert!(status.success(), "LaunchServices could not deliver DOCX to the packaged app: {status}");
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut info = Value::Null;
+        while Instant::now() < deadline {
+            info = control.execute("file.info", json!({}));
+            if info.get("path").and_then(Value::as_str) == docx.to_str() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(info.get("path").and_then(Value::as_str), docx.to_str(), "Finder Open With did not open DOCX: {info}");
+    }
     let reopened = control.execute("file.open", json!({"path": docx}));
     assert_eq!(reopened.get("path").and_then(Value::as_str), docx.to_str());
     let after_reopen = control.call("document.inspect", json!({}));

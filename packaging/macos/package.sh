@@ -135,13 +135,34 @@ ln -s /Applications "$STAGE/Applications"
 mkdir -p "$STAGE/.background"
 cp "$HERE/dmg/background.tiff" "$STAGE/.background/background.tiff"
 cp "$HERE/dmg/dmg-layout.DS_Store" "$STAGE/.DS_Store"
-rm -f "$DMG" "$WORK/raw.dmg"
-# makehybrid + convert builds the image without attaching a device, unlike `create -srcfolder`,
-# which is flaky on CI runners ("Resource busy") and hangs in sandboxed sessions.
+rm -f "$DMG" "$WORK/raw.dmg" "$WORK/rw.dmg"
+# `create -srcfolder` is flaky on CI runners ("Resource busy") and hangs in some sandboxed
+# sessions. makehybrid is reliable, but its HFS writer adds FinderInfo xattrs to every file,
+# including signed bundle resources. Those xattrs invalidate the app signature after installation.
+# Clear them from a writable image and verify the app inside the final read-only DMG.
 # The volume name has no version: .DS_Store finds the background through an alias that includes it.
 hdiutil makehybrid -hfs -hfs-volume-name "WordCraft" -hfs-openfolder "$STAGE" -o "$WORK/raw.dmg" "$STAGE"
-hdiutil convert "$WORK/raw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG"
-rm -f "$WORK/raw.dmg"
+hdiutil convert "$WORK/raw.dmg" -format UDRW -o "$WORK/rw.dmg"
+MOUNT="$(mktemp -d /private/tmp/wordcraft-dmg.XXXXXX)"
+MOUNTED=0
+trap 'if [ "$MOUNTED" = 1 ]; then hdiutil detach "$MOUNT" || true; fi; rmdir "$MOUNT" || true' EXIT
+hdiutil attach -nobrowse -readwrite -mountpoint "$MOUNT" "$WORK/rw.dmg"
+MOUNTED=1
+xattr -cr "$MOUNT/WordCraft.app"
+codesign --verify --strict --deep --verbose=2 "$MOUNT/WordCraft.app"
+if [ "$NOTARIZE" = 1 ]; then xcrun stapler validate "$MOUNT/WordCraft.app"; fi
+test "$(readlink "$MOUNT/Applications")" = /Applications
+hdiutil detach "$MOUNT"
+MOUNTED=0
+hdiutil convert "$WORK/rw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG"
+hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"
+MOUNTED=1
+codesign --verify --strict --deep --verbose=2 "$MOUNT/WordCraft.app"
+if [ "$NOTARIZE" = 1 ]; then xcrun stapler validate "$MOUNT/WordCraft.app"; fi
+test "$(readlink "$MOUNT/Applications")" = /Applications
+hdiutil detach "$MOUNT"
+MOUNTED=0
+rm -f "$WORK/raw.dmg" "$WORK/rw.dmg"
 sign "$DMG"
 codesign --verify --strict --verbose=2 "$DMG"
 if [ "$NOTARIZE" = 1 ]; then

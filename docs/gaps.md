@@ -1,6 +1,6 @@
 # Where WordCraft falls short of Word
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7R closes an Insert Table focus regression; ranked gap estimates are unchanged · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7T packaging audit and local macOS DMG correction; ranked gap estimates are unchanged · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 The work list. One entry per shortfall, ranked by how much it stops a Word user from switching
 (**B** = blocks beta). Each says what's missing, the evidence, who it hurts, an Opus 5.5 agent
@@ -18,6 +18,12 @@ until a safe package merge is available; see the [DOCX preservation contract](do
 Phase 7I adds [synthetic DOCX/PDF layout regressions](cross-platform-layout-regressions.md) and fixes a missed clipping warning for header-anchored images. Gap #4 still needs independent Word page geometry and font metrics; this internal corpus does not change its estimate.
 
 Phase 7R fixes a local editing focus defect in Insert › Table's size grid. This interaction was not a separately ranked gap and does not change the gap estimates; desktop validation limits are recorded in [desktop GUI validation](desktop-testing.md).
+
+Phase 7T found that a copied macOS DMG app failed strict signature verification because HFS
+imaging added FinderInfo attributes after bundle signing. The corrected local DMG and copied app
+now verify and pass an isolated native edit/open/quit smoke. Linux and Windows installed-package
+runtime jobs are pending. This packaging gap is tracked in the [native installation audit](native-installation.md)
+and does not change the ranked Word-feature estimates.
 
 ## Ranked
 
