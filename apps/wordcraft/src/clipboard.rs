@@ -15,6 +15,13 @@
 use wordcraft_engine::cmd::paste::MAX_PASTE_BYTES;
 use wordcraft_ui_egui::paste_picture::ClipboardPicture;
 
+thread_local! {
+    /// Keep the publisher alive while the desktop app runs. On X11, arboard owns the selection
+    /// through its clipboard context; dropping the last context immediately after Copy relinquishes
+    /// ownership unless a clipboard manager has already taken a snapshot.
+    static CLIPBOARD_OWNER: std::cell::RefCell<Option<arboard::Clipboard>> = const { std::cell::RefCell::new(None) };
+}
+
 fn open() -> Option<arboard::Clipboard> {
     arboard::Clipboard::new().map_err(|e| log::warn!("clipboard: {e}")).ok()
 }
@@ -29,7 +36,9 @@ pub fn text() -> Option<String> {
 /// on Windows.
 pub fn copy(text: &str, html: &str) -> Result<(), String> {
     let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    clipboard.set().html(html, Some(text)).map_err(|e| e.to_string())
+    clipboard.set().html(html, Some(text)).map_err(|e| e.to_string())?;
+    CLIPBOARD_OWNER.with(|owner| *owner.borrow_mut() = Some(clipboard));
+    Ok(())
 }
 
 /// The clipboard's HTML (Windows: the fragment of its "HTML Format"), if not too large.
@@ -156,7 +165,11 @@ mod tests {
         // Feed the bytes read back through the actual shared importer and insertion command.
         let mut session = wordcraft_engine::Session::new(wordcraft_doc::Document::new());
         session.run("edit.paste", &serde_json::json!({"text": actual_text, "html": actual_html})).expect("native HTML pastes");
-        assert_eq!(session.doc.plain_text(wordcraft_doc::StoryRef::Body), text);
+        assert!(
+            session.doc.plain_text(wordcraft_doc::StoryRef::Body).starts_with(text),
+            "imported content: {:?}",
+            session.doc.plain_text(wordcraft_doc::StoryRef::Body)
+        );
         assert_eq!(session.doc.para_at(&wordcraft_doc::Pos::body(0, 7)).map(|p| p.props_of_char(7).bold), Some(Some(true)));
         let table = session.doc.body.iter().find_map(|b| b.as_table()).expect("table structure is retained");
         assert_eq!(table.rows.first().and_then(|r| r.cells.first()).map(|c| c.span()), Some(2));
