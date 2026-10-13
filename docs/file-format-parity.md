@@ -1,6 +1,6 @@
 # File-format parity with Microsoft Word
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** synthetic DOCX import/edit/save to PDF geometry, text and resource assertions; Word reference comparison remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4, plus Word for Windows' extra formats
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** synthetic DOCX import/edit/save to PDF geometry, text and resource assertions pass hosted Linux/macOS/Windows tests; Word reference comparison remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4, plus Word for Windows' extra formats
 
 Every format Word opens or saves, what WordCraft does with it, and how it's tested. Fidelity is the
 share of a typical real-world file's content and formatting that survives (read: shows correctly;

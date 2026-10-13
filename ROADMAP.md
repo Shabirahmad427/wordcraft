@@ -4,7 +4,7 @@
 
 - Added synthetic DOCX import/layout/PDF assertions for paper and margins, page count, extracted text, images and fonts, table/notes/equation/column/vertical-text preservation, plus a saved-edit PDF check. The suite parses PDFs with an independent reader and avoids binary cross-OS comparisons. Coverage and limits: [cross-platform layout regressions](docs/cross-platform-layout-regressions.md).
 - Reproduced an off-page header image with no clipping diagnostic, then fixed shared `layout` overflow analysis to inspect floating objects in header/footer and other non-body stories. The minimal test failed before the fix and passes afterward.
-- The hosted Document regressions matrix now includes layout and PDF tests and native CLI smokes on Linux, macOS and Windows. All six local `cargo xtask ci` gates passed (2,101 tests passed, 2 ignored); native Apple Silicon GUI/CLI release builds and both version smokes passed. New hosted Linux/Windows results remain pending; no Word 365, Windows ARM64 runtime or macOS Intel runtime claim follows from this change.
+- The hosted Document regressions matrix passed all six jobs on `11b646e`: native DOCX/engine/layout/PDF tests on Linux, macOS and Windows; Linux GUI/CLI release build; bundled-font visual regression; advisory performance. Printing and Packaging lint also passed (runs 38322248198 and 38322248628). All six local `cargo xtask ci` gates passed (2,101 passed, 2 ignored); native Apple Silicon GUI/CLI release builds and version smokes passed. The headless macOS window screenshot smoke passed with GPU access. No Word 365, Windows ARM64 runtime or macOS Intel runtime claim follows from these checks.
 
 ## Cross-platform shared-core audit (2026-10-12)
 

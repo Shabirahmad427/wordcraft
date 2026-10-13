@@ -1,6 +1,6 @@
 # Cross-platform layout and PDF regressions
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Status:** synthetic cross-platform suite; six local gates and Apple Silicon release build pass, hosted Linux/Windows pending for this revision
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Status:** synthetic cross-platform suite; local six-gate and hosted Linux/macOS/Windows checks pass
 
 The fixtures are generated in Rust and written to DOCX before import. No Word-created file or proprietary asset is committed. The [Document regressions workflow](../.github/workflows/document-regressions.yml) runs the DOCX, engine, layout and PDF tests on native Linux, macOS and Windows runners, plus a CLI version smoke on each. Linux also builds the GUI and CLI in release mode and runs the reviewed two-page raster baseline. These checks establish internal consistency and catch export loss; they do not measure Microsoft Word 365 pagination.
 
@@ -17,7 +17,7 @@ The PDF reader used for page boxes and text extraction is `hayro-syntax`/`hayro-
 
 Run locally with `cargo test --locked -p wordcraft-docx -p wordcraft-engine -p wordcraft-layout -p wordcraft-pdf --tests --lib`. Run all six gates with `cargo xtask ci`. The suite does not yet have independent Word-created reference geometry, full PDF image-raster comparison or every chart glyph's extracted text; those remain coverage gaps.
 
-On 2026-10-12, native Apple Silicon `cargo xtask ci` passed all six gates (workspace test gate: 2,101 passed, 2 ignored across 61 suites). `cargo build --release --locked -p wordcraft -p wordcraft-cli` passed; both binaries answered `--version` as 0.6.1. This is a version smoke, not a full interactive window test. Linux release and Windows native results for this revision will be taken from the hosted matrix after push.
+On 2026-10-12, native Apple Silicon `cargo xtask ci` passed all six gates (workspace test gate: 2,101 passed, 2 ignored across 61 suites). `cargo build --release --locked -p wordcraft -p wordcraft-cli` passed; both binaries answered `--version` as 0.6.1. The headless `ui_shot` rendered and was visually inspected after granting GPU access. Hosted Document regressions run [38322248218](https://github.com/Shabirahmad427/wordcraft/actions/runs/38322248218) passed all six jobs on commit `11b646e`, including the native Linux/macOS/Windows suites and Linux GUI/CLI release build. Hosted Printing [38322248198](https://github.com/Shabirahmad427/wordcraft/actions/runs/38322248198) and Packaging lint [38322248628](https://github.com/Shabirahmad427/wordcraft/actions/runs/38322248628) also passed. These checks do not cover Windows ARM64 or macOS Intel runtime and do not provide a Word 365 reference comparison.
 
 ## Revision history
 

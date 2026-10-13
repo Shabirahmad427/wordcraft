@@ -1,6 +1,6 @@
 # Where WordCraft falls short of Word
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** synthetic cross-platform layout/PDF corpus and header-float clipping fix; real Word-generated corpus remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** synthetic layout/PDF corpus and header-float clipping fix passed native cross-platform CI; real Word-generated corpus remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 The work list. One entry per shortfall, ranked by how much it stops a Word user from switching
 (**B** = blocks beta). Each says what's missing, the evidence, who it hurts, an Opus 5.5 agent
@@ -75,7 +75,7 @@ The same gaps grouped the way the parity documents are, for agents working in on
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-12 | minor | Synthetic cross-platform layout/PDF corpus and header-float clipping diagnostic; independent Word comparison gap remains |
+| 2026-10-13 | minor | Synthetic cross-platform layout/PDF corpus and header-float clipping diagnostic pass hosted Linux/macOS/Windows; independent Word comparison gap remains |
 | 2026-10-12 | minor | Ranked five cross-platform evidence gaps; shared DOCX export now rejects XML-forbidden model text and validates final packages, without claiming Word 365 parity |
 | 2026-10-12 | minor | Added bounded DOCX package fingerprint and round-trip allowlist benchmark; no Word-created corpus or Word visual result is claimed |
 | 2026-10-11 | trivial | Formatting revisions landed (#41); gap #5 narrowed to move tracking and content controls, 8–12 h |
