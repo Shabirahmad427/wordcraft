@@ -11,6 +11,25 @@ use wordcraft_engine::cmd::paste::{MAX_PASTE_BYTES, MAX_PICTURE_BYTES};
 
 use crate::{WordApp, paste_picture};
 
+/// Publish a command's copied selection. Native hosts set rich HTML plus plain text as one
+/// clipboard operation; web and hosts without that service retain egui's plain-text path.
+pub(crate) fn publish(app: &WordApp, ctx: &egui::Context, result: &Value) {
+    let Some(text) = result.get("text").and_then(Value::as_str).filter(|text| !text.is_empty()) else { return };
+    let rich = result.get("html").and_then(Value::as_str).and_then(|html| {
+        app.services.clipboard_copy.as_ref().map(|copy| copy(text, html)).map(|r| {
+            if let Err(e) = r {
+                log::warn!("rich clipboard copy: {e}");
+                false
+            } else {
+                true
+            }
+        })
+    });
+    if rich != Some(true) {
+        ctx.copy_text(text.to_owned());
+    }
+}
+
 /// The commands that paste the clipboard.
 pub(crate) fn is_paste(id: &str) -> bool {
     matches!(id, "edit.paste" | "edit.pasteText" | "edit.pasteMerge" | "edit.pasteSpecial")
@@ -131,6 +150,22 @@ mod tests {
     fn bold_at(a: &WordApp, off: usize) -> bool {
         let focus = a.session.sel.focus.clone();
         a.session.doc.para_at(&focus).and_then(|p| p.props_of_char(off).bold).unwrap_or(false)
+    }
+
+    #[test]
+    fn copy_publishes_html_and_plain_text_together_when_host_supports_rich_clipboard() {
+        let published = std::sync::Arc::new(std::sync::Mutex::new(None::<(String, String)>));
+        let saved = published.clone();
+        let services = Services {
+            clipboard_copy: Some(Box::new(move |text, html| {
+                *saved.lock().map_err(|e| e.to_string())? = Some((text.to_owned(), html.to_owned()));
+                Ok(())
+            })),
+            ..Default::default()
+        };
+        let app = app(services);
+        publish(&app, &egui::Context::default(), &json!({"text": "rich Ω", "html": "<p><strong>rich Ω</strong></p>"}));
+        assert_eq!(published.lock().unwrap().as_ref().unwrap(), &("rich Ω".into(), "<p><strong>rich Ω</strong></p>".into()));
     }
 
     /// Ctrl+V (a paste event with the text) and the ribbon's Paste keep another program's

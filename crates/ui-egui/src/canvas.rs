@@ -2481,12 +2481,15 @@ fn context_menu(app: &mut WordApp, ui: &mut Ui) {
         }
         ui.separator();
     }
-    item(ui, app, "Cut", "edit.cut", json!({}));
+    if ui.add(egui::Button::new(tl!("Cut")).shortcut_text(crate::widgets::shortcut_text(app, "edit.cut"))).clicked() {
+        if let Ok(r) = app.run("edit.cut", json!({})) {
+            crate::system_clipboard::publish(app, ui.ctx(), &r);
+        }
+        ui.close();
+    }
     if ui.add(egui::Button::new(tl!("Copy")).shortcut_text(crate::widgets::shortcut_text(app, "edit.copy"))).clicked() {
-        if let Ok(r) = app.run("edit.copy", json!({}))
-            && let Some(t) = r.get("text").and_then(|t| t.as_str())
-        {
-            ui.ctx().copy_text(t.to_string());
+        if let Ok(r) = app.run("edit.copy", json!({})) {
+            crate::system_clipboard::publish(app, ui.ctx(), &r);
         }
         ui.close();
     }

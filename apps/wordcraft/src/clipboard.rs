@@ -21,6 +21,14 @@ pub fn text() -> Option<String> {
     open()?.get_text().ok()
 }
 
+/// Publish a rich HTML selection and its plain-text alternative using the host's native clipboard
+/// formats. arboard maps this to text/html on X11/Wayland, NSPasteboard HTML on macOS and CF_HTML
+/// on Windows.
+pub fn copy(text: &str, html: &str) -> Result<(), String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    clipboard.set().html(html, Some(text)).map_err(|e| e.to_string())
+}
+
 /// The clipboard's HTML (Windows: the fragment of its "HTML Format"), if not too large.
 pub fn html() -> Option<String> {
     open()?.get().html().ok().filter(|h| h.len() <= MAX_PASTE_BYTES)

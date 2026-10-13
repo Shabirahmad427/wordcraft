@@ -90,8 +90,13 @@ fn copying_partial_table_selections_keeps_cell_structure_through_paste_undo_and_
         let cell = Pos { story: StoryRef::Body, path: Path(vec![1, 0, 1, 0]), off: 0 };
         run(&mut session, "caret.set", json!({"pos": cell}));
         run(&mut session, select, json!({}));
-        run(&mut session, "edit.copy", json!({}));
+        let copied = run(&mut session, "edit.copy", json!({}));
         assert_eq!(session.clipboard_text, expected_text);
+        let html = copied["html"].as_str().expect("table selection exports rich HTML");
+        assert!(html.contains("<table"), "table structure is present: {html}");
+        for cell_text in expected_text.split(['\t', '\n']).filter(|part| !part.is_empty()) {
+            assert!(html.contains(cell_text), "copied cell {cell_text:?} is present: {html}");
+        }
         let fragment = session.clipboard.as_ref().unwrap();
         let Some(Block::Table(copied)) = fragment.blocks.first() else { panic!("cell selection was flattened") };
         assert_eq!(copied.rows.len(), expected_rows);
@@ -1057,6 +1062,26 @@ fn clipboard_round_trip() {
     assert_eq!(text(&s), "");
     run(&mut s, "edit.paste", json!({"text": "plain\ntext"}));
     assert_eq!(text(&s), "plain\ntext");
+}
+
+#[test]
+fn system_clipboard_copy_includes_only_the_selected_rich_html_fragment() {
+    let mut doc = wordcraft_doc::Document::from_text("before α<& after");
+    doc.core.title = "private document title".into();
+    doc.core.creator = "private author".into();
+    let mut session = Session::new(doc);
+    run(&mut session, "select.range", json!({"anchor": {"block": 0, "off": 7}, "focus": {"block": 0, "off": 11}}));
+    run(&mut session, "format.bold", json!({"value": true}));
+    let copied = run(&mut session, "edit.copy", json!({}));
+    assert_eq!(copied["text"], "α<&");
+    let html = copied["html"].as_str().expect("rich copy supplies HTML");
+    assert!(html.contains("<strong>α&lt;&amp;</strong>"), "HTML retains emphasis and escapes text: {html}");
+    assert!(!html.contains("before") && !html.contains("after"), "unselected content is not published: {html}");
+    assert!(!html.contains("private"), "document metadata is not published: {html}");
+
+    let imported = wordcraft_formats::html::import(html);
+    assert_eq!(imported.plain_text(StoryRef::Body), "α<&");
+    assert_eq!(imported.para_at(&Pos::body(0, 0)).map(|p| p.props_of_char(0).bold), Some(Some(true)));
 }
 
 #[test]

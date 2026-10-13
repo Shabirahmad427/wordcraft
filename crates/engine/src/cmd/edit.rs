@@ -159,10 +159,29 @@ fn copy(s: &mut Session, _: &Value) -> CmdResult {
         return Ok(json!({"text": ""}));
     }
     let f = super::column::copy_cells(s).unwrap_or_else(|| s.doc.copy_range(&a, &b));
-    s.clipboard_text = f.clipboard_text();
+    store_clipboard(s, f)
+}
+
+/// Store an internal fragment and return both system clipboard representations.
+pub(super) fn store_clipboard(s: &mut Session, f: Fragment) -> CmdResult {
+    let text = f.clipboard_text();
+    store_clipboard_text(s, f, text)
+}
+
+pub(super) fn store_clipboard_text(s: &mut Session, f: Fragment, text: String) -> CmdResult {
+    s.clipboard_text = text;
     s.clip_history.push(&f, &s.clipboard_text);
-    s.clipboard = Some(f);
-    Ok(json!({"text": s.clipboard_text}))
+    s.clipboard = Some(f.clone());
+    let html = s
+        .clipboard
+        .as_ref()
+        .map(|f| wordcraft_formats::html::export_fragment(&s.doc, &f.blocks))
+        .filter(|h| h.len() <= super::paste::MAX_PASTE_BYTES);
+    let mut result = json!({"text": s.clipboard_text});
+    if let Some(html) = html {
+        result["html"] = json!(html);
+    }
+    Ok(result)
 }
 
 fn cut(s: &mut Session, v: &Value) -> CmdResult {

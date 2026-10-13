@@ -118,8 +118,12 @@ pub(crate) fn bg(ui: &Ui, r: Rect, resp: &Response, checked: bool, t: &Tokens) {
 /// Runs a ribbon button's command, then hands keyboard focus back to the document so typing
 /// continues without another click, as in Word (#686). Interface commands (`ui.*`) open dialogs,
 /// panes and tabs that take focus themselves, so they keep it.
-pub(crate) fn run_from_ribbon(app: &mut WordApp, id: &str, params: Value) {
-    let _ = app.run(id, params);
+pub(crate) fn run_from_ribbon(ui: &Ui, app: &mut WordApp, id: &str, params: Value) {
+    if let Ok(result) = app.run(id, params)
+        && matches!(id, "edit.copy" | "edit.cut")
+    {
+        crate::system_clipboard::publish(app, ui.ctx(), &result);
+    }
     if !id.starts_with("ui.") {
         app.canvas.want_focus = true;
     }
@@ -176,7 +180,7 @@ fn big_button(ui: &mut Ui, app: &mut WordApp, icon: &str, label: &str, id: &str,
     let resp = tooltip(app, resp, &label.replace('\n', " "), id);
     command_menu(&resp, app, id);
     if resp.clicked() && on && !menu {
-        run_from_ribbon(app, id, params);
+        run_from_ribbon(ui, app, id, params);
     }
     resp
 }
@@ -199,7 +203,7 @@ pub fn small(ui: &mut Ui, app: &mut WordApp, icon: &str, label: Option<&str>, ti
     let resp = tooltip(app, resp, tip, id);
     command_menu(&resp, app, id);
     if resp.clicked() && on {
-        run_from_ribbon(app, id, params);
+        run_from_ribbon(ui, app, id, params);
     }
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, on, tip));
     resp
@@ -233,7 +237,7 @@ pub fn split(
     let resp = tooltip(app, resp, tip, id);
     command_menu(&resp, app, id);
     if resp.clicked() {
-        run_from_ribbon(app, id, params);
+        run_from_ribbon(ui, app, id, params);
     }
     egui::Popup::menu(&aresp).show(|ui| {
         ui.set_min_width(180.0);

@@ -1,5 +1,11 @@
 # WordCraft roadmap
 
+## Phase 7P — Rich clipboard and inter-application editing (2026-10-13)
+
+- Native desktop Copy now publishes the selected fragment as HTML with plain text as the fallback, using the same arboard API on Linux, macOS and Windows. HTML is generated in shared Rust from the structured internal fragment and source document style/media context; table rows, cells, spans and supported inline formatting use the existing semantic HTML exporter. Payloads over the existing 16 MiB paste bound fall back to plain text. The internal `Fragment` clipboard remains the source for WordCraft-to-WordCraft paste.
+- Added regressions for selected Unicode/emphasized text and HTML escaping, copied table fragments, HTML import round-trip, and the UI's rich-clipboard host callback. Existing bounded HTML import sanitizes links, skips scripts/styles and does not load external image resources without an explicit image loader. Inline images are represented as data URIs when available in the selected fragment's document media.
+- `cargo xtask ci` passes all six gates on native Apple Silicon macOS (fmt, Clippy, workspace tests, asset attribution, layering and WASM). `cargo build --release -p wordcraft -p wordcraft-cli` and `wordcraft-cli --version` pass for `aarch64-apple-darwin`. Hosted Linux/macOS/Windows CI is pending the push. These are build and serializer tests; actual native OS clipboard transport has not been exercised, and no Word 365 clipboard test has been performed. The manual protocol and limits are in [editing workflow regressions](docs/editing-workflows.md).
+
 ## Phase 7O — structured table selection and clipboard (2026-10-13)
 
 - Reproduced a shared-core regression: Copy ignored an active whole-cell `CellRange` and serialized only paragraph runs, so selecting one cell, a row, or a column lost the table structure. The new cell-fragment builder clips the source table to the selected cells in order and retains row/cell/table properties, cell contents, nested blocks, and text-box stories. It pads omitted grid gaps exposed by horizontal merges, preserves merges on complete-table copies, and clears dangling vertical-merge links in clipped copies.

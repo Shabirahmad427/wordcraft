@@ -190,10 +190,7 @@ pub(crate) fn dispatch(s: &mut Session, id: &str, mutates: bool, run: fn(&mut Se
 /// Copy: one paragraph per block row (formatting kept); the plain text joins rows with newlines.
 fn copy(s: &mut Session, segs: &[(Pos, Pos)]) -> CmdResult {
     if let Some(fragment) = copy_cells(s) {
-        s.clipboard_text = fragment.clipboard_text();
-        s.clip_history.push(&fragment, &s.clipboard_text);
-        s.clipboard = Some(fragment);
-        return Ok(json!({"text": s.clipboard_text}));
+        return super::edit::store_clipboard(s, fragment);
     }
     let mut blocks = Vec::new();
     let mut parts = std::collections::BTreeMap::new();
@@ -215,11 +212,9 @@ fn copy(s: &mut Session, segs: &[(Pos, Pos)]) -> CmdResult {
         rows.push(row_text(s, &a, &b));
         blocks.push(Block::Para(para));
     }
-    s.clipboard_text = rows.join("\n");
+    let text = rows.join("\n");
     let fragment = Fragment { blocks, parts };
-    s.clip_history.push(&fragment, &s.clipboard_text);
-    s.clipboard = Some(fragment);
-    Ok(json!({"text": s.clipboard_text}))
+    super::edit::store_clipboard_text(s, fragment, text)
 }
 
 /// Copy a whole-cell selection as a clipped table, keeping the selected cells in row/column

@@ -211,6 +211,7 @@ fn services(file_dialog: file_dialogs::Hook, ctx: &egui::Context) -> Services {
         native_print: Some(Box::new(print::WindowsPrintBackend)),
         clipboard_picture: Some(Box::new(clipboard::picture)),
         clipboard_text: Some(Box::new(clipboard::text)),
+        clipboard_copy: Some(Box::new(clipboard::copy)),
         clipboard_html: Some(Box::new(clipboard::html)),
         clipboard_rtf: Some(Box::new(clipboard::rtf)),
         clipboard_formats: Some(Box::new(clipboard::formats)),

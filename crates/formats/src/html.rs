@@ -1447,6 +1447,16 @@ pub fn export(doc: &Document) -> String {
     export_flow(&flow, doc.styles.default_chr.lang.as_deref().unwrap_or("en"))
 }
 
+/// Export a copied range as a standalone HTML document, retaining its source document's style,
+/// theme and media context. The caller supplies only the selected blocks, so unrelated content is
+/// never published to the system clipboard.
+pub fn export_fragment(doc: &Document, blocks: &[wordcraft_doc::Block]) -> String {
+    let mut fragment = doc.clone();
+    fragment.body = blocks.iter().cloned().map(Arc::new).collect();
+    fragment.core = Default::default();
+    export(&fragment)
+}
+
 pub fn export_flow(flow: &Flow, lang: &str) -> String {
     let m = &flow.meta;
     let mut out = String::new();
@@ -1514,6 +1524,19 @@ mod tests {
             assert_eq!(table_style(&out).as_deref(), Some(if grid { "TableGrid" } else { "" }), "{src}");
             assert!(out.contains(">A</td>") && out.contains(">B</td>"), "{out}");
         }
+    }
+
+    #[test]
+    fn clipboard_fragment_export_keeps_merged_cells_and_excludes_neighboring_blocks() {
+        let doc = import("<p>outside</p><table><tr><td colspan='2'>merged Ω</td></tr></table><p>also outside</p>");
+        let Some(table) = doc.body.get(1).map(|b| (**b).clone()) else { panic!("fixture table missing") };
+        let html = export_fragment(&doc, &[table]);
+        assert!(html.contains("colspan=\"2\""), "merged cell span is exported: {html}");
+        assert!(html.contains("merged Ω"));
+        assert!(!html.contains("outside"), "only selected fragment content is exported: {html}");
+        let round_trip = import(&html);
+        let Some(table) = round_trip.body.first().and_then(|b| b.as_table()) else { panic!("merged table missing after import") };
+        assert_eq!(table.rows[0].cells[0].span(), 2);
     }
 
     #[test]

@@ -130,6 +130,9 @@ pub struct Services {
     /// Desktop: the text on the system clipboard, if any. Ctrl+V gets it from egui's paste event;
     /// the ribbon and context-menu Paste read it here (#584).
     pub clipboard_text: Option<Box<dyn Fn() -> Option<String>>>,
+    /// Desktop: write HTML and its plain-text alternative to the system clipboard. Hosts without
+    /// rich clipboard transport fall back to egui's plain-text clipboard event.
+    pub clipboard_copy: Option<Box<dyn Fn(&str, &str) -> Result<(), String>>>,
     /// Desktop: the HTML on the system clipboard — another program's formatted copy (a Word
     /// document, a web page) — if any. Paste keeps its formatting (#687); see [`system_clipboard`].
     pub clipboard_html: Option<Box<dyn Fn() -> Option<String>>>,

@@ -423,7 +423,7 @@ fn mi_text(ui: &mut Ui, app: &mut WordApp, text: &str, id: &str, params: Value) 
     let enabled = crate::widgets::enabled(app, id);
     let resp = ui.add_enabled(enabled, egui::Button::new(text).shortcut_text(sc).min_size(vec2(200.0, 0.0)));
     if resp.clicked() {
-        crate::widgets::run_from_ribbon(app, id, params);
+        crate::widgets::run_from_ribbon(ui, app, id, params);
         ui.close();
     }
 }
@@ -479,7 +479,7 @@ fn mi_check(ui: &mut Ui, app: &mut WordApp, label: &str, checked: bool, id: &str
     let enabled = crate::widgets::enabled(app, id);
     let resp = ui.add_enabled(enabled, egui::Button::new((mark, tl!(label))).selected(checked).min_size(vec2(200.0, 0.0)));
     if resp.clicked() {
-        crate::widgets::run_from_ribbon(app, id, params);
+        crate::widgets::run_from_ribbon(ui, app, id, params);
         ui.close();
     }
 }
@@ -527,10 +527,7 @@ fn home(app: &mut WordApp, ui: &mut Ui) {
         });
         stack(ui, |ui| {
             small(ui, app, "cut", Some("Cut"), "Cut", "edit.cut", json!({}), false);
-            let r = small(ui, app, "copy", Some("Copy"), "Copy", "edit.copy", json!({}), false);
-            if r.clicked() {
-                ui.ctx().copy_text(app.session.clipboard_text.clone());
-            }
+            small(ui, app, "copy", Some("Copy"), "Copy", "edit.copy", json!({}), false);
             let active = app.session.painter.is_some();
             small(ui, app, "painter", Some("Format"), "Format Painter", "edit.formatPainter", json!({}), active);
         });
