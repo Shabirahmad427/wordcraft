@@ -88,6 +88,9 @@ impl Previews {
     /// `families` (an entry drawn before its font was added shows the fallback face).
     pub fn fonts_changed(&mut self, ctx: &egui::Context, families: impl Iterator<Item = String>) {
         self.families = None;
+        // Every raster snippet may have used a fallback for one of these families. Discard those
+        // textures so style tiles and previews are reshaped with the updated font database.
+        self.tex.clear();
         ctx.data_mut(|d| {
             for f in families {
                 d.remove::<TextureHandle>(egui::Id::new(format!("font:{f}")));
@@ -280,6 +283,16 @@ pub fn preview_tint(t: &Tokens, dark_page: bool) -> egui::Color32 {
     if t.dark && !dark_page { egui::Color32::from_gray(0xC8) } else { egui::Color32::WHITE }
 }
 
+/// Build the sample used in the Home gallery. Character styles belong on the sample run; treating
+/// them as paragraph styles silently loses the style's character formatting.
+fn style_gallery_sample(base: &Document, id: &str, text: &str) -> Paragraph {
+    if base.styles.get(id).is_some_and(|style| style.kind == wordcraft_doc::styles::StyleKind::Character) {
+        Paragraph::with_text(text, CharProps { style: Some(id.to_string()), ..CharProps::default() })
+    } else {
+        Paragraph::with_text(text, CharProps::default()).styled(id)
+    }
+}
+
 fn snippet_blocks(
     base: &Document,
     blocks: Vec<Block>,
@@ -300,6 +313,12 @@ fn snippet_blocks(
     d.last_section.margin_right = margin;
     d.last_section.margin_top = margin;
     d.last_section.margin_bottom = 0.0;
+    // Preview documents have no running header or footer. The normal section defaults put the
+    // header boundary 36 pt from the page edge, which makes the layout engine start body text at
+    // y=36 even when the preview has a 1 pt top margin. The fixed 30 pt gallery raster then clips
+    // the entire first line and leaves a blank white tile.
+    d.last_section.header = 0.0;
+    d.last_section.footer = 0.0;
     let l = wordcraft_layout::layout(&d, &mut wordcraft_layout::LayoutCache::new(), &Default::default());
     let page = l.pages.first()?;
     let mut opts = crate::canvas::screen_render_options();
@@ -388,7 +407,7 @@ pub fn style_gallery(app: &mut WordApp, ui: &mut Ui, state: &Value) {
         let doc = &app.session.doc;
         let tex = app.previews.get_or(ui.ctx(), &key, || {
             // Sample letters in the interface's script (`АаБбВвГг` in Russian).
-            let mut p = Paragraph::with_text(tl!("AaBbCcDd"), CharProps::default()).styled(id);
+            let mut p = style_gallery_sample(doc, id, tl!("AaBbCcDd"));
             p.props.space_before = Some(0.0);
             p.props.align = Some(wordcraft_doc::Align::Left);
             // Keep hanging indents (bullets) but start the first line at the tile's left edge.
@@ -553,6 +572,75 @@ mod tests {
         assert_eq!(super::preview_tint(&dark, true), egui::Color32::WHITE, "the dark page is already dark");
         let dim = super::preview_tint(&dark, false);
         assert!(dim.r() < 0xE0 && dim.r() > 0xA0, "{dim:?}");
+    }
+
+    #[test]
+    fn font_changes_invalidate_cached_style_preview_textures() {
+        let ctx = egui::Context::default();
+        let mut previews = Previews::default();
+        let texture = ctx.load_texture("test-style-preview", egui::ColorImage::new([1, 1], vec![egui::Color32::BLACK]), egui::TextureOptions::LINEAR);
+        previews.tex.insert("style:Normal:cached".into(), texture);
+        previews.fonts_changed(&ctx, std::iter::empty());
+        assert!(previews.tex.is_empty(), "a new font can replace the fallback used by cached style previews");
+    }
+
+    #[test]
+    fn home_style_gallery_preview_contains_rendered_sample_ink() {
+        use wordcraft_doc::styles::{Style, StyleKind};
+        use wordcraft_doc::{Rgb, TextColor};
+
+        let mut doc = Document::new();
+        doc.styles.styles.push(Style {
+            id: "CrossPlatformCustom".into(),
+            name: "Cross Platform Custom".into(),
+            kind: StyleKind::Paragraph,
+            based_on: Some("Normal".into()),
+            chr: CharProps {
+                font: Some("WordCraft Missing Test Font".into()),
+                size: Some(18.0),
+                bold: Some(true),
+                italic: Some(true),
+                color: Some(TextColor::Rgb(Rgb(0, 64, 160))),
+                ..CharProps::default()
+            },
+            quick: true,
+            ..Style::default()
+        });
+        let original_styles = doc.styles.clone();
+        let ids = ["Normal", "NoSpacing", "Heading1", "Heading2", "Heading3", "Title", "Subtitle", "Emphasis", "Strong", "CrossPlatformCustom"];
+        for id in ids {
+            let p = style_gallery_sample(&doc, id, "AaBbCc");
+            let run = p.runs.first().map(|run| &run.props).expect("sample run");
+            let resolved = doc.styles.resolve_char(p.props.style.as_deref(), run);
+            if matches!(id, "Emphasis" | "Strong") {
+                assert_eq!(p.runs.first().and_then(|run| run.props.style.as_deref()), Some(id), "{id} is a character style");
+            } else {
+                assert_eq!(p.props.style.as_deref(), Some(id), "{id} is a paragraph style");
+            }
+            match id {
+                "Heading1" => assert_eq!(resolved.size, 20.0),
+                "Title" => assert_eq!(resolved.size, 28.0),
+                "Emphasis" => assert!(resolved.italic, "character style formatting reaches the sample"),
+                "Strong" => assert!(resolved.bold, "character style formatting reaches the sample"),
+                "CrossPlatformCustom" => {
+                    assert_eq!(resolved.font, "WordCraft Missing Test Font");
+                    assert_eq!(resolved.size, 18.0);
+                    assert!(resolved.bold && resolved.italic);
+                }
+                _ => {}
+            }
+            for (dark, ppp) in [(false, 1.0), (false, 2.0), (true, 1.0), (true, 2.0)] {
+                let image = style_snippet(&doc, p.clone(), 220.0, 30.0, ppp, 1.0, dark).expect("style preview raster");
+                let paper = image.pixels.first().copied().expect("non-empty raster");
+                let ink = image
+                    .pixels
+                    .iter()
+                    .filter(|pixel| pixel.r().abs_diff(paper.r()) > 12 || pixel.g().abs_diff(paper.g()) > 12 || pixel.b().abs_diff(paper.b()) > 12)
+                    .count();
+                assert!(ink > 20, "{id} should render sample glyphs (dark={dark}, ppp={ppp}), got {ink} changed pixels");
+            }
+        }
+        assert_eq!(doc.styles, original_styles, "building previews never edits imported or custom style definitions");
     }
 
     #[test]

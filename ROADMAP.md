@@ -1,5 +1,11 @@
 # WordCraft roadmap
 
+## Phase 7K — Styles gallery preview rendering (2026-10-13)
+
+- Reproduced blank Home gallery previews on the native Apple Silicon Mac at 2× scale. The layout engine placed preview text at y=36 pt because preview-only sections retained the default 36 pt header distance; the 30 pt raster viewport clipped the full sample line. Setting unused preview header/footer distances to zero fixes the shared raster path. A pixel regression failed before the fix with zero ink pixels and passes after it. Cross-check of [upstream `previews.rs` at `159b84f`](https://github.com/storytold/wordcraft/blob/159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0/crates/ui-egui/src/previews.rs) found the same geometry and no corresponding fix there.
+- Character styles in the gallery now style the sample run; paragraph styles continue to style the paragraph. Preview images are invalidated when the font database changes, so newly installed fonts replace cached fallback renderings. The Styles pane itself is a text list without sample tiles; Manage Styles previews use this same corrected snippet renderer.
+- Regression coverage checks Normal, No Spacing, Headings 1–3, Title, Subtitle, Emphasis, Strong and a custom paragraph style with a missing font. Pixel assertions run at 1×/2× and light/dark page modes and confirm style definitions stay unchanged. macOS GPU screenshot inspection shows readable samples and labels in the Home ribbon. Hosted Linux/macOS/Windows UI test results will be recorded after Actions completes; native Windows/Linux GUI screenshot checks are not available locally.
+
 ## Phase 7J — recovery, safe saving and fault tolerance (2026-10-13)
 
 - Added deterministic native-save fault injection for partial staging followed by storage exhaustion and replacement denial. Both cases assert byte-for-byte preservation of the prior destination and removal of only the current save's temporary file. Missing destination parents and existing symlink/temp safety, concurrent writes, invalid DOCX input and unsupported OOXML preservation are also covered by the shared engine suites.
