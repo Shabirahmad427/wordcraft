@@ -1,5 +1,13 @@
 # WordCraft roadmap
 
+## Phase 7R — Desktop GUI, ribbon and editing validation (2026-10-13)
+
+- Audited the six requested ribbon areas with 2× offscreen screenshots on Apple Silicon macOS. Home, Insert, Layout, References, Review and View rendered; Home style samples were visible. Existing pixel assertions cover built-in/custom style previews in light/dark and 1×/2× rendering.
+- A real macOS app window launched, but its normal profile opened the recovery chooser with existing recovery entries. To avoid touching that user state, no recovery entry was opened or discarded and the native-window editing workflow stopped there. No physical mouse/keyboard, Word 365 comparison, or complete native edit/save/reopen/PDF workflow is claimed. An isolated headless egui event run exercised Unicode typing, bold, Undo/Redo, Insert › Table, a 2×2 grid selection and cell typing.
+- Reproduced a focus defect in the Insert › Table size grid: it inserted the table but bypassed the ribbon helper that restores document focus, so immediate typing into the first cell was ignored. The picker now uses that helper. `dialogs::tests::table_grid_selection_requests_document_focus` failed before the fix and passes afterward; the headless UI event run confirms all four cells accept typed text and Cmd+Z/Cmd+Shift+Z removes/restores the last cell's text.
+- See [desktop GUI validation](docs/desktop-testing.md) for the platform evidence matrix and a synthetic-only Word comparison protocol. Hosted Linux/macOS/Windows suites are test/build evidence, not interactive desktop GUI evidence.
+- `cargo xtask ci` passed all six local gates, including workspace tests. Native macOS arm64 `cargo build --release -p wordcraft -p wordcraft-cli` and the CLI `--version` smoke passed; hosted checks for this fix are pending.
+
 ## Phase 7Q — Native clipboard validation and bounded import (2026-10-13)
 
 - Audited keyboard, ribbon, and context-menu Copy/Cut through the shared selection fragment, HTML/plain-text serialization, native host publication, paste retrieval, shared HTML import, insertion, and Undo/Redo. Existing cross-platform transport was already implemented through arboard; no duplicate transport implementation was added.

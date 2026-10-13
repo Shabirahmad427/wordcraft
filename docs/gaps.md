@@ -1,6 +1,6 @@
 # Where WordCraft falls short of Word
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7M adds theme-rebinding regressions; guarded imported theme/style edits still need safe package XML merging · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7R closes an Insert Table focus regression; ranked gap estimates are unchanged · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 The work list. One entry per shortfall, ranked by how much it stops a Word user from switching
 (**B** = blocks beta). Each says what's missing, the evidence, who it hurts, an Opus 5.5 agent
@@ -16,6 +16,8 @@ unknown style XML survives safe text edits. Guarded imports still reject theme/s
 until a safe package merge is available; see the [DOCX preservation contract](docx-compatibility.md#phase-7m-theme-bindings-and-style-preservation).
 
 Phase 7I adds [synthetic DOCX/PDF layout regressions](cross-platform-layout-regressions.md) and fixes a missed clipping warning for header-anchored images. Gap #4 still needs independent Word page geometry and font metrics; this internal corpus does not change its estimate.
+
+Phase 7R fixes a local editing focus defect in Insert › Table's size grid. This interaction was not a separately ranked gap and does not change the gap estimates; desktop validation limits are recorded in [desktop GUI validation](desktop-testing.md).
 
 ## Ranked
 
@@ -79,6 +81,7 @@ The same gaps grouped the way the parity documents are, for agents working in on
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | trivial | Insert › Table's grid selection now returns keyboard focus to the first cell; verified with a failing-before/passing-after UI regression; native app recovery data was left untouched |
 | 2026-10-13 | minor | Synthetic cross-platform layout/PDF corpus and header-float clipping diagnostic pass hosted Linux/macOS/Windows; independent Word comparison gap remains |
 | 2026-10-12 | minor | Ranked five cross-platform evidence gaps; shared DOCX export now rejects XML-forbidden model text and validates final packages, without claiming Word 365 parity |
 | 2026-10-12 | minor | Added bounded DOCX package fingerprint and round-trip allowlist benchmark; no Word-created corpus or Word visual result is claimed |

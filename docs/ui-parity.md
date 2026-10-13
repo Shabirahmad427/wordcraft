@@ -1,6 +1,6 @@
 # UI parity with Microsoft Word
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** theme-linked style fonts/colors rebind in shared Rust; synthetic inheritance, tint/shade, explicit override, Undo/Redo and DOCX round-trip tests added; six local CI gates and Apple Silicon release builds pass, hosted matrix pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Insert › Table grid now restores document focus; headless egui UI regression and 2× ribbon screenshots added; native macOS editing stopped at an existing recovery chooser · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 How WordCraft looks and feels next to Word: ribbon, dialogs, panes, keyboard, mouse and touch.
 Typing behaviour has its own checklist ([`typing-parity.md`](typing-parity.md)). All assets are our
@@ -46,6 +46,7 @@ own (`AGENTS.md`: no Microsoft iconography, ever).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Insert › Table size-grid selection now returns focus to the new first cell, so immediate typing works. A headless egui pointer/key regression failed before the fix. 2× screenshots show the main ribbon tabs and visible Home style samples. Native macOS app launch showed existing recovery entries; no recovery content was opened, so native edit/save/reopen and Word comparison remain unverified |
 | 2026-10-13 | minor | Shared theme rebinding retains imported theme font/color selectors, updates inherited and direct formatting on theme edits, and keeps explicit overrides; six local CI gates pass; guarded OOXML imports still reject unsafe style rewrites |
 | 2026-10-13 | trivial | Styles: applying a paragraph style to a partial text selection no longer clears direct font, size and color from unselected runs. Tests cover built-in paragraph styles, Emphasis/Strong, imported custom inheritance, theme resolution, direct overrides, selected-style state, Undo/Redo, DOCX reopen and PDF export. Hosted Document Regressions run 38381805292 passed on Linux, macOS and Windows; native GUI screenshot review remains local macOS only. Unmodeled OOXML style extensions and dynamic theme rebinding are not covered; no Word reference comparison |
 | 2026-10-13 | trivial | Home Styles gallery preview: preview-only sections set unused header/footer distances to zero so the shared layout places the sample inside the raster crop; character styles decorate the sample run; font changes invalidate preview textures. Pixel tests cover built-in/custom styles, missing-font fallback, light/dark pages and 1×/2× rendering. Hosted Printing run 38377649990 passed native UI tests on Ubuntu, macOS and Windows. Upstream `main` at `159b84f` had the same unclipped geometry; no Word reference output used |

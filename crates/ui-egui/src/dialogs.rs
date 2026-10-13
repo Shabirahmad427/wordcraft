@@ -1584,7 +1584,7 @@ pub fn table_grid_picker(ui: &mut Ui, app: &mut WordApp) {
     });
     ui.data_mut(|d| d.insert_temp(id, new_hover));
     if let Some((r, c)) = clicked {
-        let _ = app.run("insert.table", json!({"rows": r, "cols": c}));
+        crate::widgets::run_from_ribbon(ui, app, "insert.table", json!({"rows": r, "cols": c}));
         ui.close();
     }
 }
@@ -4567,6 +4567,43 @@ mod tests {
         let mut app = WordApp::new(Session::new(wordcraft_doc::Document::new()), crate::Services::default());
         let _ = app.run("document.setText", json!({"text": text}));
         app
+    }
+
+    /// Selecting a size in the Insert › Table grid returns keyboard focus to the new table.
+    #[test]
+    fn table_grid_selection_requests_document_focus() {
+        use egui::{Event, PointerButton};
+        let app = WordApp::new(Session::new(wordcraft_doc::Document::new()), crate::Services::default());
+        let mut h = egui_kittest::Harness::builder().with_size(vec2(360.0, 220.0)).build_ui_state(
+            |ui, app: &mut WordApp| {
+                ui.vertical(|ui| table_grid_picker(ui, app));
+            },
+            app,
+        );
+        h.run_steps(2);
+        h.state_mut().canvas.want_focus = false;
+        // Use the painted second cell in the second row so the test follows egui layout exactly.
+        let mut cells = Vec::new();
+        for shape in &h.output().shapes {
+            if let egui::Shape::Rect(shape) = &shape.shape {
+                let rect = shape.rect;
+                if (rect.width() - 16.0).abs() < 0.01 && (rect.height() - 16.0).abs() < 0.01 {
+                    cells.push(rect);
+                }
+            }
+        }
+        cells.sort_by(|a, b| a.top().total_cmp(&b.top()).then_with(|| a.left().total_cmp(&b.left())));
+        assert_eq!(cells.len(), 80, "the picker draws an 8×10 grid");
+        let at = cells[11].center();
+        h.event(Event::PointerMoved(at));
+        h.run_steps(1);
+        h.event(Event::PointerMoved(at));
+        h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: true, modifiers: Default::default() });
+        h.step();
+        h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: false, modifiers: Default::default() });
+        h.run_steps(2);
+        assert!(h.state().session.doc.body.first().is_some_and(|b| b.as_table().is_some()), "grid selection inserts a table");
+        assert!(h.state().canvas.want_focus, "typing should continue in the first table cell");
     }
 
     #[test]
