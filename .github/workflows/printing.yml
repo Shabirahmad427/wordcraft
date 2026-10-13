@@ -47,7 +47,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev \
+            pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libxcursor-dev libxrandr-dev \
             libxi-dev libgtk-3-dev libfontconfig1-dev libfreetype-dev libvulkan1 mesa-vulkan-drivers xvfb
 
       - uses: dtolnay/rust-toolchain@stable
@@ -92,7 +92,17 @@ jobs:
         if: runner.os != 'Linux'
         env:
           WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WORDCRAFT_PRESERVE_NATIVE_PROFILE: ${{ runner.os == 'Windows' && '1' || '0' }}
         run: cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
+
+      - name: Preserve failed Windows native smoke diagnostics
+        if: runner.os == 'Windows' && failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-native-smoke-diagnostics
+          path: ${{ runner.temp }}/wordcraft-native-smoke-*
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Browser compatibility
         if: runner.os == 'Linux'

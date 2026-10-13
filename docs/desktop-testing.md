@@ -53,10 +53,16 @@ was not the application exit status. A child that was SIGKILLed during earlier b
 is recorded as forced cleanup, never as a successful launch.
 
 Local verification: `cargo xtask ci` passed all six gates, including workspace tests; the Apple
-Silicon release GUI and CLI built and both `--version` commands passed. The latest hosted Printing
-run, [38438412430](https://github.com/Shabirahmad427/wordcraft/actions/runs/38438412430), succeeded
-on Ubuntu, macOS and Windows at commit `270c7d8`, but predates the Phase 7S native-window workflow
-step. Hosted native-window outcomes are therefore still pending. See
+Silicon release GUI and CLI built and both `--version` commands passed. The latest local macOS
+native run also passed both isolated smokes after the harness diagnostic update. Hosted Printing run
+[38463844164](https://github.com/Shabirahmad427/wordcraft/actions/runs/38463844164) exercised the
+new native-window steps: macOS passed both smokes; Linux failed before window creation because
+`libxkbcommon-x11.so` was absent from the Xvfb runner; Windows reached its first frame and passed
+the recovery-shutdown smoke, while the editing smoke failed to find the table after ribbon clicks.
+The failed Windows app was forcibly terminated by test-harness cleanup, so that run does not count
+as a successful editing workflow or graceful exit. The workflow now installs the Linux runtime
+dependency and retains an isolated Windows failure profile, stderr log and screenshot as an artifact
+for the next hosted run. The cause of the Windows ribbon mismatch is still under investigation. See
 [native desktop platform support](platform-support.md) for the platform-by-platform evidence.
 
 No physical mouse/keyboard input, native Open/Save panel interaction, system clipboard exchange or
@@ -144,3 +150,4 @@ This protocol has not been run. No Word 365 compatibility result is claimed.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-13 | minor | Located the raw-launch stall in AppKit's pre-resume event wait; verified LaunchServices native smokes, isolated profile safety, recovery shutdown and normal child status |
+| 2026-10-13 | minor | Recorded hosted native smoke failures on Linux and Windows and enabled dependency installation plus isolated Windows failure diagnostics |

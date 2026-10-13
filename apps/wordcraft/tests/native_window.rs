@@ -291,7 +291,15 @@ fn isolated_native_window_smoke() {
         .expect("blocks")
         .iter()
         .find(|block| block.get("type").and_then(Value::as_str) == Some("table"))
-        .expect("table inserted from ribbon");
+        .unwrap_or_else(|| {
+            let state = control.call("ui.inspect", json!({}));
+            let screenshot = profile.0.join("native-window-table-ribbon-failure.png");
+            let screenshot_result = control.call("ui.screenshot", json!({"path": screenshot}));
+            panic!(
+                "table was not inserted from the native ribbon; document state: {doc}; UI state: {state}; screenshot result: {screenshot_result}; isolated profile: {}",
+                profile.0.display()
+            )
+        });
     assert_eq!(
         table
             .get("cells")
