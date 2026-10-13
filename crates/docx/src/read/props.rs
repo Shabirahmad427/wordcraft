@@ -82,6 +82,9 @@ impl PropCtx {
     }
 
     fn theme_font(&self, t: &str) -> Option<String> {
+        if !wordcraft_doc::props::ThemeFontRef::supported(t) {
+            return None;
+        }
         let f = if t.starts_with("major") { &self.major_font } else { &self.minor_font };
         (!f.is_empty()).then(|| f.clone())
     }
@@ -121,6 +124,48 @@ impl PropCtx {
         Some(c)
     }
 
+    fn theme_color_ref(&self, e: &El) -> Option<wordcraft_doc::props::ThemeColorRef> {
+        let logical = |i: usize| self.color_map.and_then(|m| m.get(i).copied()).unwrap_or(i);
+        let token = e.attr("w:themeColor")?;
+        let slot = match token {
+            "dark1" => 0,
+            "light1" => 1,
+            "dark2" => 2,
+            "light2" => 3,
+            "text1" => logical(0),
+            "background1" => logical(1),
+            "text2" => logical(2),
+            "background2" => logical(3),
+            "accent1" => logical(4),
+            "accent2" => logical(5),
+            "accent3" => logical(6),
+            "accent4" => logical(7),
+            "accent5" => logical(8),
+            "accent6" => logical(9),
+            "hyperlink" => logical(10),
+            "followedHyperlink" => logical(11),
+            _ => return None,
+        };
+        let token = [
+            "dark1",
+            "light1",
+            "dark2",
+            "light2",
+            "accent1",
+            "accent2",
+            "accent3",
+            "accent4",
+            "accent5",
+            "accent6",
+            "hyperlink",
+            "followedHyperlink",
+        ]
+        .get(slot)
+        .copied()?;
+        let byte = |name: &str| e.attr(name).and_then(|v| u8::from_str_radix(v.trim(), 16).ok());
+        Some(wordcraft_doc::props::ThemeColorRef { token: token.to_string(), slot, tint: byte("w:themeTint"), shade: byte("w:themeShade") })
+    }
+
     /// `w:shd`: its fill colour (a theme fill first), or a solid pattern's colour.
     pub fn shd_fill(&self, e: &El) -> Option<Rgb> {
         if let Some(c) = self.theme_color(e, "w:themeFill", "w:themeFillTint", "w:themeFillShade") {
@@ -146,6 +191,15 @@ impl PropCtx {
                     // `w:ascii`, `w:hAnsiTheme` over `w:hAnsi`).
                     let named = |a: &str| k.attr(a).filter(|f| !f.is_empty()).map(str::to_string);
                     let themed = |a: &str| k.attr(a).and_then(|t| self.theme_font(t));
+                    let ascii_theme = k.attr("w:asciiTheme").filter(|v| !v.is_empty()).map(str::to_string);
+                    let hansi_theme = k.attr("w:hAnsiTheme").filter(|v| !v.is_empty()).map(str::to_string);
+                    let active = ascii_theme.as_deref().and_then(|t| self.theme_font(t)).is_some()
+                        || (named("w:ascii").is_none() && hansi_theme.as_deref().and_then(|t| self.theme_font(t)).is_some());
+                    c.theme_font = (ascii_theme.is_some() || hansi_theme.is_some()).then_some(wordcraft_doc::props::ThemeFontRef {
+                        ascii: ascii_theme,
+                        hansi: hansi_theme,
+                        active,
+                    });
                     c.font =
                         themed("w:asciiTheme").or_else(|| named("w:ascii")).or_else(|| themed("w:hAnsiTheme")).or_else(|| named("w:hAnsi")).or_else(
                             || {
@@ -186,6 +240,7 @@ impl PropCtx {
                 "w:vanish" => c.hidden = Some(on_off(k)),
                 "w:rtl" => c.rtl = Some(on_off(k)),
                 "w:color" => {
+                    c.theme_color = self.theme_color_ref(k);
                     c.color = match (self.theme_color(k, "w:themeColor", "w:themeTint", "w:themeShade"), k.attr("w:val")) {
                         (Some(t), _) => Some(TextColor::Rgb(t)),
                         (None, Some(v)) if v.eq_ignore_ascii_case("auto") => Some(TextColor::Auto),

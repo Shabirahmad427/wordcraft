@@ -167,6 +167,14 @@ fn color(c: Rgb) -> Option<TextColor> {
 }
 
 impl StyleSheet {
+    /// Rebind imported theme-linked style properties after the document theme changes.
+    pub fn rebind_theme(&mut self, settings: &crate::Settings) {
+        self.default_chr.rebind_theme(&settings.major_font, &settings.minor_font, &settings.theme_colors);
+        for style in &mut self.styles {
+            style.chr.rebind_theme(&settings.major_font, &settings.minor_font, &settings.theme_colors);
+        }
+    }
+
     pub fn empty() -> Self {
         StyleSheet { default_chr: CharProps::default(), default_para: ParaProps::default(), default_para_present: true, styles: Vec::new() }
     }

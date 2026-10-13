@@ -31,6 +31,14 @@ pub fn rpr_inner(w: &mut W, c: &CharProps) {
     if let Some(f) = &c.font {
         fonts.extend([("w:ascii", f.as_str()), ("w:hAnsi", f.as_str())]);
     }
+    if let Some(f) = &c.theme_font {
+        if let Some(face) = f.ascii.as_deref() {
+            fonts.push(("w:asciiTheme", face));
+        }
+        if let Some(face) = f.hansi.as_deref() {
+            fonts.push(("w:hAnsiTheme", face));
+        }
+    }
     if let Some(ea) = &c.font_ea {
         fonts.push(("w:eastAsia", ea));
     }
@@ -54,10 +62,22 @@ pub fn rpr_inner(w: &mut W, c: &CharProps) {
     toggle(w, "w:imprint", c.engrave);
     toggle(w, "w:noProof", c.no_proof);
     toggle(w, "w:vanish", c.hidden);
-    match c.color {
-        Some(TextColor::Auto) => w.val("w:color", "auto"),
-        Some(TextColor::Rgb(rgb)) => w.val("w:color", &rgb.hex()),
-        None => {}
+    match (c.color, c.theme_color.as_ref()) {
+        (Some(TextColor::Auto), _) => w.val("w:color", "auto"),
+        (Some(TextColor::Rgb(rgb)), Some(theme)) => {
+            let mut attrs = vec![("w:val", rgb.hex())];
+            attrs.push(("w:themeColor", theme.token.clone()));
+            if let Some(value) = theme.tint {
+                attrs.push(("w:themeTint", format!("{value:02X}")));
+            }
+            if let Some(value) = theme.shade {
+                attrs.push(("w:themeShade", format!("{value:02X}")));
+            }
+            let refs: Vec<(&str, &str)> = attrs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            w.empty("w:color", &refs);
+        }
+        (Some(TextColor::Rgb(rgb)), None) => w.val("w:color", &rgb.hex()),
+        (None, _) => {}
     }
     if let Some(s) = c.spacing {
         w.val("w:spacing", &twips(s.clamp(-1584.0, 1584.0)));

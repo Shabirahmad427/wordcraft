@@ -1157,6 +1157,29 @@ impl Document {
         self.para_paths(StoryRef::Body).len()
     }
 
+    /// Rebind theme-linked styles and direct run formatting after the document theme changes.
+    pub fn rebind_theme(&mut self) {
+        self.styles.rebind_theme(&self.settings);
+        let (major, minor, colors) = (self.settings.major_font.clone(), self.settings.minor_font.clone(), self.settings.theme_colors.clone());
+        let mut stories: Vec<&mut Blocks> = vec![&mut self.body];
+        stories.extend(self.parts.values_mut().map(|p| &mut p.blocks));
+        for blocks in stories {
+            for block in blocks.iter_mut() {
+                edit::each_para_mut(Arc::make_mut(block), 0, &mut |paragraph| {
+                    let old_mark = paragraph.mark.clone();
+                    let old_runs: Vec<_> = paragraph.runs.iter().map(|run| run.props.clone()).collect();
+                    paragraph.mark.rebind_theme(&major, &minor, &colors);
+                    for run in &mut paragraph.runs {
+                        run.props.rebind_theme(&major, &minor, &colors);
+                    }
+                    if paragraph.mark != old_mark || paragraph.runs.iter().map(|run| &run.props).ne(old_runs.iter()) {
+                        paragraph.touch();
+                    }
+                });
+            }
+        }
+    }
+
     /// Add a media item; returns its key (deduplicated by content).
     pub fn add_media(&mut self, bytes: Vec<u8>, ext: &str) -> String {
         if let Some((k, _)) = self.media.iter().find(|(_, v)| v.as_slice() == bytes.as_slice()) {

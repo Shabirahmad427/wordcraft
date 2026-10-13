@@ -257,6 +257,9 @@ pub struct CharProps {
     pub style: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font: Option<String>,
+    /// OOXML theme font selector retained so a later theme change can rebind this value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme_font: Option<ThemeFontRef>,
     /// Points.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<f32>,
@@ -274,6 +277,9 @@ pub struct CharProps {
     pub double_strike: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<TextColor>,
+    /// OOXML theme color selector, with optional tint/shade bytes, retained across theme changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme_color: Option<ThemeColorRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub highlight: Option<Highlight>,
     /// Character shading (background fill).
@@ -357,6 +363,107 @@ pub struct CharProps {
     pub fmt_change: Option<Box<PropChange<CharProps>>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeColorRef {
+    pub token: String,
+    pub slot: usize,
+    pub tint: Option<u8>,
+    pub shade: Option<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeFontRef {
+    pub ascii: Option<String>,
+    pub hansi: Option<String>,
+    /// Whether a theme selector supplies the effective Latin font after OOXML precedence rules.
+    pub active: bool,
+}
+
+impl ThemeColorRef {
+    pub fn resolve(&self, colors: &[Rgb]) -> Option<Rgb> {
+        let mut color = *colors.get(self.slot)?;
+        let adjust = |c: Rgb, f: &dyn Fn(f64) -> f64| {
+            let (r, g, b) = (c.0 as f64 / 255.0, c.1 as f64 / 255.0, c.2 as f64 / 255.0);
+            let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+            let l = (max + min) / 2.0;
+            let (h, s) = if max == min {
+                (0.0, 0.0)
+            } else {
+                let d = max - min;
+                let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+                let h = if max == r {
+                    (g - b) / d + if g < b { 6.0 } else { 0.0 }
+                } else if max == g {
+                    (b - r) / d + 2.0
+                } else {
+                    (r - g) / d + 4.0
+                };
+                (h / 6.0, s)
+            };
+            let l = f(l).clamp(0.0, 1.0);
+            let byte = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+            if s == 0.0 {
+                return Rgb(byte(l), byte(l), byte(l));
+            }
+            let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+            let p = 2.0 * l - q;
+            let channel = |t: f64| {
+                let t = t.rem_euclid(1.0);
+                let v = if t < 1.0 / 6.0 {
+                    p + (q - p) * 6.0 * t
+                } else if t < 0.5 {
+                    q
+                } else if t < 2.0 / 3.0 {
+                    p + (q - p) * (2.0 / 3.0 - t) * 6.0
+                } else {
+                    p
+                };
+                byte(v)
+            };
+            Rgb(channel(h + 1.0 / 3.0), channel(h), channel(h - 1.0 / 3.0))
+        };
+        if let Some(tint) = self.tint {
+            let t = f64::from(tint) / 255.0;
+            color = adjust(color, &|l| l * t + (1.0 - t));
+        }
+        if let Some(shade) = self.shade {
+            let t = f64::from(shade) / 255.0;
+            color = adjust(color, &|l| l * t);
+        }
+        Some(color)
+    }
+}
+
+impl CharProps {
+    pub fn rebind_theme(&mut self, major: &str, minor: &str, colors: &[Rgb]) {
+        if let Some(font) = self.theme_font.as_ref().filter(|font| font.active)
+            && let Some(token) = font
+                .ascii
+                .as_deref()
+                .filter(|token| ThemeFontRef::supported(token))
+                .or_else(|| font.hansi.as_deref().filter(|token| ThemeFontRef::supported(token)))
+        {
+            let face = if token.starts_with("major") { major } else { minor };
+            if !face.is_empty() {
+                self.font = Some(face.to_string());
+            }
+        }
+        if let Some(reference) = &self.theme_color
+            && let Some(color) = reference.resolve(colors)
+        {
+            self.color = Some(TextColor::Rgb(color));
+        }
+    }
+}
+
+impl ThemeFontRef {
+    pub fn supported(token: &str) -> bool {
+        matches!(token, "majorAscii" | "majorHAnsi" | "majorEastAsia" | "majorBidi" | "minorAscii" | "minorHAnsi" | "minorEastAsia" | "minorBidi")
+    }
+}
+
 /// A tracked formatting change (ECMA-376 §17.13.5: `w:rPrChange`, `w:pPrChange`,
 /// `w:tblPrChange`, `w:trPrChange`, `w:tcPrChange`, `w:sectPrChange`): the properties as they
 /// were before the change, and the revision (author, date) that made it.
@@ -411,7 +518,7 @@ impl CharProps {
     /// The fields of `self` that differ from `base` (equal ones unset): what `self` adds when
     /// overlaid on `base`.
     pub fn minus(mut self, base: &CharProps) -> CharProps {
-        drop_same_fields!(self, base; style, font, size, bold, italic, underline, underline_color, strike, double_strike, color, highlight,
+        drop_same_fields!(self, base; style, font, theme_font, size, bold, italic, underline, underline_color, strike, double_strike, color, theme_color, highlight,
             shading, border, vert_align, caps, small_caps, hidden, spacing, scale, position, kern, outline, shadow, emboss, engrave, lang, no_proof, rtl,
             cs, font_cs, size_cs, bold_cs, italic_cs, lang_bidi, link, ins, del);
         self
@@ -422,7 +529,7 @@ impl CharProps {
     /// Plain and complex-script properties inherit independently. Commands that intend to
     /// format both scripts must set both values explicitly.
     pub fn overlay(&mut self, patch: &CharProps) {
-        overlay_fields!(self, patch; style, font, size, bold, italic, underline, underline_color, strike, double_strike, color, highlight,
+        overlay_fields!(self, patch; style, font, theme_font, size, bold, italic, underline, underline_color, strike, double_strike, color, theme_color, highlight,
             shading, border, vert_align, caps, small_caps, hidden, spacing, scale, position, kern, outline, shadow, emboss, engrave, lang, no_proof, rtl,
             cs, font_cs, font_ea, size_cs, bold_cs, italic_cs, lang_bidi, link, ins, del, fmt_change);
         if let Some(p) = &patch.text_effects {

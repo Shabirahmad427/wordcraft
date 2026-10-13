@@ -90,28 +90,36 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 fn set_fonts(s: &mut Session, heading: &str, body: &str) {
+    let (old_heading, old_body) = (s.doc.settings.major_font.clone(), s.doc.settings.minor_font.clone());
     s.doc.settings.major_font = heading.into();
     s.doc.settings.minor_font = body.into();
-    s.doc.styles.default_chr.font = Some(body.into());
+    if s.doc.styles.default_chr.font.as_deref() == Some(old_body.as_str()) {
+        s.doc.styles.default_chr.font = Some(body.into());
+    }
     for st in &mut s.doc.styles.styles {
-        if let Some(f) = &st.chr.font
-            && (f == styles::HEADING_FONT || st.id.starts_with("Heading") || st.id == "Title")
+        if st.builtin
+            && (st.id.starts_with("Heading") || st.id == "Title")
+            && (st.chr.theme_font.is_some()
+                || st.chr.font.as_deref() == Some(old_heading.as_str())
+                || st.chr.font.as_deref() == Some(styles::HEADING_FONT))
         {
             st.chr.font = Some(heading.into());
-        } else if st.chr.font.is_some() && st.chr.font.as_deref() != Some(heading) {
-            st.chr.font = Some(body.into());
         }
     }
+    s.doc.rebind_theme();
 }
 
 fn set_accent(s: &mut Session, accent: Rgb) {
     for st in &mut s.doc.styles.styles {
-        if st.id.starts_with("Heading") && st.id.len() == 8 && st.id.as_bytes().get(7).is_some_and(|d| *d <= b'5')
-            || st.id == "IntenseQuote"
-            || st.id == "IntenseEmphasis"
-            || st.id == "IntenseReference"
+        if st.builtin
+            && ((st.id.starts_with("Heading") && st.id.len() == 8 && st.id.as_bytes().get(7).is_some_and(|d| *d <= b'5'))
+                || st.id == "IntenseQuote"
+                || st.id == "IntenseEmphasis"
+                || st.id == "IntenseReference")
         {
-            st.chr.color = Some(TextColor::Rgb(accent));
+            if st.chr.theme_color.is_none() {
+                st.chr.color = Some(TextColor::Rgb(accent));
+            }
             if let Some(b) = st.para.borders.as_mut() {
                 for e in [&mut b.top, &mut b.bottom].into_iter().flatten() {
                     e.color = Some(accent);
@@ -122,6 +130,7 @@ fn set_accent(s: &mut Session, accent: Rgb) {
     if let Some(c) = s.doc.settings.theme_colors.get_mut(4) {
         *c = accent;
     }
+    s.doc.rebind_theme();
 }
 
 fn theme(s: &mut Session, v: &Value) -> CmdResult {
@@ -137,6 +146,7 @@ fn theme(s: &mut Session, v: &Value) -> CmdResult {
         }
     }
     s.doc.settings.theme_colors = colors;
+    s.doc.rebind_theme();
     sel_result(s)
 }
 

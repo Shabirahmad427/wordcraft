@@ -1,12 +1,16 @@
 # WordCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** synthetic cross-platform layout/PDF gate and shared header-float clipping fix; real Word corpus remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7M theme-linked style rebinding and safe unknown-style preservation checks; native CI passed, hosted matrix pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 Forward-looking plan. The summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is
 [`gaps.md`](gaps.md); the numbers are in [`target-app-parity.md`](target-app-parity.md). Hours are
 Opus 5.5 agent wall-clock.
 
 ## Current focus (toward beta, ~150–230 h)
+
+Phase 7M adds shared theme rebinding and preservation regressions. Guarded imports still need a
+safe package XML merge before theme or style edits can be saved; see the
+[DOCX preservation contract](docx-compatibility.md#phase-7m-theme-bindings-and-style-preservation).
 
 The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current five-gap evidence priority and distinguishes native runtime results from cross-builds.
 
@@ -75,6 +79,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Phase 7M theme binding and style preservation regressions; native six-gate CI passes, hosted matrix pending |
 | 2026-10-12 | minor | Phase 7I synthetic DOCX/PDF corpus and native matrix gate; header-float clipping diagnostic fixed without changing pagination |
 | 2026-10-12 | minor | Added five-gap cross-platform audit; DOCX export safety improved in shared Rust, while native and Word 365 comparisons remain pending |
 | 2026-10-12 | minor | M1: reproducible package fingerprint/allowlist benchmark added; Word 365 corpus and visual comparison remain pending |

@@ -1,5 +1,11 @@
 # WordCraft roadmap
 
+## Phase 7M — Theme rebinding and OOXML style preservation (2026-10-13)
+
+- Reproduced stale theme values: DOCX import flattened `w:asciiTheme`/`w:hAnsiTheme` and `w:themeColor` into fixed values, so later theme changes could not rebind inherited styles. The shared document model now retains those selectors (including color mapping and tint/shade), rebinds styles and direct run formatting on theme changes, and serializes theme selectors back to DOCX. Explicit font/color properties remain fixed; Undo/Redo restores the prior theme and resolved values.
+- Added synthetic regressions for inherited theme-linked style values, tint/shade, explicit overrides, style inheritance, DOCX save/reopen, and engine theme Undo/Redo. Unsupported `styles.xml` extensions remain in the original package through safe text edits; style edits that would regenerate protected XML fail clearly instead of deleting it.
+- All six `cargo xtask ci` gates and the workspace tests pass on native Apple Silicon macOS. Native Apple Silicon GUI/CLI release builds and version smokes pass. Hosted Linux/macOS/Windows checks are pending. The current package-preservation contract still blocks theme/style edits on guarded imports when safe package-level XML merging is unavailable; no arbitrary OOXML preservation or Word 365 compatibility is claimed.
+
 ## Phase 7L — Styles, formatting and DOCX round-trip reliability (2026-10-13)
 
 - Audited the shared `StyleSheet` inheritance resolver, DOCX style import/export, style application command, selected formatting state and PDF exporter. Existing code resolves paragraph chains, character styles, direct overrides, and imported theme fonts/colors; this phase adds end-to-end synthetic coverage for those modeled cases.

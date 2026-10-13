@@ -5,6 +5,27 @@ The reproducible package-integrity benchmark and current Word-reference evidence
 are synthetic; package-preservation results are not Microsoft Word rendering or editability
 verification.
 
+## Phase 7M theme bindings and style preservation
+
+The importer resolves theme fonts and `w:themeColor` against the theme present at open. Before
+Phase 7M, it kept only the resolved font/RGB values, so a later Design theme edit left custom
+inherited styles on the old values. The shared `CharProps` model now also retains supported
+`asciiTheme`/`hAnsiTheme` selectors and the `w:themeColor` slot, color-scheme mapping, tint and
+shade. Theme commands rebind style/default properties and direct run formatting, and engine
+Undo/Redo restores the prior settings and values. Explicit fonts and colors without theme
+selectors remain unchanged. Synthetic tests cover inherited paragraph styles and generated DOCX
+save/reopen; theme-aware underline, shading, script-specific font selectors and arbitrary theme
+extensions are not covered by this binding model.
+
+The existing package guard preserves unknown style XML in the source part. Safe plain-text edits
+retain `word/styles.xml` byte-for-byte; a style edit that would regenerate a guarded `styles.xml`
+is rejected with a diagnostic. The current guard also rejects theme/style mutation of imported
+packages whose package structure is not reproducible by the native writer. Such edits remain
+blocked until a bounded package XML merge can preserve all unrelated style/theme content. This
+preserves unsupported data safely but does not yet make theme changes saveable for every imported
+DOCX. Synthetic fixtures test a safe text edit, exact extension retention, and rejection of a
+style rewrite. This is not general arbitrary-OOXML preservation or Word 365 compatibility.
+
 Reproducible internal raster comparisons and large-document pipeline timings are documented in
 [the benchmark guide](performance-benchmarks.md). The raster comparator requires an explicit
 per-case policy and never rewrites baselines. Existing image, floating object, rotated text-box,

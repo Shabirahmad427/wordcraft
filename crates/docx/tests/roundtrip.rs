@@ -85,6 +85,7 @@ fn every_char_prop_round_trips() {
     let all = CharProps {
         style: Some("Strong".into()),
         font: Some("Georgia".into()),
+        theme_font: None,
         size: Some(10.5),
         bold: Some(true),
         italic: Some(false),
@@ -93,6 +94,7 @@ fn every_char_prop_round_trips() {
         strike: Some(true),
         double_strike: Some(false),
         color: Some(TextColor::Rgb(Rgb(0xAA, 0x10, 0x20))),
+        theme_color: None,
         highlight: Some(Highlight::Turquoise),
         shading: Some(Rgb(0xEE, 0xEE, 0x00)),
         border: Some(Border { style: BorderStyle::Double, width: 1.5, color: Some(Rgb(0xC0, 0, 0)), space: 2.0 }),

@@ -1177,8 +1177,10 @@ fn theme_colours_follow_the_colour_scheme_mapping() {
     let mapping = r#"<w:clrSchemeMapping w:bg1="dark1" w:t1="accent2" w:bg2="light2" w:t2="dark2" w:accent1="accent1" w:accent2="accent2" w:accent3="accent3" w:accent4="accent4" w:accent5="accent5" w:accent6="accent6" w:hyperlink="hyperlink" w:followedHyperlink="followedHyperlink"/>"#;
     let d = themed_docx(body, styles, Some(mapping));
     assert_eq!(d.styles.get("T1").unwrap().chr.color, Some(TextColor::Rgb(Rgb(0xED, 0x7D, 0x31))));
+    assert_eq!(d.styles.get("T1").unwrap().chr.theme_color.as_ref().map(|c| c.token.as_str()), Some("accent2"));
     let p = paras(&d);
     assert_eq!(p[0].props_of_char(1).color, Some(TextColor::Rgb(Rgb(0, 0, 0))), "background1 → dark1");
+    assert_eq!(p[0].props_of_char(1).theme_color.as_ref().map(|c| c.token.as_str()), Some("dark1"));
     assert_eq!(p[0].props_of_char(2).color, Some(TextColor::Rgb(Rgb(0, 0, 0))), "dark1 isn't remapped");
 }
 
@@ -1193,12 +1195,20 @@ fn theme_font_wins_over_the_fixed_font() {
     let styles = r#"<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:rPr><w:rFonts w:ascii="Calibri Light" w:hAnsi="Calibri Light" w:asciiTheme="majorHAnsi" w:hAnsiTheme="majorHAnsi"/></w:rPr></w:style>"#;
     let body = r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>H</w:t></w:r></w:p>
 <w:p><w:r><w:rPr><w:rFonts w:hAnsi="Arial" w:hAnsiTheme="minorHAnsi"/></w:rPr><w:t>a</w:t></w:r><w:r><w:rPr><w:rFonts w:ascii="Arial" w:asciiTheme="minorHAnsi"/></w:rPr><w:t>b</w:t></w:r><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsiTheme="majorHAnsi"/></w:rPr><w:t>c</w:t></w:r></w:p>"#;
-    let d = themed_docx(body, styles, None);
+    let mut d = themed_docx(body, styles, None);
     assert_eq!(d.styles.get("Heading1").unwrap().chr.font.as_deref(), Some("Major Face"));
     let p = paras(&d);
     assert_eq!(p[1].props_of_char(0).font.as_deref(), Some("Minor Face"));
     assert_eq!(p[1].props_of_char(1).font.as_deref(), Some("Minor Face"));
     // An explicit ascii font still beats a theme font given only for hAnsi.
+    assert_eq!(p[1].props_of_char(2).font.as_deref(), Some("Arial"));
+    d.settings.major_font = "Changed Major".into();
+    d.settings.minor_font = "Changed Minor".into();
+    d.rebind_theme();
+    let p = paras(&d);
+    assert_eq!(d.styles.resolve_char(Some("Heading1"), &Default::default()).font, "Changed Major");
+    assert_eq!(p[1].props_of_char(0).font.as_deref(), Some("Changed Minor"));
+    assert_eq!(p[1].props_of_char(1).font.as_deref(), Some("Changed Minor"));
     assert_eq!(p[1].props_of_char(2).font.as_deref(), Some("Arial"));
 }
 
@@ -1239,6 +1249,47 @@ fn imported_custom_style_chain_resolves_and_round_trips_with_direct_overrides() 
     assert_eq!((reopened_style.font.as_str(), reopened_style.size), ("Major Face", 14.0));
     assert!(reopened_style.bold && reopened_style.italic);
     assert_eq!(d.styles.resolve_char(Some("CustomBody"), reopened.props_of_char(7)).color, TextColor::Rgb(Rgb(0xC0, 0, 0)));
+}
+
+#[test]
+fn theme_rebinding_updates_theme_derived_style_values_but_keeps_explicit_values() {
+    use wordcraft_doc::props::CharProps;
+
+    let styles = r#"<w:style w:type="paragraph" w:styleId="ThemeBase"><w:name w:val="Theme Base"/><w:rPr><w:rFonts w:ascii="Ignored" w:asciiTheme="majorHAnsi"/><w:color w:val="000000" w:themeColor="accent1" w:themeShade="BF"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Child"><w:name w:val="Child"/><w:basedOn w:val="ThemeBase"/></w:style>
+<w:style w:type="paragraph" w:styleId="Explicit"><w:name w:val="Explicit"/><w:rPr><w:rFonts w:ascii="Pinned Font"/><w:color w:val="123456"/></w:rPr></w:style>"#;
+    let mut doc = themed_docx("<w:p><w:pPr><w:pStyle w:val=\"Child\"/></w:pPr><w:r><w:t>themed</w:t></w:r></w:p>", styles, None);
+    let before = doc.styles.resolve_char(Some("Child"), &CharProps::default());
+    assert_eq!(before.font, "Major Face");
+    assert_eq!(before.color, TextColor::Rgb(Rgb(0x2F, 0x54, 0x96)));
+
+    doc.settings.major_font = "Georgia".into();
+    doc.settings.minor_font = "Georgia".into();
+    doc.settings.theme_colors[4] = Rgb(0x8C, 0x2F, 0x39);
+    doc.styles.rebind_theme(&doc.settings);
+    let after = doc.styles.resolve_char(Some("Child"), &CharProps::default());
+    assert_eq!(after.font, "Georgia");
+    let expected = wordcraft_doc::props::ThemeColorRef { token: "accent1".into(), slot: 4, tint: None, shade: Some(0xBF) }
+        .resolve(&doc.settings.theme_colors)
+        .unwrap();
+    assert_eq!(after.color, TextColor::Rgb(expected));
+    let explicit = doc.styles.resolve_char(Some("Explicit"), &CharProps::default());
+    assert_eq!(explicit.font, "Pinned Font");
+    assert_eq!(explicit.color, TextColor::Rgb(Rgb(0x12, 0x34, 0x56)));
+    // Native output exercises serialization of the retained theme selectors independently of the
+    // source package's guarded-preservation contract.
+    doc.passthrough.clear();
+    let bytes = wordcraft_docx::write(&doc).unwrap();
+    let package = unzip(&bytes);
+    let styles_xml = text(&package, "word/styles.xml");
+    assert!(styles_xml.contains("w:themeColor=\"accent1\""));
+    assert!(styles_xml.contains("w:themeShade=\"BF\""));
+    doc = wordcraft_docx::read(&bytes).unwrap();
+    let round_trip = doc.styles.resolve_char(Some("Child"), &CharProps::default());
+    let expected = wordcraft_doc::props::ThemeColorRef { token: "accent1".into(), slot: 4, tint: None, shade: Some(0xBF) }
+        .resolve(&doc.settings.theme_colors)
+        .unwrap();
+    assert_eq!((round_trip.font.as_str(), round_trip.color), ("Georgia", TextColor::Rgb(expected)));
 }
 
 /// Issue #400: moved text (ECMA-376 §17.13.5.21–28). `w:moveFrom` / `w:moveTo` inside named

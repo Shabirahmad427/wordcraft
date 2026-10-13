@@ -264,6 +264,24 @@ fn namespace_declarations_comments_and_each_unknown_property_force_preservation(
         }
     }
 }
+
+#[test]
+fn unknown_style_markup_survives_safe_text_edits_and_rejects_style_rewrites() {
+    let source = archive(&fixture());
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    insert(&mut doc, 0, "Safe text edit: ");
+    let saved = wordcraft_docx::write(&doc).unwrap();
+    let saved_files = unpack(&saved);
+    let original_files = unpack(&source);
+    assert_eq!(saved_files.get("word/styles.xml"), original_files.get("word/styles.xml"));
+    assert!(String::from_utf8(saved_files.get("word/styles.xml").unwrap().clone()).unwrap().contains("future:unknownStyleProperty"));
+
+    let mut edited = wordcraft_docx::read(&source).unwrap();
+    edited.styles.get_mut("Normal").unwrap().chr.bold = Some(true);
+    let error = wordcraft_docx::write(&edited).unwrap_err().to_string();
+    assert!(error.contains("preserv") || error.contains("unsupported"), "{error}");
+    assert_eq!(unpack(&source).get("word/styles.xml"), original_files.get("word/styles.xml"));
+}
 #[test]
 fn case_insensitive_main_target_still_patches_the_correct_source_part() {
     let mut files = fixture();

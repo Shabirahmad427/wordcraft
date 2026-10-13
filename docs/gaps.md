@@ -1,6 +1,6 @@
 # Where WordCraft falls short of Word
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** synthetic layout/PDF corpus and header-float clipping fix passed native cross-platform CI; real Word-generated corpus remains pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7M adds theme-rebinding regressions; guarded imported theme/style edits still need safe package XML merging · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 The work list. One entry per shortfall, ranked by how much it stops a Word user from switching
 (**B** = blocks beta). Each says what's missing, the evidence, who it hurts, an Opus 5.5 agent
@@ -10,6 +10,10 @@ first (`gh pr list`), and update this file and the parity doc when a gap closes.
 Native save reliability: synthetic cases on macOS reproduced loss through the predictable temporary-file name. Saves now use owned, exclusively created siblings, synchronize before replacement and clean up on failure; originals survive pre-replacement errors. This narrows save-path reliability under gap #3; the listed field failures and broader stability work remain open. See [save-path guarantees](file-format-parity.md#native-save-path-guarantees).
 
 The [cross-platform audit](cross-platform-audit-2026-10-12.md) ranks the five current evidence gaps across Word reference files, native regression coverage, pagination/PDF comparison, complex OOXML edits and recovery/runtime testing. Older row descriptions below retain historical estimates and may understate preservation features already implemented; the audit distinguishes current source evidence from unverified application behavior.
+
+Phase 7M verifies that retained theme font/color selectors rebind in the shared model and that
+unknown style XML survives safe text edits. Guarded imports still reject theme/style mutations
+until a safe package merge is available; see the [DOCX preservation contract](docx-compatibility.md#phase-7m-theme-bindings-and-style-preservation).
 
 Phase 7I adds [synthetic DOCX/PDF layout regressions](cross-platform-layout-regressions.md) and fixes a missed clipping warning for header-anchored images. Gap #4 still needs independent Word page geometry and font metrics; this internal corpus does not change its estimate.
 

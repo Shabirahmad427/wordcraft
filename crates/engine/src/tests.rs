@@ -17,6 +17,50 @@ fn text(s: &Session) -> String {
 }
 
 #[test]
+fn theme_rebinding_is_undoable_and_preserves_explicit_style_formatting() {
+    use wordcraft_doc::props::{CharProps, Rgb, TextColor, ThemeColorRef, ThemeFontRef};
+    let mut session = s();
+    session.doc.settings.major_font = "Original Major".into();
+    session.doc.styles.upsert(wordcraft_doc::Style {
+        id: "ThemeLinked".into(),
+        name: "Theme Linked".into(),
+        chr: CharProps {
+            font: Some("Original Major".into()),
+            theme_font: Some(ThemeFontRef { ascii: Some("majorHAnsi".into()), hansi: Some("majorHAnsi".into()), active: true }),
+            color: Some(TextColor::Rgb(Rgb(0x15, 0x60, 0x82))),
+            theme_color: Some(ThemeColorRef { token: "accent1".into(), slot: 4, tint: None, shade: None }),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    session.doc.styles.upsert(wordcraft_doc::Style {
+        id: "Pinned".into(),
+        name: "Pinned".into(),
+        chr: CharProps { font: Some("Pinned Font".into()), color: Some(TextColor::Rgb(Rgb(1, 2, 3))), ..Default::default() },
+        ..Default::default()
+    });
+    let mut paragraph = wordcraft_doc::Paragraph::with_text("direct", Default::default());
+    paragraph.runs[0].props.theme_font = Some(ThemeFontRef { ascii: Some("majorHAnsi".into()), hansi: Some("majorHAnsi".into()), active: true });
+    paragraph.runs[0].props.theme_color = Some(ThemeColorRef { token: "accent1".into(), slot: 4, tint: None, shade: None });
+    session.doc.body.push(wordcraft_doc::para_block(paragraph));
+    run(&mut session, "design.theme", json!({"name":"Studio"}));
+    let rebound = session.doc.styles.resolve_char(Some("ThemeLinked"), &CharProps::default());
+    assert_eq!(rebound.font, "Georgia");
+    assert_eq!(rebound.color, TextColor::Rgb(Rgb(0x8C, 0x2F, 0x39)));
+    let direct = session.doc.para(StoryRef::Body, &wordcraft_doc::Path::top(1)).unwrap().props_of_char(0);
+    assert_eq!(direct.font.as_deref(), Some("Georgia"));
+    assert_eq!(direct.color, Some(TextColor::Rgb(Rgb(0x8C, 0x2F, 0x39))));
+    run(&mut session, "edit.undo", json!({}));
+    let restored = session.doc.styles.resolve_char(Some("ThemeLinked"), &CharProps::default());
+    assert_eq!(restored.font, "Original Major");
+    assert_eq!(restored.color, TextColor::Rgb(Rgb(0x15, 0x60, 0x82)));
+    run(&mut session, "edit.redo", json!({}));
+    let pinned = session.doc.styles.resolve_char(Some("Pinned"), &CharProps::default());
+    assert_eq!(pinned.font, "Pinned Font");
+    assert_eq!(pinned.color, TextColor::Rgb(Rgb(1, 2, 3)));
+}
+
+#[test]
 fn doc_extension_dispatches_to_docbin() {
     // Garbage bytes with a .doc name must produce an error through the Word 97-2003
     // reader — never a panic and never a silently empty document.
