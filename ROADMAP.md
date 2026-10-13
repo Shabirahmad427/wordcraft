@@ -1,5 +1,12 @@
 # WordCraft roadmap
 
+## Phase 7S — Native desktop smoke across Linux, macOS and Windows (in progress)
+
+- Linux hosted diagnostics traced the blank-document failure to an unfocused X11 window under Xvfb: both native-window and canvas focus were false, there was no modal, the injected event queue drained, and document ID 1 remained empty. The Linux smoke now starts Openbox and checks that the WM and editor focus are ready before typing. This hosted correction is not yet validated.
+- Windows hosted diagnostics confirmed native window/editor focus, Unicode text and bold formatting worked, then the table picker click failed: the document remained at two paragraphs with seven words and no table. A screenshot immediately after opening the table picker is preserved for the next runner. Treat this as independent from Linux.
+- macOS passed both native smokes in Printing run 38471604111; the local macOS focus handshake, editing workflow and isolated recovery shutdown also passed. `cargo xtask ci` passed all six local gates and the release GUI/CLI plus version checks passed. The current three-OS hosted run is not green, so Phase 7S remains open; no completion is claimed.
+- Native smoke evidence and platform-specific gaps are maintained in [desktop GUI validation](docs/desktop-testing.md) and [platform support](docs/platform-support.md). Headless/egui event tests and offscreen rendering remain distinct from native-window validation.
+
 ## Phase 7R — Desktop GUI, ribbon and editing validation (2026-10-13)
 
 - Audited the six requested ribbon areas with 2× offscreen screenshots on Apple Silicon macOS. Home, Insert, Layout, References, Review and View rendered; Home style samples were visible. Existing pixel assertions cover built-in/custom style previews in light/dark and 1×/2× rendering.

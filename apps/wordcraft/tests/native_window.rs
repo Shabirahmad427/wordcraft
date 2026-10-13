@@ -269,6 +269,25 @@ fn input_diagnostics(control: &mut Control) -> Value {
     })
 }
 
+fn wait_for_editor_focus(control: &mut Control, profile: &Profile) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut state = Value::Null;
+    while Instant::now() < deadline {
+        state = input_diagnostics(control);
+        if state.get("windowFocused").and_then(Value::as_bool) == Some(true) && state.get("canvasFocused").and_then(Value::as_bool) == Some(true) {
+            eprintln!("native editor focus ready: {state}");
+            return;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    let screenshot = profile.0.join("native-window-focus-failure.png");
+    let screenshot_result = control.call("ui.screenshot", json!({"path": screenshot}));
+    panic!(
+        "native window/editor focus was not ready before typing: {state}; screenshot result: {screenshot_result}; isolated profile: {}",
+        profile.0.display()
+    );
+}
+
 fn wait_for_ribbon_tab(control: &mut Control, expected: &str, profile: &Profile) {
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut state = Value::Null;
@@ -315,6 +334,7 @@ fn isolated_native_window_smoke() {
     eprintln!("native input after page click: {}", input_diagnostics(&mut control));
     ui(&mut control, "ui.focus", json!({}));
     eprintln!("native input after focus request: {}", input_diagnostics(&mut control));
+    wait_for_editor_focus(&mut control, &profile);
     let text_result = ui(&mut control, "ui.text", json!({"text": "Native desktop smoke — café 東京"}));
     eprintln!("native text event queued: {text_result}; state: {}", input_diagnostics(&mut control));
     wait_for_document_text(&mut control, "Native desktop smoke", &profile);
@@ -331,6 +351,8 @@ fn isolated_native_window_smoke() {
     wait_for_ribbon_tab(&mut control, "Insert", &profile);
     let table_button = ui(&mut control, "ui.click", json!({"x": 150.0, "y": 80.0}));
     eprintln!("native table button click: {table_button}; state: {}", input_diagnostics(&mut control));
+    let picker_screenshot = control.call("ui.screenshot", json!({"path": profile.0.join("native-table-picker.png")}));
+    eprintln!("native table picker screenshot: {picker_screenshot}");
     let table_grid = ui(&mut control, "ui.click", json!({"x": 166.0, "y": 190.0}));
     eprintln!("native table grid click: {table_grid}; state: {}", input_diagnostics(&mut control));
     ui(&mut control, "ui.text", json!({"text": "table cell"}));
