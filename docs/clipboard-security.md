@@ -19,3 +19,9 @@ Shared engine and format tests cover supported inline formatting, tables and spa
 An opt-in native adapter test runs only when `WORDCRAFT_NATIVE_CLIPBOARD_TEST=1`. Hosted [Printing run 38429584697](https://github.com/Shabirahmad427/wordcraft/actions/runs/38429584697) passed native HTML/plain-text write/read plus shared parsing and insertion on Linux X11 (Xvfb), macOS NSPasteboard and Windows clipboard/CF_HTML. The same-process round-trip verifies adapter formats; it is not cross-application copy/paste, a full GUI interaction, or a Microsoft Word interoperability test. Local tests leave the developer clipboard untouched by default. The first hosted Linux and macOS runs caught test issues: X11 data was lost when the short-lived owner was dropped, and macOS HTML import included a trailing empty paragraph. The adapter now retains its X11 owner; the cross-platform assertion checks semantic content and structure without relying on a final empty paragraph.
 
 The remaining limit is the pre-check allocation performed by native text/HTML getters. To remove it would require bounded platform-specific transport or an upstream API change and separate review of macOS pasteboard, Windows clipboard and both X11/Wayland implementations.
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-10-13 | minor | Native clipboard round-trips passed on hosted Linux X11, macOS and Windows; X11 owner lifetime and external text paste bounds corrected |
