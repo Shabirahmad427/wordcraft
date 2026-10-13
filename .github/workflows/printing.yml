@@ -84,15 +84,27 @@ jobs:
         if: runner.os == 'Linux'
         env:
           WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
           WGPU_BACKEND: gl
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: xvfb-run -a cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
+
+      - name: Preserve failed Linux native smoke diagnostics
+        if: runner.os == 'Linux' && failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-native-smoke-diagnostics
+          path: ${{ runner.temp }}/wordcraft-native-smoke-*
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Native window document workflow (macOS or Windows)
         if: runner.os != 'Linux'
         env:
           WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: ${{ runner.os == 'Windows' && '1' || '0' }}
+          WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
         run: cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
 
       - name: Preserve failed Windows native smoke diagnostics

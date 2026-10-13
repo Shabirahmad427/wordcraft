@@ -17,10 +17,16 @@ struct Profile(PathBuf);
 impl Profile {
     fn create() -> Self {
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH).expect("clock is after the Unix epoch").as_nanos();
-        #[cfg(target_os = "macos")]
-        let temp_root = Path::new("/private/tmp");
-        #[cfg(not(target_os = "macos"))]
-        let temp_root = std::env::temp_dir();
+        let temp_root = std::env::var_os("WORDCRAFT_NATIVE_PROFILE_ROOT").map(PathBuf::from).unwrap_or_else(|| {
+            #[cfg(target_os = "macos")]
+            {
+                PathBuf::from("/private/tmp")
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                std::env::temp_dir()
+            }
+        });
         for attempt in 0..32u8 {
             let path = temp_root.join(format!("wordcraft-native-smoke-{}-{stamp}-{attempt}", std::process::id()));
             match std::fs::create_dir(&path) {
@@ -198,7 +204,7 @@ fn wait_for_key(child: &mut Child, key_path: &Path, stderr_path: &Path) -> Strin
     panic!("WordCraft did not create its isolated control key at {}; stderr: {}", key_path.display(), read_log(stderr_path));
 }
 
-fn wait_for_document_text(control: &mut Control, expected: &str) -> Value {
+fn wait_for_document_text(control: &mut Control, expected: &str, profile: &Profile) -> Value {
     let deadline = Instant::now() + Duration::from_secs(8);
     let mut last = Value::Null;
     while Instant::now() < deadline {
@@ -215,7 +221,13 @@ fn wait_for_document_text(control: &mut Control, expected: &str) -> Value {
         }
         thread::sleep(Duration::from_millis(100));
     }
-    panic!("native UI did not insert {expected:?}; last document state: {last}");
+    let state = control.call("ui.inspect", json!({}));
+    let screenshot = profile.0.join("native-window-text-input-failure.png");
+    let screenshot_result = control.call("ui.screenshot", json!({"path": screenshot}));
+    panic!(
+        "native UI did not insert {expected:?}; last document state: {last}; UI state: {state}; screenshot result: {screenshot_result}; isolated profile: {}",
+        profile.0.display()
+    );
 }
 
 fn wait_for_page(control: &mut Control) -> [f64; 4] {
@@ -245,6 +257,24 @@ fn ui(control: &mut Control, method: &str, params: Value) -> Value {
     result
 }
 
+fn wait_for_ribbon_tab(control: &mut Control, expected: &str, profile: &Profile) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut state = Value::Null;
+    while Instant::now() < deadline {
+        state = control.call("ui.inspect", json!({}));
+        if state.get("ui").and_then(|ui| ui.get("tab")).and_then(Value::as_str) == Some(expected) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    let screenshot = profile.0.join("native-window-ribbon-tab-failure.png");
+    let screenshot_result = control.call("ui.screenshot", json!({"path": screenshot}));
+    panic!(
+        "native ribbon click did not activate {expected:?}; UI state: {state}; screenshot result: {screenshot_result}; isolated profile: {}",
+        profile.0.display()
+    );
+}
+
 #[test]
 #[ignore = "requires a native desktop session; opt in with WORDCRAFT_NATIVE_WINDOW_SMOKE=1"]
 fn isolated_native_window_smoke() {
@@ -272,19 +302,22 @@ fn isolated_native_window_smoke() {
     ui(&mut control, "ui.click", json!({"x": px, "y": py}));
     ui(&mut control, "ui.focus", json!({}));
     ui(&mut control, "ui.text", json!({"text": "Native desktop smoke — café 東京"}));
-    wait_for_document_text(&mut control, "Native desktop smoke");
+    wait_for_document_text(&mut control, "Native desktop smoke", &profile);
     ui(&mut control, "ui.key", json!({"key": "Enter"}));
     ui(&mut control, "ui.key", json!({"key": "B", "cmd": true}));
     ui(&mut control, "ui.text", json!({"text": "bold text"}));
     ui(&mut control, "ui.key", json!({"key": "B", "cmd": true}));
-    wait_for_document_text(&mut control, "bold text");
+    wait_for_document_text(&mut control, "bold text", &profile);
 
     // Exercise the real ribbon event path and the table-grid focus handoff in a native window.
-    ui(&mut control, "ui.click", json!({"x": 130.0, "y": 30.0}));
+    // The title/quick-access row comes first; the tab strip is the following 30-point row.
+    // y=30 is its top boundary, so click well inside the strip.
+    ui(&mut control, "ui.click", json!({"x": 130.0, "y": 45.0}));
+    wait_for_ribbon_tab(&mut control, "Insert", &profile);
     ui(&mut control, "ui.click", json!({"x": 150.0, "y": 80.0}));
     ui(&mut control, "ui.click", json!({"x": 166.0, "y": 190.0}));
     ui(&mut control, "ui.text", json!({"text": "table cell"}));
-    let doc = wait_for_document_text(&mut control, "table cell");
+    let doc = wait_for_document_text(&mut control, "table cell", &profile);
     let table = doc
         .get("blocks")
         .and_then(Value::as_array)
@@ -315,7 +348,7 @@ fn isolated_native_window_smoke() {
     let undone = control.call("document.inspect", json!({}));
     assert!(!serde_json::to_string(&undone).expect("serialize document state").contains("table cell"), "Undo removes the last typed cell text");
     ui(&mut control, "ui.key", json!({"key": "Z", "cmd": true, "shift": true}));
-    wait_for_document_text(&mut control, "table cell");
+    wait_for_document_text(&mut control, "table cell", &profile);
 
     let docx = profile.0.join("desktop-smoke.docx");
     let pdf = profile.0.join("desktop-smoke.pdf");
@@ -386,7 +419,7 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
     let mut control = Control { port, key, next_id: 0 };
     wait_for_page(&mut control);
     control.execute("text.insert", json!({"text": "checkpoint before native shutdown"}));
-    wait_for_document_text(&mut control, "checkpoint before native shutdown");
+    wait_for_document_text(&mut control, "checkpoint before native shutdown", &profile);
     control.call("app.quit", json!({}));
 
     let status = wait_for_exit(&mut process.0, Duration::from_secs(15), &stderr_path);

@@ -53,16 +53,20 @@ was not the application exit status. A child that was SIGKILLed during earlier b
 is recorded as forced cleanup, never as a successful launch.
 
 Local verification: `cargo xtask ci` passed all six gates, including workspace tests; the Apple
-Silicon release GUI and CLI built and both `--version` commands passed. The latest local macOS
-native run also passed both isolated smokes after the harness diagnostic update. Hosted Printing run
-[38463844164](https://github.com/Shabirahmad427/wordcraft/actions/runs/38463844164) exercised the
-new native-window steps: macOS passed both smokes; Linux failed before window creation because
-`libxkbcommon-x11.so` was absent from the Xvfb runner; Windows reached its first frame and passed
-the recovery-shutdown smoke, while the editing smoke failed to find the table after ribbon clicks.
-The failed Windows app was forcibly terminated by test-harness cleanup, so that run does not count
-as a successful editing workflow or graceful exit. The workflow now installs the Linux runtime
-dependency and retains an isolated Windows failure profile, stderr log and screenshot as an artifact
-for the next hosted run. The cause of the Windows ribbon mismatch is still under investigation. See
+Silicon release GUI and CLI built and both `--version` commands passed. The local macOS native smoke
+passes with the corrected Insert-tab click at `y=45`, followed by an assertion that Insert became
+active. Hosted Printing run
+[38467901780](https://github.com/Shabirahmad427/wordcraft/actions/runs/38467901780) tested the
+first hosted corrections. Linux installed `libxkbcommon-x11-0`, reached the app creator, control
+endpoint and first frame, and passed isolated recovery shutdown; its editing smoke then left the
+document empty after the injected page click/text and the harness forcibly terminated the app.
+Windows reached the first frame and typed/formatted text, but the tab state remained Home. The
+original click used `y=30`, the boundary between WordCraft's title row and tab strip; the harness
+then forced termination after the table assertion. The latest code changes click at `y=45` and
+assert the Insert tab is active. The Linux screenshot/focus diagnostic and runner-temp profile path
+are also corrected for the next hosted run; the previous Linux/Windows artifact upload had pointed
+at a different temporary directory and produced no artifact. Both hosted native editing smokes still
+need to pass before they count as validated. See
 [native desktop platform support](platform-support.md) for the platform-by-platform evidence.
 
 No physical mouse/keyboard input, native Open/Save panel interaction, system clipboard exchange or
@@ -151,3 +155,4 @@ This protocol has not been run. No Word 365 compatibility result is claimed.
 |---|---|---|
 | 2026-10-13 | minor | Located the raw-launch stall in AppKit's pre-resume event wait; verified LaunchServices native smokes, isolated profile safety, recovery shutdown and normal child status |
 | 2026-10-13 | minor | Recorded hosted native smoke failures on Linux and Windows and enabled dependency installation plus isolated Windows failure diagnostics |
+| 2026-10-13 | minor | Found Windows ribbon click hit the title/tab boundary; corrected it and added an active-tab check. Linux hosted startup is fixed, but first page text input remains unresolved |
