@@ -45,6 +45,11 @@ fn err(e: impl std::fmt::Display) -> Outcome {
 pub fn inspect(app: &mut WordApp, ctx: &egui::Context) -> Value {
     let r = ctx.content_rect();
     let caret = crate::canvas::caret_screen(app).map(|(p, h)| json!({"x": p.x, "y": p.y, "h": h}));
+    let control_targets = app
+        .control_targets
+        .iter()
+        .map(|(name, rect)| (name.clone(), json!([rect.left(), rect.top(), rect.width(), rect.height()])))
+        .collect::<serde_json::Map<_, _>>();
     json!({
         "ui": app.prefs(),
         "view": app.session.view,
@@ -60,6 +65,7 @@ pub fn inspect(app: &mut WordApp, ctx: &egui::Context) -> Value {
         "windowFocused": ctx.input(|input| input.focused),
         "focusRequested": app.canvas.want_focus,
         "pendingSyntheticEvents": app.synthetic.len(),
+        "controlTargets": control_targets,
         "title": app.title_stem(),
         "dirty": app.session.dirty,
         "perf": {"frameMs": app.frame_ms, "renderMs": app.canvas.render_ms, "layoutMs": app.session.layout().ms},

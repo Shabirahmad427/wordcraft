@@ -1564,6 +1564,7 @@ pub fn table_grid_picker(ui: &mut Ui, app: &mut WordApp) {
         for r in 1..=8 {
             for c in 1..=10 {
                 let (rect, resp) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::click());
+                app.control_targets.insert(format!("insert.table.cell.{r}.{c}"), rect);
                 let on = r <= hover.0 && c <= hover.1;
                 ui.painter().rect(
                     rect,

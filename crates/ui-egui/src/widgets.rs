@@ -297,6 +297,9 @@ pub fn menu_button(
         icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - 6.0, r.center().y), vec2(DROPDOWN, DROPDOWN)), "dropdown", c, c);
         resp
     };
+    if id == "insert.table" {
+        app.control_targets.insert("insert.table.button".into(), resp.rect);
+    }
     let resp = resp.on_hover_text(tip);
     if !on {
         return;

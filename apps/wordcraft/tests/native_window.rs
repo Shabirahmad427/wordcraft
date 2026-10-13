@@ -222,10 +222,11 @@ fn wait_for_document_text(control: &mut Control, expected: &str, profile: &Profi
         thread::sleep(Duration::from_millis(100));
     }
     let state = control.call("ui.inspect", json!({}));
+    let document_info = control.execute("file.info", json!({}));
     let screenshot = profile.0.join("native-window-text-input-failure.png");
     let screenshot_result = control.call("ui.screenshot", json!({"path": screenshot}));
     panic!(
-        "native UI did not insert {expected:?}; last document state: {last}; UI state: {state}; screenshot result: {screenshot_result}; isolated profile: {}",
+        "native UI did not insert {expected:?}; last document state: {last}; active document: {document_info}; UI state: {state}; screenshot result: {screenshot_result}; isolated profile: {}",
         profile.0.display()
     );
 }
@@ -306,6 +307,27 @@ fn wait_for_ribbon_tab(control: &mut Control, expected: &str, profile: &Profile)
     );
 }
 
+fn wait_for_control_target(control: &mut Control, target: &str, profile: &Profile) -> (f64, f64) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut state = Value::Null;
+    while Instant::now() < deadline {
+        state = control.call("ui.inspect", json!({}));
+        if let Some(bounds) =
+            state.get("controlTargets").and_then(|targets| targets.get(target)).and_then(Value::as_array).filter(|bounds| bounds.len() == 4)
+            && let (Some(x), Some(y), Some(width), Some(height)) = (bounds[0].as_f64(), bounds[1].as_f64(), bounds[2].as_f64(), bounds[3].as_f64())
+        {
+            return (x + width / 2.0, y + height / 2.0);
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let screenshot = profile.0.join("native-window-target-failure.png");
+    let screenshot_result = control.call("ui.screenshot", json!({"path": screenshot}));
+    panic!(
+        "native UI target {target:?} did not appear; UI state: {state}; screenshot result: {screenshot_result}; isolated profile: {}",
+        profile.0.display()
+    );
+}
+
 #[test]
 #[ignore = "requires a native desktop session; opt in with WORDCRAFT_NATIVE_WINDOW_SMOKE=1"]
 fn isolated_native_window_smoke() {
@@ -349,12 +371,18 @@ fn isolated_native_window_smoke() {
     // y=30 is its top boundary, so click well inside the strip.
     ui(&mut control, "ui.click", json!({"x": 130.0, "y": 45.0}));
     wait_for_ribbon_tab(&mut control, "Insert", &profile);
-    let table_button = ui(&mut control, "ui.click", json!({"x": 150.0, "y": 80.0}));
+    let (table_button_x, table_button_y) = wait_for_control_target(&mut control, "insert.table.button", &profile);
+    eprintln!("native table button target center: ({table_button_x}, {table_button_y})");
+    let table_button = ui(&mut control, "ui.click", json!({"x": table_button_x, "y": table_button_y}));
     eprintln!("native table button click: {table_button}; state: {}", input_diagnostics(&mut control));
     let picker_screenshot = control.call("ui.screenshot", json!({"path": profile.0.join("native-table-picker.png")}));
     eprintln!("native table picker screenshot: {picker_screenshot}");
-    let table_grid = ui(&mut control, "ui.click", json!({"x": 166.0, "y": 190.0}));
+    let (table_cell_x, table_cell_y) = wait_for_control_target(&mut control, "insert.table.cell.2.2", &profile);
+    eprintln!("native table grid cell 2x2 target center: ({table_cell_x}, {table_cell_y})");
+    let table_grid = ui(&mut control, "ui.click", json!({"x": table_cell_x, "y": table_cell_y}));
     eprintln!("native table grid click: {table_grid}; state: {}", input_diagnostics(&mut control));
+    let grid_result_screenshot = control.call("ui.screenshot", json!({"path": profile.0.join("native-table-grid-result.png")}));
+    eprintln!("native table grid result screenshot: {grid_result_screenshot}");
     ui(&mut control, "ui.text", json!({"text": "table cell"}));
     let doc = wait_for_document_text(&mut control, "table cell", &profile);
     let table = doc

@@ -383,6 +383,8 @@ pub struct WordApp {
     queued_shots: Vec<(u64, f64, u32)>,
     pending_shots: Vec<(u64, Option<String>, std::sync::mpsc::Sender<Value>, f64)>,
     pub(crate) synthetic: Vec<egui::Event>,
+    /// Screen point bounds of selected rendered widgets, used by native UI automation.
+    pub(crate) control_targets: std::collections::BTreeMap<String, egui::Rect>,
     /// Badge rects recorded during layout for the current keytip phase (cleared by `logic`, painted by `show`).
     pub(crate) keytip_rects: Vec<(egui::Rect, String)>,
     /// The Navigation pane's search box takes the keyboard on its next frame (Ctrl+F, #712).
@@ -492,6 +494,7 @@ impl WordApp {
             queued_shots: Vec::new(),
             pending_shots: Vec::new(),
             synthetic: Vec::new(),
+            control_targets: std::collections::BTreeMap::new(),
             keytip_rects: Vec::new(),
             nav_search_focus: false,
             styled: false,
@@ -1548,6 +1551,7 @@ impl WordApp {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let t0 = now_ms();
         let ctx = ui.ctx().clone();
+        self.control_targets.clear();
         i18n::set_current(i18n::Lang::from_pref(&self.ui.language));
         // Animation effects off: egui's scroll areas get a wheel notch whole, not eased in.
         if !self.animations_on() {

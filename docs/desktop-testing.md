@@ -1,6 +1,6 @@
 # Desktop GUI validation
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7S Xvfb focus diagnosis and per-stage input telemetry · **Target:** WordCraft desktop on Linux, macOS and Windows
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7S native picker target discovery · **Target:** WordCraft desktop on Linux, macOS and Windows
 
 This document separates a live desktop window, egui event-driven tests, offscreen rendering and
 hosted builds. A CI job that compiles or tests the GUI is not evidence that a person used a desktop
@@ -44,29 +44,24 @@ dictionary are created there. The separate shutdown regression enables normal pr
 inside another new temporary profile and confirms the latest unsaved text is recoverable. No
 developer preferences, logs or recovery entries were accessed or removed.
 
-Hosted Printing run [38471604111](https://github.com/Shabirahmad427/wordcraft/actions/runs/38471604111)
-isolated two different input failures. Linux reached the first frame but reported both
-`windowFocused:false` and canvas `focused:false` after the page click and `ui.focus`; there was no
-modal dialog, the synthetic queue drained, and `document.inspect` remained an empty document at
-document ID 1. Its Xvfb job had no window manager. The test harness now starts Openbox, verifies
-the X11 WM property, and requires native window plus editor-canvas focus before it sends text. This
-is an environment correction; it does not change WordCraft's shared focus behavior. Hosted
-verification of that correction is pending.
+Hosted Printing run [38473251845](https://github.com/Shabirahmad427/wordcraft/actions/runs/38473251845)
+shows the Linux Openbox correction worked: native window and canvas focus were both true, Unicode
+text and bold formatting were present, and the table picker was visibly open. The grid click still
+left the document unchanged. Windows independently reached the same later failure: window/canvas
+focus, Unicode and bold formatting, and Insert-tab activation all passed; after the table picker
+opened, the grid click did not insert a table. In both jobs, the assertion waiting for `table cell`
+failed with the two original paragraphs still present and no table. The picker screenshots show
+that the old fixed coordinate happened to land inside the visible grid, but did not select it.
+Those runs therefore do not establish that a native table was inserted, and the harness forcibly
+terminated each app after its failed assertion. The separate recovery-shutdown test exited normally.
 
-Windows reported both native window and canvas focused before typing. The initial Unicode text and
-bold paragraph were present (seven words, dirty document) and the Insert tab assertion passed.
-The later failure was the `table cell` assertion: after the table-button and grid clicks the canvas
-was no longer focused and the document still contained only the two successfully edited
-paragraphs. There was no dialog. The failure screenshot contains the Insert ribbon but no table;
-the test now preserves an additional screenshot immediately after opening the table picker so its
-popup and grid placement can be inspected on the next run. This is a separate Windows picker
-interaction issue, not the Linux startup text failure. The harness force-terminated each child
-only after its failed assertion; neither forced cleanup counts as a successful app shutdown.
-
-In that same run, macOS passed both native smokes. A local Apple Silicon run also passed the
-window/editor focus readiness check, UI edit workflow, and isolated recovery shutdown. No hosted
-run yet passes the full native smoke matrix. Linux's Openbox correction and the Windows picker
-diagnostic must pass in a subsequent hosted run before Phase 7S can close.
+The harness now discovers the rendered Insert › Table button and 2×2 grid-cell bounds from
+`ui.inspect`, then sends pointer events at each widget's center. Failure diagnostics include the
+active document info, selection/caret and focus state, picker state, and a post-click screenshot.
+This correction is locally covered by all six `cargo xtask ci` gates; the dynamic native interaction
+still requires a new hosted Linux/Windows run. macOS passed both native smokes in run 38473251845.
+Phase 7S remains open until each OS passes text editing, table insertion, Undo/Redo and graceful
+`app.quit` shutdown in a hosted native window.
 
 The explicit macOS quit path now stops the recovery worker and writes its final checkpoint before
 calling `NSApplication.terminate`, since AppKit can bypass eframe's exit callback. The isolated
@@ -181,3 +176,4 @@ This protocol has not been run. No Word 365 compatibility result is claimed.
 | 2026-10-13 | minor | Recorded hosted native smoke failures on Linux and Windows and enabled dependency installation plus isolated Windows failure diagnostics |
 | 2026-10-13 | minor | Found Windows ribbon click hit the title/tab boundary; corrected it and added an active-tab check. Linux hosted startup is fixed, but first page text input remains unresolved |
 | 2026-10-13 | minor | Confirmed Linux Xvfb had no OS/window focus; added Openbox and a focus readiness assertion. Confirmed Windows text editing passes but the later table picker click fails; added a picker screenshot for hosted diagnosis |
+| 2026-10-13 | minor | Linux Openbox restored window and editor focus, but Linux and Windows both failed at the picker grid click; added rendered widget-bound discovery and richer post-click diagnostics, pending hosted validation |
