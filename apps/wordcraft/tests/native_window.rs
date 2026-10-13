@@ -257,6 +257,18 @@ fn ui(control: &mut Control, method: &str, params: Value) -> Value {
     result
 }
 
+fn input_diagnostics(control: &mut Control) -> Value {
+    let state = control.call("ui.inspect", json!({}));
+    json!({
+        "windowFocused": state.get("windowFocused"),
+        "canvasFocused": state.get("focused"),
+        "focusRequested": state.get("focusRequested"),
+        "pendingSyntheticEvents": state.get("pendingSyntheticEvents"),
+        "dialog": state.get("dialog"),
+        "tab": state.get("ui").and_then(|ui| ui.get("tab")),
+    })
+}
+
 fn wait_for_ribbon_tab(control: &mut Control, expected: &str, profile: &Profile) {
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut state = Value::Null;
@@ -300,8 +312,11 @@ fn isolated_native_window_smoke() {
     let px = page[0] + 105.0;
     let py = page[1] + 105.0;
     ui(&mut control, "ui.click", json!({"x": px, "y": py}));
+    eprintln!("native input after page click: {}", input_diagnostics(&mut control));
     ui(&mut control, "ui.focus", json!({}));
-    ui(&mut control, "ui.text", json!({"text": "Native desktop smoke — café 東京"}));
+    eprintln!("native input after focus request: {}", input_diagnostics(&mut control));
+    let text_result = ui(&mut control, "ui.text", json!({"text": "Native desktop smoke — café 東京"}));
+    eprintln!("native text event queued: {text_result}; state: {}", input_diagnostics(&mut control));
     wait_for_document_text(&mut control, "Native desktop smoke", &profile);
     ui(&mut control, "ui.key", json!({"key": "Enter"}));
     ui(&mut control, "ui.key", json!({"key": "B", "cmd": true}));
@@ -314,8 +329,10 @@ fn isolated_native_window_smoke() {
     // y=30 is its top boundary, so click well inside the strip.
     ui(&mut control, "ui.click", json!({"x": 130.0, "y": 45.0}));
     wait_for_ribbon_tab(&mut control, "Insert", &profile);
-    ui(&mut control, "ui.click", json!({"x": 150.0, "y": 80.0}));
-    ui(&mut control, "ui.click", json!({"x": 166.0, "y": 190.0}));
+    let table_button = ui(&mut control, "ui.click", json!({"x": 150.0, "y": 80.0}));
+    eprintln!("native table button click: {table_button}; state: {}", input_diagnostics(&mut control));
+    let table_grid = ui(&mut control, "ui.click", json!({"x": 166.0, "y": 190.0}));
+    eprintln!("native table grid click: {table_grid}; state: {}", input_diagnostics(&mut control));
     ui(&mut control, "ui.text", json!({"text": "table cell"}));
     let doc = wait_for_document_text(&mut control, "table cell", &profile);
     let table = doc
