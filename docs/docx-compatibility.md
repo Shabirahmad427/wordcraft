@@ -5,6 +5,18 @@ The reproducible package-integrity benchmark and current Word-reference evidence
 are synthetic; package-preservation results are not Microsoft Word rendering or editability
 verification.
 
+## Phase 7N editing round-trip regression
+
+Copying a range that begins at the first cell of a table and ends in a following body paragraph
+now preserves the table structure when that range covers the entire table. Previously, the
+cross-container copy path emitted each selected cell paragraph as a body paragraph and discarded
+the table's rows and cells. The regression pastes that fragment through the engine, checks its cell
+text and bold formatting, exercises Undo/Redo, saves and reopens DOCX, and exports PDF. Partial
+selections whose endpoints are inside a table still use the existing flattened text behavior.
+This is synthetic model and package evidence; it does not establish Word 365 interoperability.
+Guarded imported packages remain read-only for edits that cannot be represented by a verified safe
+splice, preserving unsupported OOXML rather than silently rewriting it.
+
 ## Phase 7M theme bindings and style preservation
 
 The importer resolves theme fonts and `w:themeColor` against the theme present at open. Before

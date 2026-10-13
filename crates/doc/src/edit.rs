@@ -489,18 +489,45 @@ impl Document {
             }
             return out;
         }
-        for p in self.paths_between(&a, &b) {
-            if let Some(para) = self.para(a.story, &p) {
-                let mut q = para.clone();
-                let to = if p == b.path { b.off } else { q.len() };
-                let from = if p == a.path { a.off } else { 0 };
-                let _ = q.delete(to.min(q.len()), q.len());
-                let _ = q.delete(0, from.min(q.len()));
-                q.section = None;
-                out.push(Block::Para(q));
+        let paths = self.paths_between(&a, &b);
+        let first_top = a.path.0.first().copied().unwrap_or(0) as usize;
+        let last_top = b.path.0.first().copied().unwrap_or(0) as usize;
+        let top = Path::top(0);
+        for i in first_top..=last_top {
+            if let Some(Block::Table(table)) = self.block(a.story, &top.with_last(i))
+                && Self::table_is_fully_copied(self, &a, &b, i)
+            {
+                out.push(Block::Table(table.clone()));
+                continue;
+            }
+            for p in paths.iter().filter(|p| p.0.first().copied() == Some(i as u32)) {
+                if let Some(para) = self.para(a.story, p) {
+                    let mut q = para.clone();
+                    let to = if *p == b.path { b.off } else { q.len() };
+                    let from = if *p == a.path { a.off } else { 0 };
+                    let _ = q.delete(to.min(q.len()), q.len());
+                    let _ = q.delete(0, from.min(q.len()));
+                    q.section = None;
+                    out.push(Block::Para(q));
+                }
             }
         }
         out
+    }
+
+    /// A table that lies wholly inside a copied range can keep its row and cell structure. When an
+    /// endpoint falls inside the table, retain the existing text-only partial-selection behavior.
+    fn table_is_fully_copied(d: &Document, a: &Pos, b: &Pos, table_index: usize) -> bool {
+        let index = table_index as u32;
+        let starts_before = a.path.0.first().is_some_and(|i| *i < index);
+        let starts_at_table = a.path.0.first() == Some(&index);
+        let ends_after = b.path.0.first().is_some_and(|i| *i > index);
+        let ends_at_table = b.path.0.first() == Some(&index);
+        let first = d.para_paths(a.story).into_iter().find(|p| p.0.first() == Some(&index));
+        let last = d.para_paths(a.story).into_iter().rev().find(|p| p.0.first() == Some(&index));
+        let starts_at_start = starts_at_table && first.as_ref() == Some(&a.path) && a.off == 0;
+        let ends_at_end = ends_at_table && last.as_ref() == Some(&b.path) && d.para(b.story, &b.path).is_some_and(|p| b.off >= p.len());
+        (starts_before || starts_at_start) && (ends_after || ends_at_end)
     }
 
     /// Give every text box in `blocks` a new story of its own, copied from `parts` (or, for a
@@ -687,6 +714,35 @@ mod tests {
         let e = d.insert_fragment(&Pos::body(0, 0), &one).unwrap();
         assert_eq!(e, Pos::body(0, 2));
         assert!(d.plain_text(StoryRef::Body).starts_with("XYalpha"));
+    }
+
+    #[test]
+    fn copying_from_a_table_cell_through_the_following_paragraph_keeps_the_table() {
+        let mut d = doc(&["before", "after"]);
+        let mut table = Table::new(1, 2, 240.0);
+        table.rows[0].cells[0].blocks = vec![para_block(Paragraph::with_text("left cell", CharProps::default()))];
+        table.rows[0].cells[1].blocks = vec![para_block(Paragraph::with_text("right cell", CharProps::default()))];
+        d.insert_block(StoryRef::Body, &Path::top(1), Block::Table(table)).unwrap();
+
+        // This range covers the whole table and the paragraph after it. A copy must retain the
+        // table structure instead of flattening each cell paragraph into ordinary paragraphs.
+        let start = Pos { story: StoryRef::Body, path: Path(vec![1, 0, 0, 0]), off: 0 };
+        let fragment = d.copy_range(&start, &Pos::body(2, 5));
+        assert!(fragment.blocks.iter().any(|b| matches!(b, Block::Table(_))), "{:?}", fragment.blocks);
+        assert_eq!(fragment.plain_text(), "left cell\tright cell\nafter");
+
+        let partial = d.copy_range(&Pos { off: 1, ..start }, &Pos::body(2, 5));
+        assert!(!partial.blocks.iter().any(|b| matches!(b, Block::Table(_))), "partial table ranges stay flattened");
+        assert_eq!(partial.plain_text(), "eft cell\nright cell\nafter");
+
+        let last_cell = Pos { story: StoryRef::Body, path: Path(vec![1, 0, 1, 0]), off: 10 };
+        let range_ending_in_the_table = d.copy_range(&Pos::body(0, 6), &last_cell);
+        assert!(range_ending_in_the_table.blocks.iter().any(|b| matches!(b, Block::Table(_))));
+
+        let mut target = doc(&["target"]);
+        target.insert_fragment(&Pos::body(0, 6), &fragment).unwrap();
+        assert_eq!(target.body.iter().filter(|b| matches!(b.as_ref(), Block::Table(_))).count(), 1);
+        assert_eq!(target.plain_text(StoryRef::Body), "target\nleft cell\tright cell\nafter");
     }
 
     fn text_box(d: &mut Document, pos: &Pos, text: &str) -> u32 {

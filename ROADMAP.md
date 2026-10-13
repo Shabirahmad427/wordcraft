@@ -1,5 +1,12 @@
 # WordCraft roadmap
 
+## Phase 7N — editing workflow reliability (2026-10-13)
+
+- Reproduced a shared range-copy defect: when a selection began in a table cell and continued into the following body paragraph, `Document::copy_blocks` flattened the table cells into ordinary paragraphs. The copied fragment lost its rows and cells. Copy now retains a table as a table when the selection covers the whole table; partial ranges whose endpoints are inside the table retain their prior text-only behavior.
+- Added document and engine regressions for the multi-container copy, rich table paste, Unicode, cell formatting, repeated Undo/Redo, DOCX save/reopen and PDF export. The regression checks actual table structure and saved output, not only selection or command state.
+- All six local `cargo xtask ci` gates pass, including the workspace suite, assets, layering and WASM checks. Native Apple Silicon macOS GUI/CLI release builds and CLI version smokes pass. Hosted Linux/macOS/Windows checks and the Linux GUI/CLI release workflow will be recorded after the pushed commit completes its Actions matrix. No native Linux or Windows GUI runtime evidence is claimed here.
+- Scope limits: partial-cell selections that cross table boundaries are still flattened, and guarded imported DOCX packages continue to reject edits that cannot be safely spliced while preserving unsupported OOXML. No Microsoft Word 365 compatibility claim is made.
+
 ## Phase 7M — Theme rebinding and OOXML style preservation (2026-10-13)
 
 - Reproduced stale theme values: DOCX import flattened `w:asciiTheme`/`w:hAnsiTheme` and `w:themeColor` into fixed values, so later theme changes could not rebind inherited styles. The shared document model now retains those selectors (including color mapping and tint/shade), rebinds styles and direct run formatting on theme changes, and serializes theme selectors back to DOCX. Explicit font/color properties remain fixed; Undo/Redo restores the prior theme and resolved values.

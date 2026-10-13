@@ -17,6 +17,54 @@ fn text(s: &Session) -> String {
 }
 
 #[test]
+fn copying_a_table_range_into_following_text_preserves_cells_through_edit_undo_docx_and_pdf() {
+    use wordcraft_doc::props::CharProps;
+    use wordcraft_doc::{Block, Paragraph, Path, Table, para_block};
+
+    let mut doc = wordcraft_doc::Document::from_text("Before\nAfter");
+    let mut table = Table::new(1, 2, 240.0);
+    let left = Paragraph::with_text("left cell", CharProps { bold: Some(true), ..Default::default() });
+    table.rows[0].cells[0].blocks = vec![para_block(left)];
+    table.rows[0].cells[1].blocks = vec![para_block(Paragraph::with_text("right cell Ω", CharProps::default()))];
+    doc.insert_block(StoryRef::Body, &Path::top(1), Block::Table(table)).unwrap();
+    let mut session = Session::new(doc);
+
+    let cell_start = Pos { story: StoryRef::Body, path: Path(vec![1, 0, 0, 0]), off: 0 };
+    run(&mut session, "select.range", json!({"anchor": cell_start, "focus": Pos::body(2, 5)}));
+    run(&mut session, "edit.copy", json!({}));
+    run(&mut session, "caret.set", json!({"pos": Pos::body(2, 5)}));
+    run(&mut session, "edit.paste", json!({}));
+
+    assert_eq!(text(&session), "Before\nleft cell\tright cell Ω\nAfter\nleft cell\tright cell Ω\nAfter");
+    fn table_count(session: &Session) -> usize {
+        session.doc.body.iter().filter(|block| matches!(block.as_ref(), Block::Table(_))).count()
+    }
+    assert_eq!(table_count(&session), 2, "the copied table remains a table");
+    let pasted_table = session.doc.body.iter().filter_map(|b| b.as_table()).nth(1).unwrap();
+    assert_eq!(pasted_table.rows[0].cells[0].blocks[0].as_para().unwrap().plain_text(), "left cell");
+    assert_eq!(pasted_table.rows[0].cells[1].blocks[0].as_para().unwrap().plain_text(), "right cell Ω");
+    assert_eq!(pasted_table.rows[0].cells[0].blocks[0].as_para().unwrap().props_of_char(0).bold, Some(true));
+
+    run(&mut session, "edit.undo", json!({}));
+    assert_eq!(table_count(&session), 1, "Undo removes the pasted table as one edit");
+    run(&mut session, "edit.redo", json!({}));
+    assert_eq!(table_count(&session), 2, "Redo restores the pasted table");
+    assert_eq!(text(&session), "Before\nleft cell\tright cell Ω\nAfter\nleft cell\tright cell Ω\nAfter");
+    run(&mut session, "edit.undo", json!({}));
+    assert_eq!(table_count(&session), 1, "a second Undo remains stable");
+    run(&mut session, "edit.redo", json!({}));
+    assert_eq!(table_count(&session), 2, "a second Redo restores the same cells");
+
+    let bytes = wordcraft_docx::write(&session.doc).unwrap();
+    let reopened = wordcraft_docx::read(&bytes).unwrap();
+    assert_eq!(reopened.body.iter().filter(|block| matches!(block.as_ref(), Block::Table(_))).count(), 2);
+    let reopened_table = reopened.body.iter().filter_map(|b| b.as_table()).nth(1).unwrap();
+    assert_eq!(reopened_table.rows[0].cells[1].blocks[0].as_para().unwrap().plain_text(), "right cell Ω");
+    assert_eq!(reopened_table.rows[0].cells[0].blocks[0].as_para().unwrap().props_of_char(0).bold, Some(true));
+    assert!(wordcraft_pdf::export(&reopened, &wordcraft_pdf::PdfOptions::default()).is_ok());
+}
+
+#[test]
 fn theme_rebinding_is_undoable_and_preserves_explicit_style_formatting() {
     use wordcraft_doc::props::{CharProps, Rgb, TextColor, ThemeColorRef, ThemeFontRef};
     let mut session = s();
