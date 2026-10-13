@@ -62,12 +62,6 @@ jobs:
       - name: Formatting
         run: cargo fmt --all -- --check
 
-      - name: Native app and UI Clippy
-        run: cargo clippy -p wordcraft -p wordcraft-ui-egui --all-targets --locked -- -D warnings
-
-      - name: Native app and UI tests
-        run: cargo test -p wordcraft -p wordcraft-ui-egui --locked
-
       - name: Native clipboard transport regression (Linux X11)
         if: runner.os == 'Linux'
         env:
@@ -79,6 +73,12 @@ jobs:
         env:
           WORDCRAFT_NATIVE_CLIPBOARD_TEST: '1'
         run: cargo test -p wordcraft --locked native_clipboard_html_plain_text_round_trip -- --nocapture
+
+      - name: Native app and UI Clippy
+        run: cargo clippy -p wordcraft -p wordcraft-ui-egui --all-targets --locked -- -D warnings
+
+      - name: Native app and UI tests
+        run: cargo test -p wordcraft -p wordcraft-ui-egui --locked
 
       - name: Browser compatibility
         if: runner.os == 'Linux'
