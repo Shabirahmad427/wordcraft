@@ -209,14 +209,7 @@ fn wait_for_document_text(control: &mut Control, expected: &str, profile: &Profi
     let mut last = Value::Null;
     while Instant::now() < deadline {
         last = control.call("document.inspect", json!({}));
-        let found =
-            last.get("blocks").and_then(Value::as_array).is_some_and(|blocks| {
-                blocks.iter().any(|block| block.get("text").and_then(Value::as_str).is_some_and(|text| text.contains(expected)))
-                    || blocks.iter().filter_map(|block| block.get("cells").and_then(Value::as_array)).flatten().any(|row| {
-                        row.as_array().is_some_and(|cells| cells.iter().any(|cell| cell.as_str().is_some_and(|text| text.contains(expected))))
-                    })
-            });
-        if found {
+        if document_contains_text(&last, expected) {
             return last;
         }
         thread::sleep(Duration::from_millis(100));
@@ -227,6 +220,37 @@ fn wait_for_document_text(control: &mut Control, expected: &str, profile: &Profi
     let screenshot_result = control.call("ui.screenshot", json!({"path": screenshot}));
     panic!(
         "native UI did not insert {expected:?}; last document state: {last}; active document: {document_info}; UI state: {state}; screenshot result: {screenshot_result}; isolated profile: {}",
+        profile.0.display()
+    );
+}
+
+fn document_contains_text(document: &Value, expected: &str) -> bool {
+    document.get("blocks").and_then(Value::as_array).is_some_and(|blocks| {
+        blocks.iter().any(|block| block.get("text").and_then(Value::as_str).is_some_and(|text| text.contains(expected)))
+            || blocks
+                .iter()
+                .filter_map(|block| block.get("cells").and_then(Value::as_array))
+                .flatten()
+                .any(|row| row.as_array().is_some_and(|cells| cells.iter().any(|cell| cell.as_str().is_some_and(|text| text.contains(expected)))))
+    })
+}
+
+fn wait_for_document_without_text(control: &mut Control, unexpected: &str, profile: &Profile) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut last = Value::Null;
+    while Instant::now() < deadline {
+        last = control.call("document.inspect", json!({}));
+        if !document_contains_text(&last, unexpected) {
+            return last;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    let state = control.call("ui.inspect", json!({}));
+    let document_info = control.execute("file.info", json!({}));
+    let screenshot = profile.0.join("native-window-undo-failure.png");
+    let screenshot_result = control.call("ui.screenshot", json!({"path": screenshot}));
+    panic!(
+        "native Undo did not remove {unexpected:?}; last document state: {last}; active document: {document_info}; UI state: {state}; screenshot result: {screenshot_result}; isolated profile: {}",
         profile.0.display()
     );
 }
@@ -411,9 +435,9 @@ fn isolated_native_window_smoke() {
         Some("table cell")
     );
 
-    ui(&mut control, "ui.key", json!({"key": "Z", "cmd": true}));
-    let undone = control.call("document.inspect", json!({}));
-    assert!(!serde_json::to_string(&undone).expect("serialize document state").contains("table cell"), "Undo removes the last typed cell text");
+    let undo_result = ui(&mut control, "ui.key", json!({"key": "Z", "cmd": true}));
+    eprintln!("native Undo event queued: {undo_result}; state: {}", input_diagnostics(&mut control));
+    let _undone = wait_for_document_without_text(&mut control, "table cell", &profile);
     ui(&mut control, "ui.key", json!({"key": "Z", "cmd": true, "shift": true}));
     wait_for_document_text(&mut control, "table cell", &profile);
 
