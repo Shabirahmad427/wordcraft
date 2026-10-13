@@ -168,6 +168,16 @@ mod tests {
         assert_eq!(published.lock().unwrap().as_ref().unwrap(), &("rich Ω".into(), "<p><strong>rich Ω</strong></p>".into()));
     }
 
+    #[test]
+    fn failed_rich_publication_falls_back_to_plain_text() {
+        let services = Services { clipboard_copy: Some(Box::new(|_, _| Err("clipboard unavailable".into()))), ..Default::default() };
+        let app = app(services);
+        let ctx = egui::Context::default();
+        publish(&app, &ctx, &json!({"text": "plain Ω", "html": "<b>plain Ω</b>"}));
+        let commands = ctx.output(|out| out.commands.clone());
+        assert!(commands.contains(&egui::OutputCommand::CopyText("plain Ω".into())));
+    }
+
     /// Ctrl+V (a paste event with the text) and the ribbon's Paste keep another program's
     /// formatting from the clipboard's HTML (#687); Keep Text Only doesn't.
     #[test]

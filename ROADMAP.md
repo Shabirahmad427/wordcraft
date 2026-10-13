@@ -1,5 +1,14 @@
 # WordCraft roadmap
 
+## Phase 7Q — Native clipboard validation and bounded import (2026-10-13)
+
+- Audited keyboard, ribbon, and context-menu Copy/Cut through the shared selection fragment, HTML/plain-text serialization, native host publication, paste retrieval, shared HTML import, insertion, and Undo/Redo. Existing cross-platform transport was already implemented through arboard; no duplicate transport implementation was added.
+- Added an opt-in native clipboard adapter regression that publishes synthetic Unicode-rich text and a merged-cell table, reads HTML and Unicode text back from the operating system, then verifies the shared importer and engine preserve emphasis and table span. Hosted native jobs run it on macOS, Windows, and Linux X11 under Xvfb. Ordinary local test runs do not modify the developer clipboard. This exercises adapter runtime on disposable runners, not full desktop GUI or Word interoperability.
+- Added a UI regression proving that failed rich clipboard publication emits egui's plain-text clipboard command. Existing parser and engine checks cover unsafe links, skipped scripts/styles, HTML size rejection before parse/insert, malformed CF_HTML offset fallback, no external image fetching, and plain-text fallback.
+- Closed a verified shared-core gap: normal Paste and Keep Text Only accepted external plain-text values above the 16 MiB bound. All external paste variants now reject oversized text before document insertion; the regression checks content remains unchanged.
+- `arboard` 3.6.1 exposes HTML/text only as owned strings; its native getters do not accept a size limit. WordCraft rejects HTML above 16 MiB before parsing and insertion, but the adapter may allocate an oversized clipboard payload first. This residual allocation limit is documented; no unnecessary per-platform clipboard reader was introduced. See [clipboard security and validation](docs/clipboard-security.md).
+- Native clipboard runtime status is reported separately from shared-core tests, adapter tests, GUI runtime and Microsoft Word testing in [editing workflow regressions](docs/editing-workflows.md). Microsoft Word 365 exchange has not been performed.
+
 ## Phase 7P — Rich clipboard and inter-application editing (2026-10-13)
 
 - Native desktop Copy now publishes the selected fragment as HTML with plain text as the fallback, using the same arboard API on Linux, macOS and Windows. HTML is generated in shared Rust from the structured internal fragment and source document style/media context; table rows, cells, spans and supported inline formatting use the existing semantic HTML exporter. Payloads over the existing 16 MiB paste bound fall back to plain text. The internal `Fragment` clipboard remains the source for WordCraft-to-WordCraft paste.

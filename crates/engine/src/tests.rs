@@ -1250,6 +1250,18 @@ fn paste_keeps_source_formatting_from_other_programs() {
     assert_eq!(props_at(&s, 4).italic, Some(true));
 }
 
+#[test]
+fn oversized_plain_clipboard_paste_is_rejected_without_changing_document() {
+    let mut s = s();
+    run(&mut s, "document.setText", json!({"text": "keep this"}));
+    let huge = "x".repeat(crate::cmd::paste::MAX_PASTE_BYTES + 1);
+    for command in ["edit.paste", "edit.pasteMerge", "edit.pasteText"] {
+        let err = s.run(command, &json!({"text": huge})).expect_err("oversized external text is rejected");
+        assert!(err.to_string().contains("larger than 16 MB"), "{err}");
+        assert_eq!(text(&s), "keep this", "rejected clipboard data changes nothing");
+    }
+}
+
 /// Paste Special lists a picture on the system clipboard and pastes it (#687).
 #[test]
 fn paste_special_lists_and_pastes_a_picture() {

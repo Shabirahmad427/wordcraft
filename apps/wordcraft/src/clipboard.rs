@@ -7,7 +7,10 @@
 //! over to Xwayland, which KWin does only while an X11 window has focus — so pictures copied in a
 //! browser or Spectacle never arrived (#833). Compositors without the protocol fall back to X11.
 //!
-//! Everything read here comes from other programs: sizes are capped as it is read.
+//! RTF and encoded image payloads are capped while read. `arboard` exposes text and HTML only as
+//! owned strings, so their 16 MiB checks happen after retrieval, before they reach the parser or
+//! document model. This bounds parsing and insertion, but cannot bound the native adapter's first
+//! allocation for oversized HTML or plain text.
 
 use wordcraft_engine::cmd::paste::MAX_PASTE_BYTES;
 use wordcraft_ui_egui::paste_picture::ClipboardPicture;
@@ -127,6 +130,36 @@ mod platform {
         let offered = formats();
         let mime = super::PICTURE_MIMES.into_iter().find(|m| offered.iter().any(|o| o == m))?;
         read(mime, wordcraft_ui_egui::paste_picture::MAX_FILE_BYTES)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Opted into only on disposable native CI runners: publishing intentionally replaces the
+    /// runner's system clipboard. Local workspace tests leave a developer's clipboard untouched.
+    #[test]
+    fn native_clipboard_html_plain_text_round_trip() {
+        if std::env::var_os("WORDCRAFT_NATIVE_CLIPBOARD_TEST").as_deref() != Some(std::ffi::OsStr::new("1")) {
+            return;
+        }
+
+        let text = "native Ω pasted\nmerged";
+        let html = "<p>native <strong>Ω pasted</strong></p><table><tr><td colspan=\"2\">merged</td></tr></table>";
+        copy(text, html).expect("native clipboard publication succeeds");
+        let actual_text = self::text().expect("native plain text is available");
+        let actual_html = self::html().expect("native HTML is available");
+        assert_eq!(actual_text, text);
+        assert!(actual_html.contains("Ω pasted"), "native HTML: {actual_html}");
+
+        // Feed the bytes read back through the actual shared importer and insertion command.
+        let mut session = wordcraft_engine::Session::new(wordcraft_doc::Document::new());
+        session.run("edit.paste", &serde_json::json!({"text": actual_text, "html": actual_html})).expect("native HTML pastes");
+        assert_eq!(session.doc.plain_text(wordcraft_doc::StoryRef::Body), text);
+        assert_eq!(session.doc.para_at(&wordcraft_doc::Pos::body(0, 7)).map(|p| p.props_of_char(7).bold), Some(Some(true)));
+        let table = session.doc.body.iter().find_map(|b| b.as_table()).expect("table structure is retained");
+        assert_eq!(table.rows.first().and_then(|r| r.cells.first()).map(|c| c.span()), Some(2));
     }
 }
 

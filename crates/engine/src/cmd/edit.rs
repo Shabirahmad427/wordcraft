@@ -345,9 +345,13 @@ fn paste_all_clips(s: &mut Session, _: &Value) -> CmdResult {
 }
 
 fn paste_text(s: &mut Session, v: &Value) -> CmdResult {
-    let text = match p::str(v, "text") {
-        Some(t) => t.to_string(),
-        None => s.clipboard.as_ref().map(Fragment::plain_text).unwrap_or_default(),
+    let text = if let Some(text) = p::str(v, "text") {
+        if text.len() > super::paste::MAX_PASTE_BYTES {
+            return Err(CmdError::Params(format!("`text` is larger than {} MB", super::paste::MAX_PASTE_BYTES >> 20)));
+        }
+        text.to_string()
+    } else {
+        s.clipboard.as_ref().map(Fragment::plain_text).unwrap_or_default()
     };
     if text.is_empty() {
         return Err(CmdError::Failed("the clipboard is empty".into()));

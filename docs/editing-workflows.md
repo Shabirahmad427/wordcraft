@@ -1,6 +1,14 @@
 # Editing workflow regression coverage
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7P added rich HTML clipboard export and a Word 365 manual test protocol.
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7Q added opt-in native clipboard adapter round-trips and documented the pre-parse allocation limit.
+
+## Phase 7Q validation status
+
+The native desktop path is already wired: keyboard and UI Copy/Cut run the engine command, which captures the selected structured fragment and returns shared HTML plus plain text; the UI publishes both through `arboard`. Paste reads OS text/HTML through the app host, gives HTML to the common importer, inserts the resulting fragment as a single edit, and uses the regular undo stack. When rich publication fails, egui receives the plain-text fallback. When the clipboard contains unsupported or oversized HTML, the paste path falls back to text when available.
+
+An opt-in adapter regression publishes synthetic Unicode emphasis and a two-column merged table, reads native HTML/text back, and runs the real importer and engine insertion. The `Printing` workflow invokes it on disposable GitHub runners: Linux X11 under Xvfb, macOS NSPasteboard, and Windows clipboard/CF_HTML. These are native adapter runtime tests, not desktop GUI interaction. No WordCraft window was driven, and no Microsoft Word 365 exchange was performed. Local test runs skip the write unless `WORDCRAFT_NATIVE_CLIPBOARD_TEST=1` is explicitly set.
+
+The shared tests also cover selected-fragment HTML/table serialization, malformed CF_HTML offsets, malformed/tag-soup HTML, unsafe links, scripts/styles, absent external-image loading, oversized HTML rejection before parsing, 16 MiB plain-text rejection for every Paste command without changing document content, plain-text fallback, and Undo for rich paste. See [clipboard security and validation](clipboard-security.md) for parser boundaries and the remaining native allocation limitation.
 
 ## Phase 7P rich clipboard behavior
 
@@ -12,10 +20,10 @@ Import prefers HTML over RTF when available, then plain text, and caps external 
 
 ### Manual Microsoft Word 365 clipboard protocol (not yet run)
 
-Use a new synthetic document containing no private text. On the Apple Silicon Mac, record the WordCraft build, macOS version, Word version, scale setting and direction for every observation.
+Use a new synthetic document containing no private text. On the Apple Silicon Mac, record the WordCraft build, macOS version, Word version, scale setting and direction for every observation. Include a Heading 1 and Heading 2, a paragraph combining bold/italic/underline with `Ω — 日本語`, and a 2×2 table with one merged cell and formatted text in another cell.
 
-1. In Word, create a paragraph with plain text, bold, italic, underline and `Ω — 日本語`; create a 2×2 table with one bold cell and a merged cell. Copy the paragraph into a new WordCraft document, then copy the table into another blank WordCraft document. Confirm text, emphasis, row/cell order and merge shape; save each as DOCX, reopen, and export a PDF.
-2. In WordCraft, create the same paragraph and a 2×2 table with a merged cell. Copy each into a blank Word document. Confirm the receiving content, emphasis and table structure; save the Word document and reopen it.
+1. In Word, create the heading, formatted Unicode paragraph and 2×2 table. Copy each into a new WordCraft document. Confirm heading level, text, emphasis, row/cell order and merge shape; save each as DOCX, reopen, and export a PDF.
+2. In WordCraft, create the same heading, paragraph and table. Copy each into a blank Word document. Confirm the receiving content, heading, emphasis and table structure; save the Word document and reopen it.
 3. Repeat each direction with a malformed or unsupported formatting case only in a disposable synthetic document. Confirm WordCraft falls back to plain text when it has no safe rich representation.
 4. Record screenshots of only the application windows under the local ignored `plan/word/screenshots/` directory if a visual record is useful. Do not commit Word-produced files or screenshots.
 

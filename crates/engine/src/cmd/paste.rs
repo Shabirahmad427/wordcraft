@@ -192,7 +192,11 @@ pub fn rich_fragment(s: &mut Session, v: &Value) -> Option<Fragment> {
 /// What Paste inserts: WordCraft's own copy while the system clipboard still holds it, else
 /// another program's formatted copy (HTML, RTF), else the system clipboard's text.
 pub fn paste_fragment(s: &mut Session, v: &Value) -> Result<Fragment, CmdError> {
-    let text = p::str(v, "text").map(|t| t.replace("\r\n", "\n"));
+    let input_text = p::str(v, "text");
+    if input_text.is_some_and(|t| t.len() > MAX_PASTE_BYTES) {
+        return Err(CmdError::Params(format!("`text` is larger than {} MB", MAX_PASTE_BYTES >> 20)));
+    }
+    let text = input_text.map(|t| t.replace("\r\n", "\n"));
     if let Some(f) = &s.clipboard
         && text.as_ref().is_none_or(|t| f.clipboard_text() == *t)
         && (text.is_some() || (p::str(v, "html").is_none() && p::str(v, "rtf").is_none()))
