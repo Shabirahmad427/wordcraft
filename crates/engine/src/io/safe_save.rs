@@ -4,6 +4,14 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 pub(super) fn write(destination: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_with(destination, |file| file.write_all(bytes), |from, to| fs::rename(from, to))
+}
+
+fn write_with(
+    destination: &Path,
+    stage: impl FnOnce(&mut File) -> io::Result<()>,
+    replace: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
     let metadata = match fs::symlink_metadata(destination) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "refusing to replace a symbolic link"));
@@ -16,14 +24,14 @@ pub(super) fn write(destination: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut temp = Temporary::create(destination, metadata.is_some())?;
     {
         let file = temp.file.as_mut().ok_or_else(|| io::Error::other("save temporary file is closed"))?;
-        file.write_all(bytes)?;
+        stage(file)?;
         if let Some(metadata) = metadata {
             file.set_permissions(metadata.permissions())?;
         }
         file.sync_all()?;
     }
     drop(temp.file.take());
-    fs::rename(&temp.path, destination)?;
+    replace(&temp.path, destination)?;
     temp.committed = true;
     if let Err(error) = sync_parent(destination) {
         // The rename is already committed and cannot be rolled back without risking data loss.
@@ -197,6 +205,48 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(fs::read(&destination).expect("original bytes"), b"original");
         assert_eq!(scratch.names(), ["document.docx"]);
+    }
+
+    #[test]
+    fn injected_storage_full_after_partial_write_preserves_original_and_cleans_stage() {
+        let scratch = Scratch::new();
+        let destination = scratch.path("document.docx");
+        fs::write(&destination, b"original package bytes").expect("original");
+        let result = write_with(
+            &destination,
+            |file| {
+                file.write_all(b"partial replacement")?;
+                Err(io::Error::new(io::ErrorKind::StorageFull, "injected insufficient disk space"))
+            },
+            |from, to| fs::rename(from, to),
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::StorageFull);
+        assert_eq!(fs::read(&destination).expect("original remains"), b"original package bytes");
+        assert_eq!(scratch.names(), ["document.docx"]);
+    }
+
+    #[test]
+    fn injected_replace_failure_keeps_original_and_removes_completed_stage() {
+        let scratch = Scratch::new();
+        let destination = scratch.path("document.docx");
+        fs::write(&destination, b"original package bytes").expect("original");
+        let result = write_with(
+            &destination,
+            |file| file.write_all(b"complete replacement bytes"),
+            |_, _| Err(io::Error::new(io::ErrorKind::PermissionDenied, "injected replacement denial")),
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read(&destination).expect("original remains"), b"original package bytes");
+        assert_eq!(scratch.names(), ["document.docx"]);
+    }
+
+    #[test]
+    fn missing_destination_parent_fails_without_creating_any_staging_file() {
+        let scratch = Scratch::new();
+        let destination = scratch.path("missing/document.docx");
+        assert!(write(&destination, b"must not appear").is_err());
+        assert!(!destination.exists());
+        assert_eq!(scratch.names(), Vec::<String>::new());
     }
 
     #[test]

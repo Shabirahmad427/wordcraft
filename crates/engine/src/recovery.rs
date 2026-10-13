@@ -242,6 +242,14 @@ impl Store {
     /// Unique staging file + file fsync + rename to an immutable name. A killed writer leaves
     /// only .partial; listing ignores it. A failed write never replaces an earlier snapshot.
     fn publish(&self, id: &str, write: impl FnOnce(&mut File) -> Result<(), String>) -> Result<(), String> {
+        self.publish_with(id, write, sync_dir)
+    }
+    fn publish_with(
+        &self,
+        id: &str,
+        write: impl FnOnce(&mut File) -> Result<(), String>,
+        sync: impl FnOnce(&Path) -> Result<(), String>,
+    ) -> Result<(), String> {
         let final_path = self.path(id)?;
         let partial = final_path.with_extension("partial");
         let mut file = private_file(&partial)?;
@@ -253,7 +261,12 @@ impl Store {
                 return Err("recovery ID already exists".into());
             }
             std::fs::rename(&partial, &final_path).map_err(io_error)?;
-            sync_dir(&self.dir)
+            if let Err(error) = sync(&self.dir) {
+                // The archive is already committed. Reporting failure would cause callers to
+                // retry a snapshot that is present and usable; record reduced durability only.
+                log::warn!("published recovery snapshot {}, but could not synchronize its directory: {error}", final_path.display());
+            }
+            Ok(())
         })();
         if result.is_err() {
             let _ = std::fs::remove_file(&partial);
@@ -625,6 +638,20 @@ mod tests {
         std::fs::remove_dir_all(store.dir).unwrap();
     }
     #[test]
+    fn committed_snapshot_is_not_reported_as_failed_when_directory_sync_fails() {
+        let store = store();
+        let id = "a-b-c-f";
+        let result = store.publish_with(
+            id,
+            |file| file.write_all(b"fully written and renamed archive").map_err(io_error),
+            |_| Err("injected directory sync failure".into()),
+        );
+        assert!(result.is_ok(), "rename committed the snapshot; post-commit sync warning must not report save failure");
+        assert_eq!(std::fs::read(store.path(id).unwrap()).unwrap(), b"fully written and renamed archive");
+        assert!(!store.dir.join(format!("{id}.partial")).exists());
+        std::fs::remove_dir_all(store.dir).unwrap();
+    }
+    #[test]
     fn live_writer_is_protected_and_retention_is_per_document() {
         let store = store();
         let writer = unique_id();
@@ -733,6 +760,31 @@ mod tests {
         assert!(store.load(&id).is_err());
         assert!(path.exists());
         store.discard(&id).unwrap();
+        std::fs::remove_dir_all(store.dir).unwrap();
+    }
+
+    #[test]
+    fn corrupt_snapshot_restore_keeps_current_document_and_history_unchanged() {
+        let store = store();
+        let id = "a-b-c-d";
+        std::fs::write(store.path(id).unwrap(), b"incomplete recovery ZIP").unwrap();
+        let mut session = Session::new(Document::from_text("Current unsaved document"));
+        session.run("text.insert", &serde_json::json!({"text": " plus edit"})).unwrap();
+        let before_doc = session.doc.clone();
+        let before_path = session.path.clone();
+        let before_dirty = session.dirty;
+        let before_id = session.document_id();
+        let before_revision = session.rev();
+        let before_undo = session.undo_labels();
+
+        assert!(session.run("recovery.restore", &serde_json::json!({"id": id, "directory": store.dir})).is_err());
+
+        assert_eq!(session.doc, before_doc);
+        assert_eq!(session.path, before_path);
+        assert_eq!(session.dirty, before_dirty);
+        assert_eq!(session.document_id(), before_id);
+        assert_eq!(session.rev(), before_revision);
+        assert_eq!(session.undo_labels(), before_undo);
         std::fs::remove_dir_all(store.dir).unwrap();
     }
 }

@@ -1,5 +1,11 @@
 # WordCraft roadmap
 
+## Phase 7J — recovery, safe saving and fault tolerance (2026-10-13)
+
+- Added deterministic native-save fault injection for partial staging followed by storage exhaustion and replacement denial. Both cases assert byte-for-byte preservation of the prior destination and removal of only the current save's temporary file. Missing destination parents and existing symlink/temp safety, concurrent writes, invalid DOCX input and unsupported OOXML preservation are also covered by the shared engine suites.
+- Reproduced a recovery status defect: directory synchronization failure after the archive's atomic rename made `publish` return an error even though the snapshot was already committed. The regression failed before the fix. Publication now reports the committed result and logs the reduced durability; corrupt-archive restore also has a regression asserting the open document and undo history remain unchanged.
+- Local cross-platform status and hosted workflow results will be recorded here after validation. Tests simulate storage exhaustion and replacement denial; they do not claim real disk-full, ACL, power-loss or physical-device fault verification. See [recovery behavior and limits](docs/recovery.md) and [native save security](docs/save-security.md).
+
 ## Phase 7I — shared layout and PDF regression (2026-10-12)
 
 - Added synthetic DOCX import/layout/PDF assertions for paper and margins, page count, extracted text, images and fonts, table/notes/equation/column/vertical-text preservation, plus a saved-edit PDF check. The suite parses PDFs with an independent reader and avoids binary cross-OS comparisons. Coverage and limits: [cross-platform layout regressions](docs/cross-platform-layout-regressions.md).
