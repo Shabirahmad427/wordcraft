@@ -1,6 +1,6 @@
 # Desktop GUI validation
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7R reproduction/fix for table-grid focus; native macOS editing stopped safely at the existing recovery chooser · **Target:** WordCraft desktop on macOS, Linux and Windows
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Recorded hosted Phase 7R test/build results · **Target:** WordCraft desktop on macOS, Linux and Windows
 
 This document separates a live desktop window, egui event-driven tests, offscreen rendering and
 hosted builds. A CI job that compiles or tests the GUI is not evidence that a person used a desktop
@@ -35,8 +35,8 @@ the change and passes after it. The same isolated UI event script then produced
 | Platform | Live desktop GUI | UI/render tests | Hosted/build evidence | Limits |
 |---|---|---|---|---|
 | macOS | App window launched on the local Mac; recovery chooser prevented editing, and existing entries were left untouched | 2× offscreen window screenshots; egui pointer/key/text workflow; style preview pixels at 1×/2× and light/dark | `cargo xtask ci` passed all six gates; native arm64 GUI/CLI release build and CLI 0.6.1 version smoke passed | No complete native editing workflow, native screenshot review of document content, physical input session, or Word 365 comparison |
-| Linux | No native desktop session used | No local native-window run | Hosted jobs exercise tests/clipboard under Xvfb and compile the GUI/CLI; see the linked run records in `ROADMAP.md` | Xvfb clipboard tests and GUI compilation are not a Linux desktop editing session |
-| Windows | No native desktop session used | No local native-window run | Hosted Windows jobs exercise app/UI tests and clipboard adapter; see the linked run records in `ROADMAP.md` | Hosted tests are not an interactive Windows desktop run |
+| Linux | No native desktop session used | Hosted UI/app suite; clipboard integration under Xvfb | Document regressions and Linux GUI/CLI release build and CLI smoke passed | Xvfb clipboard tests and GUI compilation are not a Linux desktop editing session |
+| Windows | No native desktop session used | Hosted app/UI tests and native clipboard adapter test passed | Windows DOCX/session suite and native CLI smoke passed | Hosted tests are not an interactive Windows desktop run |
 
 ### Area audit
 
@@ -52,6 +52,12 @@ the change and passes after it. The same isolated UI event script then produced
 No complete tooltip, keyboard-shortcut, 1×/2× desktop-window, resize, scrollbar, or screen-reader
 audit was performed here. A 2× offscreen screenshot and a pixel test are not substitutes for those
 checks. The existing ribbon group-fit regression remains part of the UI suite.
+
+### Hosted results for code commit `270c7d8`
+
+- [Printing run 38438412430](https://github.com/Shabirahmad427/wordcraft/actions/runs/38438412430) completed successfully on Ubuntu, macOS and Windows, including native app/UI tests on each runner and native clipboard adapter tests on macOS and Windows. The Linux clipboard test also passed under Xvfb.
+- [Document regressions run 38438424704](https://github.com/Shabirahmad427/wordcraft/actions/runs/38438424704) completed successfully: DOCX/session tests on all three OSes, Windows and macOS native CLI smoke, Linux GUI/CLI release build and CLI smoke, visual regression, and advisory performance.
+- Hosted runners execute OS-native tests and builds, but do not launch an interactive WordCraft desktop window or simulate a user's full editing session. The local native-window limitation above still applies.
 
 ## Synthetic Word 365 comparison protocol (not yet performed)
 
