@@ -1202,6 +1202,45 @@ fn theme_font_wins_over_the_fixed_font() {
     assert_eq!(p[1].props_of_char(2).font.as_deref(), Some("Arial"));
 }
 
+#[test]
+fn imported_custom_style_chain_resolves_and_round_trips_with_direct_overrides() {
+    use wordcraft_doc::props::CharProps;
+
+    let styles = r#"
+<w:style w:type="paragraph" w:styleId="Base"><w:name w:val="Base Copy"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="240"/></w:pPr><w:rPr><w:rFonts w:asciiTheme="majorHAnsi" w:hAnsiTheme="majorHAnsi"/><w:color w:val="000000" w:themeColor="accent2"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="CustomBody"><w:name w:val="Custom Body"/><w:basedOn w:val="Base"/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:b/></w:rPr></w:style>
+<w:style w:type="character" w:styleId="CustomEmphasis"><w:name w:val="Custom Emphasis"/><w:basedOn w:val="DefaultParagraphFont"/><w:rPr><w:i/></w:rPr></w:style>"#;
+    let body = r#"<w:p><w:pPr><w:pStyle w:val="CustomBody"/></w:pPr><w:r><w:rPr><w:rStyle w:val="CustomEmphasis"/><w:sz w:val="28"/></w:rPr><w:t>styled</w:t></w:r><w:r><w:rPr><w:color w:val="C00000"/></w:rPr><w:t> override</w:t></w:r></w:p>"#;
+    let mut d = themed_docx(body, styles, None);
+
+    let child = d.styles.get("CustomBody").unwrap();
+    assert_eq!(child.name, "Custom Body");
+    assert_eq!(child.based_on.as_deref(), Some("Base"));
+    let p = paras(&d)[0];
+    assert_eq!(p.props.style.as_deref(), Some("CustomBody"));
+    let para = d.styles.resolve_para(&p.props);
+    assert_eq!((para.indent_left, para.space_after), (36.0, 12.0));
+    let inherited = d.styles.resolve_char(Some("CustomBody"), &CharProps { style: Some("CustomEmphasis".into()), ..Default::default() });
+    assert_eq!(inherited.font, "Major Face");
+    assert!(inherited.bold && inherited.italic);
+    assert_eq!(inherited.color, TextColor::Rgb(Rgb(0xED, 0x7D, 0x31)));
+    let direct = d.styles.resolve_char(Some("CustomBody"), p.props_of_char(0));
+    assert_eq!(direct.size, 14.0);
+    assert!(direct.bold && direct.italic);
+    let override_run = d.styles.resolve_char(Some("CustomBody"), p.props_of_char(7));
+    assert_eq!(override_run.color, TextColor::Rgb(Rgb(0xC0, 0, 0)));
+
+    let bytes = wordcraft_docx::write(&d).unwrap();
+    d = wordcraft_docx::read(&bytes).unwrap();
+    assert_eq!(d.styles.get("CustomBody").unwrap().based_on.as_deref(), Some("Base"));
+    assert_eq!(d.styles.resolve_para(&paras(&d)[0].props).indent_left, 36.0);
+    let reopened = paras(&d)[0];
+    let reopened_style = d.styles.resolve_char(Some("CustomBody"), reopened.props_of_char(0));
+    assert_eq!((reopened_style.font.as_str(), reopened_style.size), ("Major Face", 14.0));
+    assert!(reopened_style.bold && reopened_style.italic);
+    assert_eq!(d.styles.resolve_char(Some("CustomBody"), reopened.props_of_char(7)).color, TextColor::Rgb(Rgb(0xC0, 0, 0)));
+}
+
 /// Issue #400: moved text (ECMA-376 §17.13.5.21–28). `w:moveFrom` / `w:moveTo` inside named
 /// move ranges are the two ends of one move, paragraph marks included; the ranges are written
 /// back around them. A move missing an end, or whose range never ends, is a plain deletion and

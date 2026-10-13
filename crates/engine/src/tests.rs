@@ -2555,6 +2555,38 @@ fn styles_apply_by_name() {
 }
 
 #[test]
+fn built_in_paragraph_styles_resolve_after_apply_and_docx_reopen() {
+    for (name, id) in [
+        ("Normal", "Normal"),
+        ("No Spacing", "NoSpacing"),
+        ("Title", "Title"),
+        ("Subtitle", "Subtitle"),
+        ("Heading 1", "Heading1"),
+        ("Heading 2", "Heading2"),
+        ("Heading 3", "Heading3"),
+    ] {
+        let mut session = s();
+        run(&mut session, "text.insert", json!({"text": "A sample heading"}));
+        run(&mut session, "select.all", json!({}));
+        run(&mut session, "styles.apply", json!({"style": name}));
+        assert_eq!(session.run("format.state", &json!({})).unwrap()["style"], id);
+        let p = session.doc.para_at(&Pos::body(0, 0)).unwrap();
+        assert_eq!(p.props.style.as_deref(), Some(id), "{name} applies its paragraph style id");
+        let before = session.doc.styles.resolve_char(Some(id), p.props_of_char(0));
+        let paragraph_before = session.doc.styles.resolve_para(&p.props);
+
+        let bytes = wordcraft_docx::write(&session.doc).unwrap();
+        let reopened = wordcraft_docx::read(&bytes).unwrap();
+        let p = reopened.para_at(&Pos::body(0, 0)).unwrap();
+        let after = reopened.styles.resolve_char(Some(id), p.props_of_char(0));
+        let paragraph_after = reopened.styles.resolve_para(&p.props);
+        assert_eq!(after, before, "{name} character formatting after DOCX reopen");
+        assert_eq!(paragraph_after, paragraph_before, "{name} paragraph formatting after DOCX reopen");
+        assert!(wordcraft_pdf::export(&reopened, &wordcraft_pdf::PdfOptions::default()).is_ok(), "{name} PDF export");
+    }
+}
+
+#[test]
 fn styles_apply_pane_is_not_an_edit() {
     let mut s = s();
     run(&mut s, "text.insert", json!({"text": "Hello"}));
@@ -2617,15 +2649,55 @@ fn styles_apply_undo_redo() {
 
 #[test]
 fn styles_apply_character_style() {
+    for (style, bold, italic) in [("Strong", true, false), ("Emphasis", false, true)] {
+        let mut s = s();
+        run(&mut s, "text.insert", json!({"text": "make this strong"}));
+        run(&mut s, "select.text", json!({"text": "this"}));
+        run(&mut s, "styles.apply", json!({"style": style}));
+        let p = s.doc.para_at(&Pos::body(0, 0)).unwrap();
+        assert_eq!(p.props_of_char(6).style.as_deref(), Some(style));
+        assert_eq!(p.props_of_char(0).style, None);
+        // A character style leaves the paragraph style alone.
+        assert_eq!(p.props.style, None);
+        let resolved = s.doc.styles.resolve_char(None, p.props_of_char(6));
+        assert_eq!((resolved.bold, resolved.italic), (bold, italic));
+        run(&mut s, "edit.undo", json!({}));
+        assert_eq!(s.doc.para_at(&Pos::body(0, 0)).unwrap().props_of_char(6).style, None);
+        run(&mut s, "edit.redo", json!({}));
+        assert_eq!(s.doc.para_at(&Pos::body(0, 0)).unwrap().props_of_char(6).style.as_deref(), Some(style));
+    }
+}
+
+#[test]
+fn applying_paragraph_style_to_selection_preserves_unselected_character_formatting() {
     let mut s = s();
-    run(&mut s, "text.insert", json!({"text": "make this strong"}));
+    run(&mut s, "text.insert", json!({"text": "keep this text"}));
+    run(&mut s, "select.text", json!({"text": "keep"}));
+    run(&mut s, "format.size", json!({"size": 22.0}));
+    run(&mut s, "format.color", json!({"color": "156082"}));
     run(&mut s, "select.text", json!({"text": "this"}));
-    run(&mut s, "styles.apply", json!({"style": "Strong"}));
+    run(&mut s, "styles.apply", json!({"style": "Heading 1"}));
+
     let p = s.doc.para_at(&Pos::body(0, 0)).unwrap();
-    assert_eq!(p.props_of_char(6).style.as_deref(), Some("Strong"));
-    assert_eq!(p.props_of_char(0).style, None);
-    // A character style leaves the paragraph style alone.
-    assert_eq!(p.props.style, None);
+    let untouched = p.props_of_char(1);
+    assert_eq!(untouched.size, Some(22.0));
+    assert_eq!(untouched.color, Some(wordcraft_doc::TextColor::Rgb(wordcraft_doc::Rgb(0x15, 0x60, 0x82))));
+    assert_eq!(untouched.style, None);
+    assert_eq!(p.props.style.as_deref(), Some("Heading1"));
+    assert_eq!(s.run("format.state", &json!({})).unwrap()["style"], "Heading1");
+
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(para_style(&s, 0), None);
+    assert_eq!(s.doc.para_at(&Pos::body(0, 0)).unwrap().props_of_char(1).size, Some(22.0));
+    run(&mut s, "edit.redo", json!({}));
+
+    let saved = wordcraft_docx::write(&s.doc).unwrap();
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    let p = reopened.para_at(&Pos::body(0, 0)).unwrap();
+    assert_eq!(p.props.style.as_deref(), Some("Heading1"));
+    assert_eq!(p.props_of_char(1).size, Some(22.0));
+    assert_eq!(p.props_of_char(1).color, Some(wordcraft_doc::TextColor::Rgb(wordcraft_doc::Rgb(0x15, 0x60, 0x82))));
+    assert!(wordcraft_pdf::export(&reopened, &wordcraft_pdf::PdfOptions::default()).is_ok());
 }
 
 #[test]

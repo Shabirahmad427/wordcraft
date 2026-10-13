@@ -1,5 +1,12 @@
 # WordCraft roadmap
 
+## Phase 7L — Styles, formatting and DOCX round-trip reliability (2026-10-13)
+
+- Audited the shared `StyleSheet` inheritance resolver, DOCX style import/export, style application command, selected formatting state and PDF exporter. Existing code resolves paragraph chains, character styles, direct overrides, and imported theme fonts/colors; this phase adds end-to-end synthetic coverage for those modeled cases.
+- Reproduced a shared-core defect: applying a paragraph style to a partial text selection cleared direct font, size and color from every run in that paragraph. The regression failed before the change. `para.style` now clears those properties only in the selected range (and preserves the paragraph mark for a non-collapsed selection); unrelated character formatting survives. The test checks selection state, Undo/Redo, DOCX save/reopen and PDF export.
+- Added coverage for applying Normal, No Spacing, Title, Subtitle and Heading 1–3; Emphasis and Strong application with Undo/Redo; and imported custom paragraph/character style inheritance, theme font/color resolution, direct overrides and DOCX round-trip. These checks cover modeled OOXML properties only. Unmodeled style extensions and theme bindings after a later theme edit remain limitations; synthetic fixtures are not Word 365 compatibility evidence.
+- All six `cargo xtask ci` gates passed on native Apple Silicon macOS (including workspace tests, asset attribution, layering and WASM checks). Native Apple Silicon release GUI/CLI builds and both version smokes passed. Hosted Linux/macOS/Windows checks will be recorded after the push; no native Linux/Windows GUI screenshot validation was performed in this environment.
+
 ## Phase 7K — Styles gallery preview rendering (2026-10-13)
 
 - Reproduced blank Home gallery previews on the native Apple Silicon Mac at 2× scale. The layout engine placed preview text at y=36 pt because preview-only sections retained the default 36 pt header distance; the 30 pt raster viewport clipped the full sample line. Setting unused preview header/footer distances to zero fixes the shared raster path. A pixel regression failed before the fix with zero ink pixels and passes after it. Cross-check of [upstream `previews.rs` at `159b84f`](https://github.com/storytold/wordcraft/blob/159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0/crates/ui-egui/src/previews.rs) found the same geometry and no corresponding fix there.

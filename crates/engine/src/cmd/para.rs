@@ -432,13 +432,15 @@ fn apply_style(s: &mut Session, v: &Value) -> CmdResult {
         }
     })?;
     // A paragraph style resets direct character formatting that matches nothing (Word keeps
-    // direct formatting unless it covers most of the paragraph; we clear font/size/colour).
+    // direct formatting unless it covers most of the paragraph; we clear font/size/colour in the
+    // affected range only. A partial text selection must not alter runs outside the selection.
     if a.path == b.path || a == b {
         let paths = s.doc.paths_between(&a, &b);
         for path in paths {
             let para = s.doc.para_mut(a.story, &path)?;
             let len = para.len();
-            para.format(0, len, &|c| {
+            let (start, end) = if a == b { (0, len) } else { (a.off.min(len), b.off.min(len)) };
+            para.format(start, end, &|c| {
                 c.font = None;
                 c.font_cs = None;
                 c.font_ea = None;
@@ -446,12 +448,14 @@ fn apply_style(s: &mut Session, v: &Value) -> CmdResult {
                 c.size_cs = None;
                 c.color = None;
             })?;
-            para.mark.font = None;
-            para.mark.font_cs = None;
-            para.mark.font_ea = None;
-            para.mark.size = None;
-            para.mark.size_cs = None;
-            para.mark.color = None;
+            if a == b || b.off >= len {
+                para.mark.font = None;
+                para.mark.font_cs = None;
+                para.mark.font_ea = None;
+                para.mark.size = None;
+                para.mark.size_cs = None;
+                para.mark.color = None;
+            }
         }
     }
     s.pending = None;

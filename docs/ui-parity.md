@@ -1,6 +1,6 @@
 # UI parity with Microsoft Word
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** fixed clipped Home Styles gallery sample previews; synthetic pixel tests and native macOS screenshot, hosted Linux/macOS/Windows UI tests, no Word reference comparison · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** fixed clipped Styles gallery samples and partial-selection formatting loss; synthetic style round-trips, six local CI gates and native Apple Silicon release builds, no Word reference comparison · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 How WordCraft looks and feels next to Word: ribbon, dialogs, panes, keyboard, mouse and touch.
 Typing behaviour has its own checklist ([`typing-parity.md`](typing-parity.md)). All assets are our
@@ -46,6 +46,7 @@ own (`AGENTS.md`: no Microsoft iconography, ever).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | trivial | Styles: applying a paragraph style to a partial text selection no longer clears direct font, size and color from unselected runs. Tests cover built-in paragraph styles, Emphasis/Strong, imported custom inheritance, theme resolution, direct overrides, selected-style state, Undo/Redo, DOCX reopen and PDF export. Unmodeled OOXML style extensions and dynamic theme rebinding are not covered; no Word reference comparison |
 | 2026-10-13 | trivial | Home Styles gallery preview: preview-only sections set unused header/footer distances to zero so the shared layout places the sample inside the raster crop; character styles decorate the sample run; font changes invalidate preview textures. Pixel tests cover built-in/custom styles, missing-font fallback, light/dark pages and 1×/2× rendering. Hosted Printing run 38377649990 passed native UI tests on Ubuntu, macOS and Windows. Upstream `main` at `159b84f` had the same unclipped geometry; no Word reference output used |
 | 2026-10-11 | trivial | Tables on the page: Ctrl shares a column border's change among the columns right of it, the left edge moves a left-aligned table's indent (a centred or right-aligned one keeps its alignment), a border of cells selected across moves only in their rows, Alt shows the column widths on the ruler (#711); 80% → 90% |
 | 2026-10-11 | trivial | Rulers: table column and row markers drag their borders (one undo step; from the ruler only the column left of a border changes, with Shift the neighbour makes up the difference), and in a cell the indents and tabs are measured from it (#700) |
