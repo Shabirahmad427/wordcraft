@@ -41,6 +41,8 @@ struct App(
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        static FIRST_FRAME: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        FIRST_FRAME.get_or_init(|| log::info!("native window entered its first application frame"));
         #[cfg(target_os = "macos")]
         apple_events::poll(&self.4, &mut self.0, ctx);
         self.0.logic(ctx);
@@ -62,7 +64,7 @@ impl eframe::App for App {
             {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.0.quit_requested = false;
-                schedule_macos_terminate(&self.0, self.2.as_ref());
+                schedule_macos_terminate(&mut self.0, self.2.as_ref());
             }
             #[cfg(not(target_os = "macos"))]
             if self.0.quit_requested {
@@ -78,7 +80,8 @@ impl eframe::App for App {
         self.3.show(frame);
     }
     fn on_exit(&mut self) {
-        self.0.finish_recovery();
+        log::info!("eframe application exit callback entered");
+        finish_recovery_before_exit(&mut self.0);
         save_prefs(&self.0);
         if let Some(key_file) = &self.2 {
             key_file.remove();
@@ -86,15 +89,19 @@ impl eframe::App for App {
     }
 }
 
+fn finish_recovery_before_exit(app: &mut WordApp) {
+    app.finish_recovery();
+}
+
 /// Quit the way Command-Q does, on the next turn of the main queue.
 ///
 /// Called when the window is closing. Doing it on the next turn lets the close
 /// button's display cycle finish while the window still exists; `terminate:`
 /// then ends the process. Preferences are written and the control key file is
-/// removed first, as `on_exit` does, because a fallback [`std::process::exit`]
-/// skips `on_exit`. A second close while a quit is already scheduled is ignored.
+/// removed first, as `on_exit` does. A second close while a quit is already
+/// scheduled is ignored.
 #[cfg(target_os = "macos")]
-fn schedule_macos_terminate(app: &WordApp, key_file: Option<&control_server::KeyFile>) {
+fn schedule_macos_terminate(app: &mut WordApp, key_file: Option<&control_server::KeyFile>) {
     use std::sync::atomic::{AtomicBool, Ordering};
     if app.printing.busy() {
         return;
@@ -104,8 +111,9 @@ fn schedule_macos_terminate(app: &WordApp, key_file: Option<&control_server::Key
         return;
     }
     log::info!("window close: quitting");
-    // This path can bypass on_exit. Current printer backends submit synchronously, so there are
-    // no owned print workers to join before termination and cleanup.
+    // AppKit termination can bypass eframe's on_exit callback. Stop and checkpoint the recovery
+    // worker here as well as on_exit; finish_recovery is idempotent after the first call.
+    finish_recovery_before_exit(app);
     save_prefs(app);
     if let Some(key_file) = key_file {
         key_file.remove();
@@ -114,9 +122,6 @@ fn schedule_macos_terminate(app: &WordApp, key_file: Option<&control_server::Key
         if let Some(mtm) = objc2::MainThreadMarker::new() {
             objc2_app_kit::NSApplication::sharedApplication(mtm).terminate(None);
         }
-        // `terminate:` does not return when it succeeds. If it did, leave anyway:
-        // staying up after the close was cancelled would trap the user in the window.
-        std::process::exit(0);
     });
 }
 
@@ -254,6 +259,7 @@ fn main() -> eframe::Result {
             _ => files.push(a),
         }
     }
+    log::info!("startup arguments parsed; control requested={}, sample={}, file count={}", control_port.is_some(), sample, files.len());
     // The log file lives in the settings directory, next to the preferences; opened after the
     // arguments, so `--version` leaves no file behind. Records logged until now are written to it
     // first. Runs without preferences (agents' test runs) log to standard error only, so they
@@ -309,10 +315,12 @@ fn main() -> eframe::Result {
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
-    eframe::run_native(
+    log::info!("starting native window and event loop");
+    let result = eframe::run_native(
         "WordCraft",
         options,
         Box::new(move |cc| {
+            log::info!("native app creator entered after window and graphics initialization");
             // The system region picks the new document's paper, the units and the decimal
             // separator (#838).
             let region = region::system();
@@ -369,5 +377,10 @@ fn main() -> eframe::Result {
                 apple_events.connect(&cc.egui_ctx),
             )))
         }),
-    )
+    );
+    match &result {
+        Ok(()) => log::info!("native event loop returned normally"),
+        Err(error) => log::error!("native window initialization or event loop failed: {error}"),
+    }
+    result
 }

@@ -80,6 +80,20 @@ jobs:
       - name: Native app and UI tests
         run: cargo test -p wordcraft -p wordcraft-ui-egui --locked
 
+      - name: Native window document workflow (Linux X11)
+        if: runner.os == 'Linux'
+        env:
+          WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WGPU_BACKEND: gl
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: xvfb-run -a cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
+
+      - name: Native window document workflow (macOS or Windows)
+        if: runner.os != 'Linux'
+        env:
+          WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+        run: cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
+
       - name: Browser compatibility
         if: runner.os == 'Linux'
         run: cargo check -p wordcraft-web --target wasm32-unknown-unknown --locked

@@ -1,10 +1,67 @@
 # Desktop GUI validation
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Recorded hosted Phase 7R test/build results · **Target:** WordCraft desktop on macOS, Linux and Windows
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7S native smoke lifecycle diagnostics · **Target:** WordCraft desktop on Linux, macOS and Windows
 
 This document separates a live desktop window, egui event-driven tests, offscreen rendering and
 hosted builds. A CI job that compiles or tests the GUI is not evidence that a person used a desktop
 window on that platform.
+
+## Phase 7S current evidence
+
+The local host is Apple Silicon macOS (`aarch64-apple-darwin`). WordCraft uses eframe 0.36.2 with
+`wgpu`, `accesskit`, `wayland`, `x11`, `links` and `default_fonts`; the production app does not enable
+eframe's `glow` feature.
+
+The startup stall is reproducible when a raw executable is spawned by the non-interactive test
+launcher. WordCraft and a minimal app built against the same eframe version both stop before the
+app-creator callback with either wgpu or glow. A `sample` backtrace places the main thread in
+`winit::run_on_demand` → `-[NSApplication run]` → AppKit's `nextEventMatchingMask` → CoreFoundation's
+Mach-message wait. The app creator, first frame, control key and endpoint never appear. The
+`Resumed` callback itself is inside winit and is not instrumented directly, but this stack is waiting
+for an AppKit event before that callback can run. Since eframe creates the window and graphics
+renderer after the first resume, the evidence places this stall before adapter/device selection,
+surface setup and renderer creation; it does not implicate WordCraft or either graphics backend.
+LaunchServices and HiServices messages were present in some attempts but were not shown to cause the
+wait. The specific macOS environment condition behind the raw-launch behavior has not been isolated.
+
+The minimal wgpu and glow probes both reached their creator, first frame, `on_exit` and normal
+`run_native` return when launched from an interactive Terminal session. The native smoke now starts
+WordCraft through LaunchServices using a temporary `.app` bundle. Two consecutive local native
+smokes passed from Terminal: the first created a window and authenticated control endpoint, drove
+real egui pointer/key/text events through a synthetic editing workflow (Unicode, bold, table,
+Undo/Redo, DOCX save/reopen, PDF export and screenshot), then used `app.quit`; the second used an
+isolated preferences-enabled profile, edited a dirty document, quit, and verified its recovery
+snapshot. Both `open -W` waiters returned status 0 after the app emitted the eframe `on_exit`
+marker and removed its control key. No WordCraft or eframe-probe process remained afterward. On
+macOS the harness observes the LaunchServices waiter's exit status rather than a direct `waitpid`
+status for the app; normal application shutdown is independently confirmed by `app.quit`, the
+`on_exit` callback, key removal, the verified recovery snapshot, and process disappearance. Neither
+smoke was counted as a pass after forced termination.
+
+The no-preferences smoke sets `WORDCRAFT_NO_PREFS=1`, `HOME` and macOS `CFFIXED_USER_HOME` to a
+fresh isolated profile. It asserts that no preferences, recovery store, logs, fonts or custom
+dictionary are created there. The separate shutdown regression enables normal preferences only
+inside another new temporary profile and confirms the latest unsaved text is recoverable. No
+developer preferences, logs or recovery entries were accessed or removed.
+
+The explicit macOS quit path now stops the recovery worker and writes its final checkpoint before
+calling `NSApplication.terminate`, since AppKit can bypass eframe's exit callback. The isolated
+recovery regression passed with the native smoke. The earlier separate release launch's reported
+exit 143 remains unexplained; its signal sender cannot be identified from the available evidence.
+Exit 101 from a prior `cargo test` run was the test runner reporting a failed startup assertion; it
+was not the application exit status. A child that was SIGKILLed during earlier bounded diagnostics
+is recorded as forced cleanup, never as a successful launch.
+
+Local verification: `cargo xtask ci` passed all six gates, including workspace tests; the Apple
+Silicon release GUI and CLI built and both `--version` commands passed. The latest hosted Printing
+run, [38438412430](https://github.com/Shabirahmad427/wordcraft/actions/runs/38438412430), succeeded
+on Ubuntu, macOS and Windows at commit `270c7d8`, but predates the Phase 7S native-window workflow
+step. Hosted native-window outcomes are therefore still pending. See
+[native desktop platform support](platform-support.md) for the platform-by-platform evidence.
+
+No physical mouse/keyboard input, native Open/Save panel interaction, system clipboard exchange or
+Word 365 comparison is claimed. Control-channel UI events exercise the application window but are
+not physical input.
 
 ## Phase 7R evidence
 
@@ -30,13 +87,14 @@ directly and skipped the ribbon helper that requests canvas focus. The picker no
 the change and passes after it. The same isolated UI event script then produced
 `[["Alpha","Beta"],["Gamma","Delta"]]`; Cmd+Z removed `Delta` and Cmd+Shift+Z restored it.
 
-## Platform evidence matrix
+## Phase 7R historical evidence
 
-| Platform | Live desktop GUI | UI/render tests | Hosted/build evidence | Limits |
-|---|---|---|---|---|
-| macOS | App window launched on the local Mac; recovery chooser prevented editing, and existing entries were left untouched | 2× offscreen window screenshots; egui pointer/key/text workflow; style preview pixels at 1×/2× and light/dark | `cargo xtask ci` passed all six gates; native arm64 GUI/CLI release build and CLI 0.6.1 version smoke passed | No complete native editing workflow, native screenshot review of document content, physical input session, or Word 365 comparison |
-| Linux | No native desktop session used | Hosted UI/app suite; clipboard integration under Xvfb | Document regressions and Linux GUI/CLI release build and CLI smoke passed | Xvfb clipboard tests and GUI compilation are not a Linux desktop editing session |
-| Windows | No native desktop session used | Hosted app/UI tests and native clipboard adapter test passed | Windows DOCX/session suite and native CLI smoke passed | Hosted tests are not an interactive Windows desktop run |
+At the earlier Phase 7R checkout `0ff86c8`, launching through the normal macOS profile opened
+the recovery chooser with existing entries, so that run stopped before editing. Phase 7S uses fresh
+temporary profiles; the editing smoke disables preferences while the shutdown regression enables
+them only inside its isolated profile. The raw-executable startup matrix remains a diagnostic of
+the non-interactive launch condition, not a passing GUI smoke. The prior hosted runs below are
+historical evidence.
 
 ### Area audit
 
@@ -80,3 +138,9 @@ may be observed as a black box; do not inspect its bundle or commit any file Wor
    the whole desktop, and do not commit the temporary DOCX/PDF files or files saved by Word.
 
 This protocol has not been run. No Word 365 compatibility result is claimed.
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-10-13 | minor | Located the raw-launch stall in AppKit's pre-resume event wait; verified LaunchServices native smokes, isolated profile safety, recovery shutdown and normal child status |
