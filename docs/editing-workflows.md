@@ -12,6 +12,12 @@ WordCraft's internal clipboard keeps the structured fragment. The desktop UI pub
 
 Nested tables, images, and rich objects inside selected cells are retained through model cloning and the normal fragment adoption path, but do not yet have separate fixtures. Mixed selections that begin/end inside tables, custom unsupported cell extensions, and OS clipboard rich-table export remain documented limits. The full table-intersection behavior is specified by the current `CellRange`; tests are synthetic and establish WordCraft behavior only.
 
+### Phase 7O platform validation
+
+On Apple Silicon macOS, all six local `cargo xtask ci` gates passed; the optimized GUI/CLI build and both version smokes passed. Hosted [Document regressions run 38394565623](https://github.com/Shabirahmad427/wordcraft/actions/runs/38394565623) passed the DOCX/session suites and CLI smoke on Linux, macOS and Windows, plus the Linux GUI/CLI release build, bundled-font visual regression and advisory performance job. This is shared-core test and CLI evidence across all three operating systems. The Linux GUI target was compiled but not launched; there was no native macOS or Windows GUI runtime test in this phase.
+
+The local `git fetch --no-write-fetch-head origin main` reproduced the ref error at `.git/refs/remotes/origin/main.lock` (`Operation not permitted`). The loose ref was a regular file owned by the current user (0644); `.git/refs/remotes/origin` and parent directories were also user-owned (0755), with no ACL. The environment's workspace policy denies writes under `.git`; the fast-forward push succeeded when run with Git-metadata write access and updated the local tracking ref. No permission or ownership changes were made.
+
 ## Verified behavior
 
 The regression `copying_a_table_range_into_following_text_preserves_cells_through_edit_undo_docx_and_pdf`
