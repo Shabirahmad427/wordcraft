@@ -133,8 +133,10 @@ jobs:
           set -euo pipefail
           current=(dist/release/wordcraft-*-linux-x86_64.deb)
           test "${#current[@]}" -eq 1
-          package_version="$(dpkg-deb -f "${current[0]}" Version)"
-          sudo apt-get install --reinstall -y "${current[0]}"
+          current_package="./${current[0]}"
+          test -f "$current_package"
+          package_version="$(dpkg-deb -f "$current_package" Version)"
+          sudo apt-get install --reinstall -y "$current_package"
           test "$(dpkg-query -W -f='${Version}' wordcraft)" = "$package_version"
           test -x /usr/bin/wordcraft
           test -x /usr/bin/wordcraft-cli
