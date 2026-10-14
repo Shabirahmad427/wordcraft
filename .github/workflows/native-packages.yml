@@ -418,10 +418,59 @@ jobs:
         env:
           WORDCRAFT_BUILD_SHA: ${{ github.sha }}
         run: ./packaging/windows/package.ps1 -Arch x64
-      - name: Install older MSI and inspect identity and native integration
+      - name: Install older MSI and inspect identity
         shell: pwsh
+        timeout-minutes: 10
         run: |
           $ErrorActionPreference = 'Stop'
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          $baselineMsi = Join-Path $env:RUNNER_TEMP 'upgrade-baseline-windows\wordcraft-0.6.1-windows-x64.msi'
+          if (-not (Test-Path $baselineMsi)) { throw "baseline MSI missing: $baselineMsi" }
+          Write-Host "[$($clock.Elapsed)] Installing baseline MSI: $baselineMsi"
+          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$baselineMsi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-old-install.log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\wordcraft-old-install.log" -Tail 80; throw "old MSI install exited $($p.ExitCode)" }
+          Write-Host "[$($clock.Elapsed)] Baseline MSI install returned $($p.ExitCode)"
+          $oldEntry = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'WordCraft' } | Select-Object -First 1
+          if (-not $oldEntry -or $oldEntry.DisplayVersion -ne '0.6.1') { throw 'baseline MSI uninstall identity/version missing' }
+          $oldExe = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
+          if (-not (Test-Path $oldExe)) { throw 'older MSI executable is missing' }
+          $oldGuiVersion = & $oldExe --version | Out-String
+          $baselineShortSha = $env:WORDCRAFT_UPGRADE_BASELINE_SHA.Substring(0, 8)
+          if ($LASTEXITCODE -ne 0 -or $oldGuiVersion -notlike "*$baselineShortSha*") { throw "baseline MSI executable build identity mismatch: $oldGuiVersion" }
+          Write-Host "[$($clock.Elapsed)] Baseline executable identity verified: $($oldGuiVersion.Trim())"
+
+      - name: Run recovery smoke against older installed GUI
+        shell: pwsh
+        timeout-minutes: 20
+        env:
+          WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
+          WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
+          WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
+          RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          $env:WORDCRAFT_NATIVE_EXECUTABLE = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
+          $upgradeProfile = Join-Path $env:RUNNER_TEMP 'upgrade-profile'
+          New-Item -ItemType Directory -Force $upgradeProfile | Out-Null
+          Write-Host "[$($clock.Elapsed)] Starting baseline GUI recovery smoke with $env:WORDCRAFT_NATIVE_EXECUTABLE"
+          cargo test -p wordcraft --test native_window --locked -- isolated_native_shutdown_checkpoints_recovery_before_exit --ignored --nocapture --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "old installed GUI recovery smoke exited $LASTEXITCODE" }
+          Write-Host "[$($clock.Elapsed)] Baseline GUI recovery smoke passed"
+          $profile = Join-Path $upgradeProfile 'AppData\WordCraft'
+          if (-not (Test-Path (Join-Path $profile 'ui.json'))) { throw 'old version did not save isolated preferences' }
+          if (-not (Get-ChildItem (Join-Path $profile 'recovery') -Filter '*.wcr' -ErrorAction SilentlyContinue)) { throw 'old version did not leave a recovery snapshot' }
+          $before = Get-ChildItem $profile -Recurse -File | Where-Object { $_.Name -eq 'ui.json' -or $_.Extension -eq '.wcr' } | Sort-Object FullName | ForEach-Object { "$($_.FullName.Substring($profile.Length)) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" }
+          Set-Content (Join-Path $env:RUNNER_TEMP 'upgrade-profile-state.txt') $before
+
+      - name: Upgrade MSI and verify package and user data
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $clock = [Diagnostics.Stopwatch]::StartNew()
           $inWorkspacePackage = $false
           $currentVersion = $null
           foreach ($line in Get-Content Cargo.toml) {
@@ -430,36 +479,15 @@ jobs:
             if ($inWorkspacePackage -and $line -match '^\s*version\s*=\s*"([^"]+)"') { $currentVersion = ($Matches[1] -split '-')[0]; break }
           }
           if (-not $currentVersion) { throw 'could not read current workspace package version' }
-          $baselineMsi = Join-Path $env:RUNNER_TEMP 'upgrade-baseline-windows\wordcraft-0.6.1-windows-x64.msi'
-          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$baselineMsi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-old-install.log`"" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\wordcraft-old-install.log" -Tail 80; throw "old MSI install exited $($p.ExitCode)" }
-          $oldEntry = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'WordCraft' } | Select-Object -First 1
-          if (-not $oldEntry -or $oldEntry.DisplayVersion -ne '0.6.1') { throw 'baseline MSI uninstall identity/version missing' }
-          $oldExe = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
-          if (-not (Test-Path $oldExe)) { throw 'older MSI executable is missing' }
-          $oldGuiVersion = & $oldExe --version | Out-String
-          $baselineShortSha = $env:WORDCRAFT_UPGRADE_BASELINE_SHA.Substring(0, 8)
-          if ($LASTEXITCODE -ne 0 -or $oldGuiVersion -notlike "*$baselineShortSha*") { throw "baseline MSI executable build identity mismatch: $oldGuiVersion" }
-          $upgradeProfile = Join-Path $env:RUNNER_TEMP 'upgrade-profile'
-          New-Item -ItemType Directory -Force $upgradeProfile | Out-Null
-          $env:WORDCRAFT_NATIVE_EXECUTABLE = $oldExe
-          $env:WORDCRAFT_NATIVE_WINDOW_SMOKE = '1'
-          $env:WORDCRAFT_NATIVE_PROFILE_ROOT = $env:RUNNER_TEMP
-          $env:WORDCRAFT_NATIVE_PROFILE_PATH = $upgradeProfile
-          $env:WORDCRAFT_PRESERVE_NATIVE_PROFILE = '1'
-          $env:WORDCRAFT_NATIVE_CONTROL_TRACE = '1'
-          $env:RUST_LOG = 'warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug'
-          cargo test -p wordcraft --test native_window --locked -- isolated_native_shutdown_checkpoints_recovery_before_exit --ignored --nocapture --test-threads=1
-          if ($LASTEXITCODE -ne 0) { throw "old installed GUI recovery smoke exited $LASTEXITCODE" }
-          $profile = Join-Path $upgradeProfile 'AppData\WordCraft'
-          if (-not (Test-Path (Join-Path $profile 'ui.json'))) { throw 'old version did not save isolated preferences' }
-          if (-not (Get-ChildItem (Join-Path $profile 'recovery') -Filter '*.wcr' -ErrorAction SilentlyContinue)) { throw 'old version did not leave a recovery snapshot' }
-          $before = Get-ChildItem $profile -Recurse -File | Where-Object { $_.Name -eq 'ui.json' -or $_.Extension -eq '.wcr' } | Sort-Object FullName | ForEach-Object { "$($_.FullName.Substring($profile.Length)) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" }
-          Set-Content (Join-Path $env:RUNNER_TEMP 'upgrade-profile-state.txt') $before
           $msi = (Get-ChildItem dist/release/*-windows-x64.msi | Select-Object -First 1).FullName
           if (-not $msi) { throw 'x64 MSI was not produced' }
+          $documents = Join-Path $env:RUNNER_TEMP 'documents'
+          New-Item -ItemType Directory -Force $documents | Out-Null
+          Set-Content (Join-Path $documents 'keep.txt') 'owned by the user'
+          Write-Host "[$($clock.Elapsed)] Upgrading baseline MSI to $msi"
           $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-install.log`"" -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\wordcraft-install.log" -Tail 80; throw "MSI install exited $($p.ExitCode)" }
+          Write-Host "[$($clock.Elapsed)] Current MSI upgrade returned $($p.ExitCode)"
           $currentEntries = @(Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'WordCraft' })
           if ($currentEntries.Count -ne 1 -or $currentEntries[0].DisplayVersion -ne $currentVersion) { throw "current MSI upgrade metadata mismatch: $($currentEntries | ConvertTo-Json -Compress)" }
           $dir = Join-Path $env:ProgramFiles 'WordCraft'
@@ -486,9 +514,7 @@ jobs:
           if (-not $portableCli) { throw 'portable ZIP has no CLI' }
           $portableVersion = & $portableCli --version | Out-String
           if ($LASTEXITCODE -ne 0 -or $portableVersion -notlike '*${{ github.sha }}*') { throw "portable CLI has wrong commit: $portableVersion" }
-          $documents = Join-Path $env:RUNNER_TEMP 'documents'
-          New-Item -ItemType Directory -Force $documents | Out-Null
-          Set-Content (Join-Path $documents 'keep.txt') 'owned by the user'
+          Write-Host "[$($clock.Elapsed)] MSI upgrade, preservation, and portable identity checks passed"
       - name: Edit, save, export and quit the installed GUI
         shell: pwsh
         env:
