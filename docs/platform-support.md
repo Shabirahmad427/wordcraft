@@ -108,6 +108,16 @@ The earlier `kLSNoExecutableErr` remains unexplained; this successful packaged l
 separate observation. Intel macOS, Windows ARM64 GUI, Linux Wayland and physical device behavior
 still need runtime checks.
 
+### Phase 7T.1 upgrade checks (hosted execution pending)
+
+The native package workflow now downloads the upstream v0.5.0 DEB, universal DMG and x64 MSI,
+verifies their published SHA-256 checksums, creates isolated preferences and a dirty-document
+recovery snapshot, then upgrades to the current build. It compares profile state across the install
+and validates current package identity. Windows checks the MSI uninstall entry and replacement
+binary; macOS stages and validates the new bundle before swapping it in. These are workflow changes,
+not yet passing evidence. Linux Wayland native input, macOS Intel hardware, Windows ARM64 GUI,
+notarization and external application file associations remain separate gaps.
+
 ## Revision history
 
 | Date | Change | Summary |
@@ -116,3 +126,4 @@ still need runtime checks.
 | 2026-10-13 | minor | Printing run 38476284508 passed all three native smoke jobs with editing, table insertion, Undo/Redo and normal quit; raw native input and broader desktop integration remain separate gaps |
 | 2026-10-13 | major | Began Phase 7T with a verified macOS DMG signature correction, installed-app native smoke and a pending three-OS package workflow |
 | 2026-10-14 | minor | Recorded successful three-OS installed-package run, Linux headless Wayland startup and the unexplained Windows timeout/retry |
+| 2026-10-14 | minor | Added previous-to-current upgrade checks and Windows control lifecycle tracing; hosted results pending |

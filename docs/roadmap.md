@@ -13,11 +13,13 @@ safe package XML merge before theme or style edits can be saved; see the
 [DOCX preservation contract](docx-compatibility.md#phase-7m-theme-bindings-and-style-preservation).
 
 Phase 7T validates actual native packages. A local macOS DMG defect is corrected; the hosted
-installed DEB, DMG app and Windows x64 MSI passed the package workflow. The Windows GUI smoke had
-one control-response timeout after queuing text, then passed on retry; its cause is unknown. Linux
-headless Weston startup/recovery/quit passed without input coverage. Remaining desktop integration
-gaps are recorded in [native installation](native-installation.md). This work does not change the
-Word-feature estimates below.
+installed DEB, DMG app and Windows x64 MSI passed the existing package workflow. The follow-up
+adds checksum-verified v0.5.0-to-current upgrade scenarios with isolated preference and recovery
+state checks, plus staged Windows control-request tracing. These changes await hosted execution.
+The Windows GUI smoke's earlier control-response timeout passed on retry but remains unexplained.
+Linux headless Weston startup/recovery/quit passed without input coverage. Remaining desktop
+integration gaps are recorded in [native installation](native-installation.md). This work does not
+change the Word-feature estimates below.
 
 The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current five-gap evidence priority and distinguishes native runtime results from cross-builds.
 
@@ -88,6 +90,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 |---|---|---|
 | 2026-10-13 | minor | Phase 7T local DMG correction and installed native app smoke; hosted DEB/MSI validation pending, no beta estimate change |
 | 2026-10-14 | minor | Recorded hosted three-OS package results, Linux headless Wayland launch and unexplained Windows timeout/retry; ranked estimates unchanged |
+| 2026-10-14 | minor | Added verified-baseline package upgrade checks and Windows control lifecycle diagnostics; hosted validation pending |
 | 2026-10-13 | minor | Phase 7M theme binding and style preservation regressions; native six-gate CI passes, hosted matrix pending |
 | 2026-10-12 | minor | Phase 7I synthetic DOCX/PDF corpus and native matrix gate; header-float clipping diagnostic fixed without changing pagination |
 | 2026-10-12 | minor | Added five-gap cross-platform audit; DOCX export safety improved in shared Rust, while native and Word 365 comparisons remain pending |

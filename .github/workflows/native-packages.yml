@@ -33,6 +33,17 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download and verify the previous Linux package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          baseline='${{ runner.temp }}/upgrade-baseline-linux'
+          mkdir -p "$baseline"
+          gh release download v0.5.0 --repo storytold/wordcraft \
+            --pattern wordcraft-0.5.0-linux-x86_64.deb --pattern SHA256SUMS.txt --dir "$baseline"
+          (cd "$baseline" && grep -E '^[0-9a-f]{64}  wordcraft-0\.5\.0-linux-x86_64\.deb$' SHA256SUMS.txt | sha256sum --check --status)
+          test -s "$baseline/wordcraft-0.5.0-linux-x86_64.deb"
       - name: Install desktop and packaging dependencies
         run: |
           sudo apt-get update
@@ -54,49 +65,77 @@ jobs:
         env:
           WORDCRAFT_BUILD_SHA: ${{ github.sha }}
         run: packaging/linux/package.sh --formats deb,rpm,tar
-      - name: Install deb and inspect desktop integration
+      - name: Install the older DEB and inspect its identity
         run: |
           set -euo pipefail
-          test -f dist/release/wordcraft-*-linux-x86_64.deb
-          test -f dist/release/wordcraft-*-linux-x86_64.rpm
-          test -f dist/release/wordcraft-*-linux-x86_64.tar.gz
+          deb=(dist/release/wordcraft-*-linux-x86_64.deb)
+          rpm=(dist/release/wordcraft-*-linux-x86_64.rpm)
+          tarball=(dist/release/wordcraft-*-linux-x86_64.tar.gz)
+          test "${#deb[@]}" -eq 1
+          test "${#rpm[@]}" -eq 1
+          test "${#tarball[@]}" -eq 1
           mkdir -p '${{ runner.temp }}/tar-package'
-          tar -xzf dist/release/wordcraft-*-linux-x86_64.tar.gz -C '${{ runner.temp }}/tar-package'
+          tar -xzf "${tarball[0]}" -C '${{ runner.temp }}/tar-package'
           tar_cli="$(find '${{ runner.temp }}/tar-package' -path '*/bin/wordcraft-cli' -type f -print -quit)"
           test -x "$tar_cli"
           "$tar_cli" --version | grep '${{ github.sha }}'
-          sudo apt-get install -y ./dist/release/wordcraft-*-linux-x86_64.deb
+          sudo apt-get install -y '${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.5.0-linux-x86_64.deb'
           test -x /usr/bin/wordcraft
           test -x /usr/bin/wordcraft-cli
-          /usr/bin/wordcraft --version | grep "${GITHUB_SHA:0:8}"
-          /usr/bin/wordcraft-cli --version | grep '${{ github.sha }}'
+          test "$(dpkg-query -W -f='${Version}' wordcraft)" = 0.5.0
+          /usr/bin/wordcraft --version | grep '0.5.0'
+          /usr/bin/wordcraft-cli --version | grep '0.5.0'
           desktop-file-validate /usr/share/applications/ai.storyteller.wordcraft.desktop
           grep -q 'Exec=wordcraft %F' /usr/share/applications/ai.storyteller.wordcraft.desktop
           grep -q 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' /usr/share/applications/ai.storyteller.wordcraft.desktop
           test -f /usr/share/icons/hicolor/256x256/apps/ai.storyteller.wordcraft.png
           mkdir -p '${{ runner.temp }}/documents'
           printf 'owned by the user\n' > '${{ runner.temp }}/documents/keep.txt'
+      - name: Create old-version preferences and a real recovery snapshot
+        env:
+          WORDCRAFT_NATIVE_EXECUTABLE: /usr/bin/wordcraft
+          WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
+          WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
+          WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
+          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
+          WGPU_BACKEND: gl
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          set -euo pipefail
+          bash packaging/linux/with-xvfb-openbox.sh cargo test -p wordcraft --test native_window --locked -- isolated_native_shutdown_checkpoints_recovery_before_exit --ignored --nocapture --test-threads=1
+          profile='${{ runner.temp }}/upgrade-profile/xdg/wordcraft'
+          test -s "$profile/ui.json"
+          find "$profile/recovery" -type f -name '*.wcr' -print -quit | grep -q .
+          find "$profile" -type f \( -name ui.json -o -name '*.wcr' \) -print0 | sort -z | xargs -0 sha256sum > '${{ runner.temp }}/upgrade-profile-state.sha256'
+      - name: Upgrade to the current DEB and verify package and user data
+        run: |
+          set -euo pipefail
+          current=(dist/release/wordcraft-*-linux-x86_64.deb)
+          test "${#current[@]}" -eq 1
+          current_version="$(basename "${current[0]}" | sed -E 's/^wordcraft-(.*)-linux-x86_64\.deb$/\1/')"
+          sudo apt-get install -y "${current[0]}"
+          test "$(dpkg-query -W -f='${Version}' wordcraft)" = "$current_version"
+          /usr/bin/wordcraft --version | grep "${GITHUB_SHA:0:8}"
+          /usr/bin/wordcraft-cli --version | grep '${{ github.sha }}'
+          profile='${{ runner.temp }}/upgrade-profile/xdg/wordcraft'
+          find "$profile" -type f \( -name ui.json -o -name '*.wcr' \) -print0 | sort -z | xargs -0 sha256sum > '${{ runner.temp }}/upgrade-profile-state-after-install.sha256'
+          diff -u '${{ runner.temp }}/upgrade-profile-state.sha256' '${{ runner.temp }}/upgrade-profile-state-after-install.sha256'
+          grep -q 'owned by the user' '${{ runner.temp }}/documents/keep.txt'
       - name: Edit, save, export and quit the installed app under X11
         env:
           WORDCRAFT_NATIVE_EXECUTABLE: /usr/bin/wordcraft
           WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
           WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
+          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
           WGPU_BACKEND: gl
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
-          # shellcheck disable=SC2016
-          xvfb-run -a bash -euo pipefail -c '
-            openbox --sm-disable &
-            wm_pid=$!
-            trap "kill $wm_pid 2>/dev/null || true; wait $wm_pid 2>/dev/null || true" EXIT
-            for _ in {1..50}; do
-              if xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id"; then break; fi
-              sleep 0.1
-            done
-            xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"
-            cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
-          '
+          bash packaging/linux/with-xvfb-openbox.sh cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
+          WORDCRAFT_NATIVE_PROFILE_PATH='${{ runner.temp }}/upgrade-profile' WORDCRAFT_NATIVE_EXPECT_INTERFACE_PERCENT=125 bash packaging/linux/with-xvfb-openbox.sh cargo test -p wordcraft --test native_window --locked -- isolated_native_window_smoke --ignored --nocapture --test-threads=1
       - name: Resolve DOCX through the installed XDG MIME entry
         run: |
           set -euo pipefail
@@ -130,7 +169,7 @@ jobs:
           name: wordcraft-linux-x86_64-test-packages
           path: dist/release/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90
       - name: Preserve package failure diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -141,13 +180,23 @@ jobs:
             ${{ runner.temp }}/wordcraft-native-smoke-*/*.png
             ${{ runner.temp }}/wordcraft-wayland.*/weston.log
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 90
 
   macos:
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download and verify the previous macOS app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          baseline='${{ runner.temp }}/upgrade-baseline-macos'
+          mkdir -p "$baseline"
+          gh release download v0.5.0 --repo storytold/wordcraft \
+            --pattern wordcraft-0.5.0-macos-universal.dmg --pattern SHA256SUMS.txt --dir "$baseline"
+          (cd "$baseline" && grep -E '^[0-9a-f]{64}  wordcraft-0\.5\.0-macos-universal\.dmg$' SHA256SUMS.txt | shasum -a 256 --check --status)
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: stable
@@ -181,6 +230,72 @@ jobs:
           test -x "$cli"
           "$cli" --version | grep '${{ github.sha }}'
           printf 'owned by the user\n' > '${{ runner.temp }}/documents/keep.txt'
+      - name: Install the older app and create isolated upgrade data
+        env:
+          WORDCRAFT_NATIVE_APP_BUNDLE: ${{ runner.temp }}/Applications/WordCraft.app
+          WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
+          WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
+          WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
+          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
+        run: |
+          set -euo pipefail
+          baseline='${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.5.0-macos-universal.dmg'
+          mkdir -p '${{ runner.temp }}/old-volume'
+          hdiutil attach -nobrowse -readonly -mountpoint '${{ runner.temp }}/old-volume' "$baseline"
+          ditto '${{ runner.temp }}/old-volume/WordCraft.app' '${{ runner.temp }}/Applications/WordCraft.app'
+          hdiutil detach '${{ runner.temp }}/old-volume'
+          app='${{ runner.temp }}/Applications/WordCraft.app'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = ai.storyteller.wordcraft
+          test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftVersion' "$app/Contents/Info.plist")" = 0.5.0
+          "$app/Contents/MacOS/WordCraft" --version | grep '0.5.0'
+          cargo test -p wordcraft --test native_window --locked -- isolated_native_shutdown_checkpoints_recovery_before_exit --ignored --nocapture --test-threads=1
+          profile='${{ runner.temp }}/upgrade-profile/Library/Application Support/WordCraft'
+          test -s "$profile/ui.json"
+          find "$profile/recovery" -type f -name '*.wcr' -print -quit | grep -q .
+          find "$profile" -type f \( -name ui.json -o -name '*.wcr' \) -print0 | sort -z | xargs -0 shasum -a 256 > '${{ runner.temp }}/upgrade-profile-state.sha256'
+      - name: Replace old app with current DMG build and verify retained user data
+        env:
+          WORDCRAFT_BUILD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          current_version="$(awk '/^\[workspace.package\]/{in_package=1;next} /^\[/{in_package=0} in_package && /^version[[:space:]]*=/{gsub(/[" ]/, "", $3);print $3;exit}' Cargo.toml)"
+          test -n "$current_version"
+          dmg=(dist/release/wordcraft-*-macos-aarch64.dmg)
+          test "${#dmg[@]}" -eq 1
+          mkdir -p '${{ runner.temp }}/current-volume'
+          hdiutil attach -nobrowse -readonly -mountpoint '${{ runner.temp }}/current-volume' "${dmg[0]}"
+          ditto '${{ runner.temp }}/current-volume/WordCraft.app' '${{ runner.temp }}/Applications/WordCraft.next.app'
+          hdiutil detach '${{ runner.temp }}/current-volume'
+          staged='${{ runner.temp }}/Applications/WordCraft.next.app'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$staged/Contents/Info.plist")" = ai.storyteller.wordcraft
+          test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftBuildCommit' "$staged/Contents/Info.plist")" = '${{ github.sha }}'
+          codesign --verify --strict --deep "$staged"
+          mv '${{ runner.temp }}/Applications/WordCraft.app' '${{ runner.temp }}/Applications/WordCraft.previous.app'
+          if ! mv "$staged" '${{ runner.temp }}/Applications/WordCraft.app'; then
+            mv '${{ runner.temp }}/Applications/WordCraft.previous.app' '${{ runner.temp }}/Applications/WordCraft.app'
+            exit 1
+          fi
+          rm -rf '${{ runner.temp }}/Applications/WordCraft.previous.app'
+          app='${{ runner.temp }}/Applications/WordCraft.app'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftVersion' "$app/Contents/Info.plist")" = "$current_version"
+          "$app/Contents/MacOS/WordCraft" --version | grep "${GITHUB_SHA:0:8}"
+          profile='${{ runner.temp }}/upgrade-profile/Library/Application Support/WordCraft'
+          find "$profile" -type f \( -name ui.json -o -name '*.wcr' \) -print0 | sort -z | xargs -0 shasum -a 256 > '${{ runner.temp }}/upgrade-profile-state-after-install.sha256'
+          diff -u '${{ runner.temp }}/upgrade-profile-state.sha256' '${{ runner.temp }}/upgrade-profile-state-after-install.sha256'
+          grep -q 'owned by the user' '${{ runner.temp }}/documents/keep.txt'
+      - name: Launch upgraded app with preserved profile and verify normal shutdown
+        env:
+          WORDCRAFT_NATIVE_APP_BUNDLE: ${{ runner.temp }}/Applications/WordCraft.app
+          WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
+          WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
+          WORDCRAFT_NATIVE_EXPECT_INTERFACE_PERCENT: '125'
+          WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
+          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
+        run: cargo test -p wordcraft --test native_window --locked -- isolated_native_window_smoke --ignored --nocapture --test-threads=1
       - name: Edit, save, export and quit the installed app through LaunchServices
         env:
           WORDCRAFT_NATIVE_APP_BUNDLE: ${{ runner.temp }}/Applications/WordCraft.app
@@ -201,7 +316,7 @@ jobs:
           name: wordcraft-macos-arm64-test-packages
           path: dist/release/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90
       - name: Preserve package failure diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -211,13 +326,27 @@ jobs:
             ${{ runner.temp }}/wordcraft-native-smoke-*/wordcraft.stderr.log
             ${{ runner.temp }}/wordcraft-native-smoke-*/*.png
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 90
 
   windows:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download and verify the previous Windows MSI
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baseline = Join-Path $env:RUNNER_TEMP 'upgrade-baseline-windows'
+          New-Item -ItemType Directory -Force $baseline | Out-Null
+          gh release download v0.5.0 --repo storytold/wordcraft --pattern wordcraft-0.5.0-windows-x64.msi --pattern SHA256SUMS.txt --dir $baseline
+          if ($LASTEXITCODE -ne 0) { throw "baseline download exited $LASTEXITCODE" }
+          $line = Select-String -Path (Join-Path $baseline 'SHA256SUMS.txt') -Pattern '^([0-9a-f]{64})  wordcraft-0\.5\.0-windows-x64\.msi$' | Select-Object -First 1
+          if (-not $line) { throw 'baseline MSI is absent from SHA256SUMS.txt' }
+          $actual = (Get-FileHash (Join-Path $baseline 'wordcraft-0.5.0-windows-x64.msi') -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $line.Matches[0].Groups[1].Value) { throw 'baseline MSI checksum mismatch' }
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: stable
@@ -233,14 +362,47 @@ jobs:
         env:
           WORDCRAFT_BUILD_SHA: ${{ github.sha }}
         run: ./packaging/windows/package.ps1 -Arch x64
-      - name: Install MSI and inspect native integration
+      - name: Install older MSI and inspect identity and native integration
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $inWorkspacePackage = $false
+          $currentVersion = $null
+          foreach ($line in Get-Content Cargo.toml) {
+            if ($line -eq '[workspace.package]') { $inWorkspacePackage = $true; continue }
+            if ($line -match '^\[') { $inWorkspacePackage = $false }
+            if ($inWorkspacePackage -and $line -match '^\s*version\s*=\s*"([^"]+)"') { $currentVersion = ($Matches[1] -split '-')[0]; break }
+          }
+          if (-not $currentVersion) { throw 'could not read current workspace package version' }
+          $baselineMsi = Join-Path $env:RUNNER_TEMP 'upgrade-baseline-windows\wordcraft-0.5.0-windows-x64.msi'
+          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$baselineMsi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-old-install.log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\wordcraft-old-install.log" -Tail 80; throw "old MSI install exited $($p.ExitCode)" }
+          $oldEntry = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'WordCraft' } | Select-Object -First 1
+          if (-not $oldEntry -or $oldEntry.DisplayVersion -ne '0.5.0') { throw 'older MSI uninstall identity/version missing' }
+          $oldExe = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
+          if (-not (Test-Path $oldExe) -or (& $oldExe --version | Out-String) -notlike '*0.5.0*') { throw 'older MSI executable identity/version mismatch' }
+          $upgradeProfile = Join-Path $env:RUNNER_TEMP 'upgrade-profile'
+          New-Item -ItemType Directory -Force $upgradeProfile | Out-Null
+          $env:WORDCRAFT_NATIVE_EXECUTABLE = $oldExe
+          $env:WORDCRAFT_NATIVE_WINDOW_SMOKE = '1'
+          $env:WORDCRAFT_NATIVE_PROFILE_ROOT = $env:RUNNER_TEMP
+          $env:WORDCRAFT_NATIVE_PROFILE_PATH = $upgradeProfile
+          $env:WORDCRAFT_PRESERVE_NATIVE_PROFILE = '1'
+          $env:WORDCRAFT_NATIVE_CONTROL_TRACE = '1'
+          $env:RUST_LOG = 'wordcraft::control_server=debug,wordcraft_ui_egui::control=debug'
+          cargo test -p wordcraft --test native_window --locked -- isolated_native_shutdown_checkpoints_recovery_before_exit --ignored --nocapture --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "old installed GUI recovery smoke exited $LASTEXITCODE" }
+          $profile = Join-Path $upgradeProfile 'AppData\WordCraft'
+          if (-not (Test-Path (Join-Path $profile 'ui.json'))) { throw 'old version did not save isolated preferences' }
+          if (-not (Get-ChildItem (Join-Path $profile 'recovery') -Filter '*.wcr' -ErrorAction SilentlyContinue)) { throw 'old version did not leave a recovery snapshot' }
+          $before = Get-ChildItem $profile -Recurse -File | Where-Object { $_.Name -eq 'ui.json' -or $_.Extension -eq '.wcr' } | Sort-Object FullName | ForEach-Object { "$($_.FullName.Substring($profile.Length)) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" }
+          Set-Content (Join-Path $env:RUNNER_TEMP 'upgrade-profile-state.txt') $before
           $msi = (Get-ChildItem dist/release/*-windows-x64.msi | Select-Object -First 1).FullName
           if (-not $msi) { throw 'x64 MSI was not produced' }
           $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-install.log`"" -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\wordcraft-install.log" -Tail 80; throw "MSI install exited $($p.ExitCode)" }
+          $currentEntries = @(Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'WordCraft' })
+          if ($currentEntries.Count -ne 1 -or $currentEntries[0].DisplayVersion -ne $currentVersion) { throw "current MSI upgrade metadata mismatch: $($currentEntries | ConvertTo-Json -Compress)" }
           $dir = Join-Path $env:ProgramFiles 'WordCraft'
           $exe = Join-Path $dir 'wordcraft.exe'
           $cli = Join-Path $dir 'wordcraft-cli.exe'
@@ -250,6 +412,13 @@ jobs:
           if ($open -notlike '*wordcraft.exe*%1*') { throw "DOCX Open With command missing: $open" }
           $version = & $cli --version | Out-String
           if ($LASTEXITCODE -ne 0 -or $version -notlike '*${{ github.sha }}*') { throw "installed CLI has wrong commit: $version" }
+          $guiVersion = & $exe --version | Out-String
+          if ($LASTEXITCODE -ne 0 -or $guiVersion -notlike '*${{ github.sha }}*') { throw "installed GUI has wrong commit: $guiVersion" }
+          $profile = Join-Path (Join-Path $env:RUNNER_TEMP 'upgrade-profile') 'AppData\WordCraft'
+          $after = Get-ChildItem $profile -Recurse -File | Where-Object { $_.Name -eq 'ui.json' -or $_.Extension -eq '.wcr' } | Sort-Object FullName | ForEach-Object { "$($_.FullName.Substring($profile.Length)) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" }
+          $before = Get-Content (Join-Path $env:RUNNER_TEMP 'upgrade-profile-state.txt')
+          if (Compare-Object $before $after) { throw 'MSI upgrade changed isolated preferences or recovery snapshots' }
+          if ((Get-Content (Join-Path $env:RUNNER_TEMP 'documents\keep.txt')) -ne 'owned by the user') { throw 'MSI upgrade changed user document' }
           $zip = (Get-ChildItem dist/release/*-windows-x64-portable.zip | Select-Object -First 1).FullName
           if (-not $zip) { throw 'portable ZIP was not produced' }
           $portable = Join-Path $env:RUNNER_TEMP 'portable'
@@ -267,10 +436,26 @@ jobs:
           WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
           WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
+          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
         run: |
           $env:WORDCRAFT_NATIVE_EXECUTABLE = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
           cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw "installed GUI smoke exited $LASTEXITCODE" }
+      - name: Launch upgraded MSI with preserved profile
+        shell: pwsh
+        env:
+          WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
+          WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
+          WORDCRAFT_NATIVE_EXPECT_INTERFACE_PERCENT: '125'
+          WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
+          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
+        run: |
+          $env:WORDCRAFT_NATIVE_EXECUTABLE = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
+          cargo test -p wordcraft --test native_window --locked -- isolated_native_window_smoke --ignored --nocapture --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "upgraded profile GUI smoke exited $LASTEXITCODE" }
       - name: Uninstall without deleting a user document
         shell: pwsh
         run: |
@@ -290,7 +475,7 @@ jobs:
           name: wordcraft-windows-x64-test-packages
           path: dist/release/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90
       - name: Preserve package failure diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -300,4 +485,4 @@ jobs:
             ${{ runner.temp }}/wordcraft-native-smoke-*/wordcraft.stderr.log
             ${{ runner.temp }}/wordcraft-native-smoke-*/*.png
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 90

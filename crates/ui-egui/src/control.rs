@@ -18,6 +18,8 @@ use serde_json::{Value, json};
 use crate::WordApp;
 
 pub struct ControlRequest {
+    /// Opaque transport trace identifier. Zero is used by in-process UI tests.
+    pub trace_id: u64,
     pub method: String,
     pub params: Value,
     pub reply: Sender<Value>,
@@ -25,14 +27,18 @@ pub struct ControlRequest {
 
 impl ControlRequest {
     pub fn new(method: impl Into<String>, params: Value) -> (Self, std::sync::mpsc::Receiver<Value>) {
+        Self::with_trace_id(0, method, params)
+    }
+
+    pub fn with_trace_id(trace_id: u64, method: impl Into<String>, params: Value) -> (Self, std::sync::mpsc::Receiver<Value>) {
         let (tx, rx) = std::sync::mpsc::channel();
-        (Self { method: method.into(), params, reply: tx }, rx)
+        (Self { trace_id, method: method.into(), params, reply: tx }, rx)
     }
 }
 
 pub enum Outcome {
     Done(Value),
-    Screenshot { path: Option<String> },
+    Screenshot { path: Option<String>, trace_id: u64 },
 }
 
 fn ok(v: Value) -> Outcome {
@@ -217,7 +223,7 @@ pub fn handle(app: &mut WordApp, ctx: &egui::Context, req: &ControlRequest) -> O
             app.synthetic.push(egui::Event::Text(t.to_string()));
             ok(json!({"queued": true}))
         }
-        "ui.screenshot" => Outcome::Screenshot { path: s("path").map(str::to_string) },
+        "ui.screenshot" => Outcome::Screenshot { path: s("path").map(str::to_string), trace_id: req.trace_id },
         "ui.render" => {
             let page = p.get("page").and_then(Value::as_u64).unwrap_or(1).max(1);
             let scale = f("scale").filter(|value| value.is_finite()).unwrap_or(2.0).clamp(0.1, 8.0);

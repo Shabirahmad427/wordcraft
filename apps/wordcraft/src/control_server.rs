@@ -9,6 +9,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
@@ -20,6 +21,7 @@ const MAX_LINE: usize = 1 << 20;
 
 /// A connection that sends no authorised request in this time is closed.
 const FIRST_REQUEST: Duration = Duration::from_secs(30);
+static NEXT_TRACE_ID: AtomicU64 = AtomicU64::new(1);
 
 /// The key file of a running control server; [`KeyFile::remove`] it when the window closes.
 pub struct KeyFile(PathBuf);
@@ -237,15 +239,43 @@ fn serve(stream: TcpStream, tx: Sender<ControlRequest>, ctx: egui::Context, key:
             }
             continue;
         }
-        let (req, rrx) = ControlRequest::new(method, params);
+        let trace_id = NEXT_TRACE_ID.fetch_add(1, Ordering::Relaxed);
+        let submitted = Instant::now();
+        log::debug!(target: "wordcraft::control_server", "control request {trace_id} received method={method}");
+        let (req, rrx) = ControlRequest::with_trace_id(trace_id, method.clone(), params);
         if tx.send(req).is_err() {
+            log::debug!(target: "wordcraft::control_server", "control request {trace_id} method={method} dispatch channel closed");
             break;
         }
+        log::debug!(target: "wordcraft::control_server", "control request {trace_id} method={method} submitted to UI");
         ctx.request_repaint();
-        let r = rrx.recv_timeout(Duration::from_secs(60)).unwrap_or_else(|_| json!({"ok": false, "error": "timeout"}));
+        let r = match rrx.recv_timeout(Duration::from_secs(60)) {
+            Ok(response) => {
+                log::debug!(
+                    target: "wordcraft::control_server",
+                    "control request {trace_id} method={method} response received from UI after {:?}",
+                    submitted.elapsed()
+                );
+                response
+            }
+            Err(error) => {
+                log::warn!(
+                    target: "wordcraft::control_server",
+                    "control request {trace_id} method={method} UI response timed out after {:?}: {error}",
+                    submitted.elapsed()
+                );
+                json!({"ok": false, "error": "timeout"})
+            }
+        };
         if !reply(r) {
+            log::debug!(target: "wordcraft::control_server", "control request {trace_id} method={method} TCP response write failed");
             break;
         }
+        log::debug!(
+            target: "wordcraft::control_server",
+            "control request {trace_id} method={method} response written after {:?}",
+            submitted.elapsed()
+        );
     }
 }
 

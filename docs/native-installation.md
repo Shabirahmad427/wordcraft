@@ -2,6 +2,27 @@
 
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress · **Target:** Linux, macOS and Windows packages
 
+## Phase 7T.1 upgrade verification
+
+The hosted package workflow now stages the published upstream v0.5.0 DEB, universal DMG and x64
+MSI, checks each against that release's `SHA256SUMS.txt`, and upgrades each disposable runner to
+the package built from the checked-out commit. It creates preferences and a dirty-document recovery
+snapshot under a runner-temporary profile before upgrading, hashes both, and checks they survive
+installation. Linux also checks a separate synthetic user document; macOS replaces the app bundle
+with a staged copy and restores the previous bundle if the replacement move fails; Windows checks
+the MSI uninstall identity/version and that exactly one current WordCraft entry remains. The
+upgraded app then loads the saved preference, verifies the recovery snapshot, runs the editing
+smoke, and quits normally. These checks exercise hosted package transitions only after this
+workflow revision passes; they do not prove every release upgrade or rollback path.
+
+The intermittent Windows `document.inspect` timeout has not been reproduced. The original failure
+and identical retry only establish that a control reply was absent at the five-second harness read
+deadline once. They do not establish whether the server received the request or the UI thread
+processed it. The native package workflow now emits an opaque request ID with bounded stage logs
+for request receipt, UI submission, UI dispatch, processing, response handoff and TCP response
+write. It records method names and durations, never keys or document text. The timeout remains a
+failure, and its duration is unchanged.
+
 WordCraft uses one Rust desktop application. The release scripts in `packaging/` make Linux
 AppImage, DEB, RPM, tarball and Flatpak outputs, a macOS DMG containing `WordCraft.app`, and
 Windows MSI and portable ZIP outputs. The release workflow builds additional architectures.
@@ -13,7 +34,7 @@ because that compositor has no input devices, this checks startup, rendering, re
 while the X11 job checks UI input.
 This fork has no published release yet; the upstream download links in the README are upstream
 artifacts and do not include this fork's Phase 7T changes. Successful native package jobs upload
-short-lived test artifacts. The macOS test artifact is ad-hoc signed and unnotarized; the Windows
+test artifacts retained for 90 days. The macOS test artifact is ad-hoc signed and unnotarized; the Windows
 test MSI is unsigned when signing secrets are unavailable.
 
 ## Install, update, roll back and remove
@@ -90,3 +111,4 @@ devices, so its Wayland result covers startup/recovery/quit, not Wayland input.
 |---|---|---|
 | 2026-10-13 | major | Audited existing packages, corrected the macOS DMG signature defect, added installed-package native smoke paths and documented current runtime limits |
 | 2026-10-14 | minor | Recorded passing Linux/macOS/Windows installed-package run, headless Wayland startup and one unexplained Windows control timeout followed by a passing retry |
+| 2026-10-14 | minor | Added checksum-verified v0.5.0-to-current upgrade scenarios and staged control-request tracing; hosted validation pending |

@@ -380,8 +380,8 @@ pub struct WordApp {
     pub integrated_titlebar: bool,
     control_rx: Option<std::sync::mpsc::Receiver<ControlRequest>>,
     shot_token: u64,
-    queued_shots: Vec<(u64, f64, u32)>,
-    pending_shots: Vec<(u64, Option<String>, std::sync::mpsc::Sender<Value>, f64)>,
+    queued_shots: Vec<(u64, f64, u32, u64)>,
+    pending_shots: Vec<(u64, Option<String>, std::sync::mpsc::Sender<Value>, f64, u64)>,
     pub(crate) synthetic: Vec<egui::Event>,
     /// Screen point bounds of selected rendered widgets, used by native UI automation.
     pub(crate) control_targets: std::collections::BTreeMap<String, egui::Rect>,
@@ -1635,15 +1635,29 @@ impl WordApp {
         let Some(rx) = self.control_rx.take() else { return };
         while let Ok(req) = rx.try_recv() {
             let reply = req.reply.clone();
+            let trace_id = req.trace_id;
+            let method = req.method.clone();
+            let started = std::time::Instant::now();
+            log::debug!(target: "wordcraft_ui_egui::control", "control request {trace_id} method={method} dispatched on UI thread");
             match control::handle(self, ctx, &req) {
                 control::Outcome::Done(v) => {
-                    let _ = reply.send(v);
+                    log::debug!(
+                        target: "wordcraft_ui_egui::control",
+                        "control request {trace_id} method={method} processing finished after {:?}",
+                        started.elapsed()
+                    );
+                    if reply.send(v).is_ok() {
+                        log::debug!(target: "wordcraft_ui_egui::control", "control request {trace_id} method={method} response queued for transport");
+                    } else {
+                        log::debug!(target: "wordcraft_ui_egui::control", "control request {trace_id} method={method} response receiver closed");
+                    }
                 }
-                control::Outcome::Screenshot { path } => {
+                control::Outcome::Screenshot { path, trace_id } => {
                     self.shot_token += 1;
                     let token = self.shot_token;
-                    self.queued_shots.push((token, now_ms() + 120.0, 0));
-                    self.pending_shots.push((token, path, reply, now_ms() + 8000.0));
+                    log::debug!(target: "wordcraft_ui_egui::control", "control request {trace_id} method={method} deferred for screenshot token={token}");
+                    self.queued_shots.push((token, now_ms() + 120.0, 0, trace_id));
+                    self.pending_shots.push((token, path, reply, now_ms() + 8000.0, trace_id));
                 }
             }
         }
@@ -1652,7 +1666,7 @@ impl WordApp {
 
     fn issue_screenshots(&mut self, ctx: &egui::Context) {
         let now = now_ms();
-        self.queued_shots.retain_mut(|(token, at, frames)| {
+        self.queued_shots.retain_mut(|(token, at, frames, _trace_id)| {
             *frames += 1;
             if now >= *at && *frames >= 3 {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(*token)));
@@ -1685,15 +1699,18 @@ impl WordApp {
         });
         for (token, image) in events {
             if let Some(i) = self.pending_shots.iter().position(|(t, ..)| *t == token) {
-                let (_, path, reply, _) = self.pending_shots.remove(i);
-                let _ = reply.send(control::save_screenshot(&image, path.as_deref()));
+                let (_, path, reply, _, trace_id) = self.pending_shots.remove(i);
+                let result = control::save_screenshot(&image, path.as_deref());
+                log::debug!(target: "wordcraft_ui_egui::control", "control request {trace_id} screenshot result delivered token={token}");
+                let _ = reply.send(result);
             }
         }
         let now = now_ms();
-        self.pending_shots.retain(|(_, _, reply, deadline)| {
+        self.pending_shots.retain(|(_, _, reply, deadline, trace_id)| {
             if now < *deadline {
                 return true;
             }
+            log::warn!(target: "wordcraft_ui_egui::control", "control request {trace_id} screenshot response timed out");
             let _ = reply.send(json!({"ok": false, "error": "no frame was presented (window hidden?); use ui.render"}));
             false
         });

@@ -27,6 +27,13 @@ impl Profile {
                 std::env::temp_dir()
             }
         });
+        if let Some(path) = std::env::var_os("WORDCRAFT_NATIVE_PROFILE_PATH").map(PathBuf::from) {
+            std::fs::create_dir_all(&path).unwrap_or_else(|error| panic!("create isolated upgrade profile {}: {error}", path.display()));
+            let root = std::fs::canonicalize(&temp_root).expect("canonicalize isolated profile root");
+            let path = std::fs::canonicalize(&path).expect("canonicalize isolated upgrade profile");
+            assert!(path != root && path.starts_with(&root), "upgrade profile must be a child of the isolated test root: {}", path.display());
+            return Self(path);
+        }
         for attempt in 0..32u8 {
             let path = temp_root.join(format!("wordcraft-native-smoke-{}-{stamp}-{attempt}", std::process::id()));
             match std::fs::create_dir(&path) {
@@ -80,6 +87,7 @@ struct Control {
 impl Control {
     fn call(&mut self, method: &str, params: Value) -> Value {
         self.next_id += 1;
+        let started = Instant::now();
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], self.port));
         let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))
             .unwrap_or_else(|error| panic!("could not connect to WordCraft control channel: {error}"));
@@ -87,9 +95,17 @@ impl Control {
         serde_json::to_writer(&mut stream, &json!({"id": self.next_id, "key": self.key, "method": method, "params": params}))
             .expect("serialize control request");
         stream.write_all(b"\n").expect("send control request");
+        if std::env::var("WORDCRAFT_NATIVE_CONTROL_TRACE").as_deref() == Ok("1") {
+            eprintln!("native control request id={} method={method} submitted", self.next_id);
+        }
         let mut response = String::new();
-        BufReader::new(stream).read_line(&mut response).expect("read control response");
+        BufReader::new(stream)
+            .read_line(&mut response)
+            .unwrap_or_else(|error| panic!("read control response for method={method} id={} after {:?}: {error}", self.next_id, started.elapsed()));
         let response: Value = serde_json::from_str(&response).expect("parse control response");
+        if std::env::var("WORDCRAFT_NATIVE_CONTROL_TRACE").as_deref() == Ok("1") {
+            eprintln!("native control request id={} method={method} response received after {:?}", self.next_id, started.elapsed());
+        }
         assert_eq!(response.get("ok").and_then(Value::as_bool), Some(true), "{method} failed: {response}");
         response.get("result").cloned().unwrap_or(Value::Null)
     }
@@ -142,7 +158,7 @@ fn spawn_packaged_macos_app(profile: &Profile, port: u16, bundle: &Path, stderr_
     assert!(bundle.join("Contents/Info.plist").is_file(), "packaged app has no Info.plist: {}", bundle.display());
     assert!(bundle.join("Contents/MacOS/WordCraft").is_file(), "packaged app has no executable: {}", bundle.display());
     let empty_fonts = profile.0.join("empty-fonts");
-    std::fs::create_dir(&empty_fonts).expect("create isolated empty font directory");
+    std::fs::create_dir_all(&empty_fonts).expect("create isolated empty font directory");
     let mut command = Command::new("/usr/bin/open");
     if let Some(arch) = std::env::var_os("WORDCRAFT_NATIVE_MACOS_ARCH") {
         command.arg("--arch").arg(arch);
@@ -163,6 +179,9 @@ fn spawn_packaged_macos_app(profile: &Profile, port: u16, bundle: &Path, stderr_
         .arg("--env")
         .arg(format!("WORDCRAFT_FONT_DIRS={}", empty_fonts.display()))
         .stdout(Stdio::null());
+    if let Some(rust_log) = std::env::var_os("RUST_LOG") {
+        command.arg("--env").arg(format!("RUST_LOG={}", rust_log.to_string_lossy()));
+    }
     if no_prefs {
         command.arg("--env").arg("WORDCRAFT_NO_PREFS=1");
     } else {
@@ -188,7 +207,7 @@ fn spawn_macos_app_bundle(profile: &Profile, port: u16, executable: &str, stderr
     let profile_path = profile.0.to_string_lossy();
     let stderr_display = stderr_path.to_string_lossy();
     let empty_fonts = profile.0.join("empty-fonts");
-    std::fs::create_dir(&empty_fonts).expect("create isolated empty font directory");
+    std::fs::create_dir_all(&empty_fonts).expect("create isolated empty font directory");
     let empty_fonts = empty_fonts.to_string_lossy();
     let no_prefs_env = if no_prefs { "export WORDCRAFT_NO_PREFS=1\n" } else { "unset WORDCRAFT_NO_PREFS\n" };
     let launcher = format!(
@@ -406,12 +425,27 @@ fn isolated_native_window_smoke() {
     let port = free_port();
     let executable = env!("CARGO_BIN_EXE_wordcraft");
     let stderr_path = profile.0.join("wordcraft.stderr.log");
+    let reuse_profile = std::env::var_os("WORDCRAFT_NATIVE_PROFILE_PATH").is_some();
     // Keep preferences, recovery, keys, and logs inside this disposable profile. On macOS the
     // bundle launcher also redirects HOME and Cocoa's fixed home before starting the binary.
-    let mut process = AppProcess(spawn_native_app(&profile, port, executable, &stderr_path, true));
+    let mut process = AppProcess(spawn_native_app(&profile, port, executable, &stderr_path, !reuse_profile));
     let key_path = profile.settings().join(format!("control-key.local-{port}"));
     let key = wait_for_key(&mut process.0, &key_path, &stderr_path);
     let mut control = Control { port, key, next_id: 0 };
+
+    if reuse_profile {
+        let expected_percent = std::env::var("WORDCRAFT_NATIVE_EXPECT_INTERFACE_PERCENT")
+            .expect("upgrade smoke needs an expected persisted interface size")
+            .parse::<u64>()
+            .expect("parse expected interface size");
+        let state = control.call("ui.inspect", json!({}));
+        assert_eq!(
+            state.pointer("/ui/interfaceSize").and_then(Value::as_u64),
+            Some(expected_percent),
+            "upgraded app did not load the isolated profile preference: {state}"
+        );
+        assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
+    }
 
     let page = wait_for_page(&mut control);
     let px = page[0] + 105.0;
@@ -543,14 +577,22 @@ fn isolated_native_window_smoke() {
     assert!(status.success(), "native app launch did not finish successfully: {status}; stderr: {}", read_log(&stderr_path));
     assert_app_exit_callback(&stderr_path);
     assert!(!key_path.exists(), "normal shutdown left its control key at {}", key_path.display());
-    for path in [
-        profile.settings().join("ui.json"),
-        profile.settings().join("recovery"),
-        profile.settings().join("logs"),
-        profile.settings().join("fonts"),
-        profile.settings().join("custom-dictionary.txt"),
-    ] {
-        assert!(!path.exists(), "WORDCRAFT_NO_PREFS=1 must not create {}", path.display());
+    if reuse_profile {
+        let saved: Value =
+            serde_json::from_slice(&std::fs::read(profile.settings().join("ui.json")).expect("upgraded app retained profile preferences"))
+                .expect("parse persisted upgrade preferences");
+        assert_eq!(saved.pointer("/interfaceSize").and_then(Value::as_u64), Some(125));
+        assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
+    } else {
+        for path in [
+            profile.settings().join("ui.json"),
+            profile.settings().join("recovery"),
+            profile.settings().join("logs"),
+            profile.settings().join("fonts"),
+            profile.settings().join("custom-dictionary.txt"),
+        ] {
+            assert!(!path.exists(), "WORDCRAFT_NO_PREFS=1 must not create {}", path.display());
+        }
     }
 }
 
@@ -572,6 +614,7 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
     let key = wait_for_key(&mut process.0, &key_path, &stderr_path);
     let mut control = Control { port, key, next_id: 0 };
     wait_for_page(&mut control);
+    control.execute("ui.interfaceSize", json!({"percent": 125}));
     control.execute("text.insert", json!({"text": "checkpoint before native shutdown"}));
     wait_for_document_text(&mut control, "checkpoint before native shutdown", &profile);
     control.call("app.quit", json!({}));
@@ -580,16 +623,21 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
     assert!(status.success(), "native app launch did not finish successfully: {status}; stderr: {}", read_log(&stderr_path));
     assert_app_exit_callback(&stderr_path);
     assert!(!key_path.exists(), "normal shutdown left its control key at {}", key_path.display());
+    let saved: Value = serde_json::from_slice(&std::fs::read(profile.settings().join("ui.json")).expect("native shutdown saved UI preferences"))
+        .expect("parse saved native shutdown preferences");
+    assert_eq!(saved.pointer("/interfaceSize").and_then(Value::as_u64), Some(125));
+    assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
+}
+
+fn assert_recovery_snapshot(profile: &Profile, expected_text: &str) {
     let store = wordcraft_engine::recovery::Store::new(profile.settings().join("recovery")).expect("open isolated recovery store");
     let entries = store.list().expect("read isolated recovery entries");
     assert!(!entries.is_empty(), "native shutdown did not preserve the dirty document in recovery");
     assert!(
         entries.iter().any(|entry| {
-            store
-                .load(&entry.id)
-                .is_ok_and(|snapshot| snapshot.doc.plain_text(wordcraft_doc::StoryRef::Body).contains("checkpoint before native shutdown"))
+            store.load(&entry.id).is_ok_and(|snapshot| snapshot.doc.plain_text(wordcraft_doc::StoryRef::Body).contains(expected_text))
         }),
-        "recovery entries do not contain the latest unsaved text"
+        "recovery entries do not contain {expected_text:?}"
     );
 }
 

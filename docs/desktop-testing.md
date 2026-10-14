@@ -24,6 +24,13 @@ A universal DMG also passed the same two smokes with its x86_64 GUI selected thr
 LaunchServices `open --arch x86_64` under Rosetta; this does not establish Intel Mac hardware
 behavior.
 
+The updated package workflow stages upstream v0.5.0 packages, verifies their checksums, and
+tests upgrades to the current build with isolated preferences and recovery snapshots. It also adds
+Windows control-request lifecycle logs from authenticated receipt through UI-thread dispatch and
+TCP response. These checks have not yet run on hosted runners and are not runtime evidence. The
+prior Windows timeout remains unexplained; its retry passed without reproducing the issue. New
+package artifacts are retained for 90 days.
+
 ## Phase 7S current evidence
 
 The local host is Apple Silicon macOS (`aarch64-apple-darwin`). WordCraft uses eframe 0.36.2 with
