@@ -1,6 +1,6 @@
 # Desktop GUI validation
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Hosted installed-package matrix and one-off Windows timeout recorded · **Target:** WordCraft desktop on Linux, macOS and Windows
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Corrected baseline package assertions; hosted upgrade rerun pending · **Target:** WordCraft desktop on Linux, macOS and Windows
 
 This document separates a live desktop window, egui event-driven tests, offscreen rendering and
 hosted builds. A CI job that compiles or tests the GUI is not evidence that a person used a desktop
@@ -24,12 +24,16 @@ A universal DMG also passed the same two smokes with its x86_64 GUI selected thr
 LaunchServices `open --arch x86_64` under Rosetta; this does not establish Intel Mac hardware
 behavior.
 
-The updated package workflow stages upstream v0.5.0 packages, verifies their checksums, and
-tests upgrades to the current build with isolated preferences and recovery snapshots. It also adds
-Windows control-request lifecycle logs from authenticated receipt through UI-thread dispatch and
-TCP response. These checks have not yet run on hosted runners and are not runtime evidence. The
-prior Windows timeout remains unexplained; its retry passed without reproducing the issue. New
-package artifacts are retained for 90 days.
+The updated package workflow stages upstream v0.5.0 packages, verifies their checksums, and tests
+upgrades to the current build with isolated preferences and recovery snapshots. Its first hosted
+run, [38510684885](https://github.com/Shabirahmad427/wordcraft/actions/runs/38510684885), stopped
+before upgrade because the baseline assertions were incorrect: v0.5.0's DEB lacks the CLI and
+reports Debian version `0.5.0-1`; its macOS and Windows apps exited normally but lack the current
+source's exit-callback log marker. Those checks have been corrected and await a hosted rerun. On
+the Windows v0.5.0 baseline, `document.inspect` completed in 277 ms and `app.quit` returned in
+387 ms with normal process exit. This does not reproduce the earlier timeout in the newer Windows
+package; its cause remains unknown. Request traces identify lifecycle stages without logging keys
+or document text. New package artifacts are retained for 90 days.
 
 ## Phase 7S current evidence
 
@@ -210,3 +214,4 @@ This protocol has not been run. No Word 365 compatibility result is claimed.
 | 2026-10-13 | minor | Printing run 38476284508 passed Linux, macOS and Windows native smoke workflows, including editing, table insertion, Undo/Redo and normal quit; recorded native versus headless evidence separately |
 | 2026-10-13 | major | Recorded corrected DMG installation and packaged-app LaunchServices Open With, editing and quit evidence separately from source-built native smokes |
 | 2026-10-14 | minor | Recorded the completed installed-package matrix, Linux Weston startup check and unexplained one-off Windows control timeout followed by a passing retry |
+| 2026-10-14 | minor | Recorded v0.5.0 baseline assertion failures, the Windows legacy-app request timings and corrected hosted rerun status |

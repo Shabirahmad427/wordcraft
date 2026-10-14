@@ -1,6 +1,6 @@
 # Native installation and package validation
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress · **Target:** Linux, macOS and Windows packages
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress; corrected upgrade checks awaiting hosted rerun · **Target:** Linux, macOS and Windows packages
 
 ## Phase 7T.1 upgrade verification
 
@@ -15,10 +15,15 @@ upgraded app then loads the saved preference, verifies the recovery snapshot, ru
 smoke, and quits normally. These checks exercise hosted package transitions only after this
 workflow revision passes; they do not prove every release upgrade or rollback path.
 
-The intermittent Windows `document.inspect` timeout has not been reproduced. The original failure
-and identical retry only establish that a control reply was absent at the five-second harness read
-deadline once. They do not establish whether the server received the request or the UI thread
-processed it. The native package workflow now emits an opaque request ID with bounded stage logs
+The first execution of the new matrix, [run 38510684885](https://github.com/Shabirahmad427/wordcraft/actions/runs/38510684885), stopped on baseline assertions before any package upgrade. Inspection of the published v0.5.0 DEB showed `Version: 0.5.0-1` and only `/usr/bin/wordcraft`; the test had assumed a bare `0.5.0` version and a CLI binary. The old macOS and Windows apps received `app.quit` and exited with status 0, but did not emit the exit-callback log marker added to the newer source. The workflow now reads package metadata directly, and the baseline recovery test checks successful exit, preference/recovery persistence and control-key cleanup; the marker assertion remains in the current-app smoke. The corrected hosted rerun is pending.
+
+The intermittent Windows `document.inspect` timeout has not been reproduced. On the Windows v0.5.0
+baseline in run 38510684885, tracing recorded `document.inspect` returning in 277 ms and `app.quit`
+returning in 387 ms, followed by process exit status 0. These timings cover the old baseline app
+and do not explain the earlier timeout in the newer package. The original failure and identical
+retry only establish that a control reply was absent at the five-second harness read deadline once.
+They do not establish whether the server received the request or the UI thread processed it. The
+native package workflow now emits an opaque request ID with bounded stage logs
 for request receipt, UI submission, UI dispatch, processing, response handoff and TCP response
 write. It records method names and durations, never keys or document text. The timeout remains a
 failure, and its duration is unchanged.
@@ -112,3 +117,4 @@ devices, so its Wayland result covers startup/recovery/quit, not Wayland input.
 | 2026-10-13 | major | Audited existing packages, corrected the macOS DMG signature defect, added installed-package native smoke paths and documented current runtime limits |
 | 2026-10-14 | minor | Recorded passing Linux/macOS/Windows installed-package run, headless Wayland startup and one unexplained Windows control timeout followed by a passing retry |
 | 2026-10-14 | minor | Added checksum-verified v0.5.0-to-current upgrade scenarios and staged control-request tracing; hosted validation pending |
+| 2026-10-14 | minor | Fixed v0.5.0 package metadata and legacy exit-marker assertions after first matrix run; corrected hosted rerun pending |

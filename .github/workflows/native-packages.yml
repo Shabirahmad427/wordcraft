@@ -81,10 +81,9 @@ jobs:
           "$tar_cli" --version | grep '${{ github.sha }}'
           sudo apt-get install -y '${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.5.0-linux-x86_64.deb'
           test -x /usr/bin/wordcraft
-          test -x /usr/bin/wordcraft-cli
-          test "$(dpkg-query -W -f='${Version}' wordcraft)" = 0.5.0
+          baseline_version="$(dpkg-deb -f '${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.5.0-linux-x86_64.deb' Version)"
+          test "$(dpkg-query -W -f='${Version}' wordcraft)" = "$baseline_version"
           /usr/bin/wordcraft --version | grep '0.5.0'
-          /usr/bin/wordcraft-cli --version | grep '0.5.0'
           desktop-file-validate /usr/share/applications/ai.storyteller.wordcraft.desktop
           grep -q 'Exec=wordcraft %F' /usr/share/applications/ai.storyteller.wordcraft.desktop
           grep -q 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' /usr/share/applications/ai.storyteller.wordcraft.desktop
@@ -114,9 +113,11 @@ jobs:
           set -euo pipefail
           current=(dist/release/wordcraft-*-linux-x86_64.deb)
           test "${#current[@]}" -eq 1
-          current_version="$(basename "${current[0]}" | sed -E 's/^wordcraft-(.*)-linux-x86_64\.deb$/\1/')"
+          package_version="$(dpkg-deb -f "${current[0]}" Version)"
           sudo apt-get install -y "${current[0]}"
-          test "$(dpkg-query -W -f='${Version}' wordcraft)" = "$current_version"
+          test "$(dpkg-query -W -f='${Version}' wordcraft)" = "$package_version"
+          test -x /usr/bin/wordcraft
+          test -x /usr/bin/wordcraft-cli
           /usr/bin/wordcraft --version | grep "${GITHUB_SHA:0:8}"
           /usr/bin/wordcraft-cli --version | grep '${{ github.sha }}'
           profile='${{ runner.temp }}/upgrade-profile/xdg/wordcraft'
