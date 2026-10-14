@@ -237,7 +237,10 @@ fn app_icon() -> Option<egui::IconData> {
 
 /// The commit the build came from (short), or `dev`.
 fn build_sha() -> &'static str {
-    option_env!("WORDCRAFT_BUILD_SHA").map(|s| s.get(..8).unwrap_or(s)).unwrap_or("dev")
+    option_env!("WORDCRAFT_BUILD_SHA")
+        .filter(|sha| !sha.is_empty())
+        .map(|sha| if sha.ends_with("-dirty") { sha } else { sha.get(..8).unwrap_or(sha) })
+        .unwrap_or("dev")
 }
 
 fn main() -> eframe::Result {

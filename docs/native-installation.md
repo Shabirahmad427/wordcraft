@@ -8,6 +8,13 @@ Windows MSI and portable ZIP outputs. The release workflow builds additional arc
 The [native package workflow](../.github/workflows/native-packages.yml) installs generated DEB,
 DMG and x64 MSI packages on disposable hosted runners and runs the same native editing smoke used
 for source builds. A release is published only by the separate `release` branch workflow.
+The Linux job also launches the installed app against headless Weston with native Wayland selected;
+because that compositor has no input devices, this checks startup, rendering, recovery and quit,
+while the X11 job checks UI input.
+This fork has no published release yet; the upstream download links in the README are upstream
+artifacts and do not include this fork's Phase 7T changes. Successful native package jobs upload
+short-lived test artifacts. The macOS test artifact is ad-hoc signed and unnotarized; the Windows
+test MSI is unsigned when signing secrets are unavailable.
 
 ## Install, update, roll back and remove
 
@@ -31,8 +38,9 @@ when trying older application versions.
 - The package scripts set `WORDCRAFT_BUILD_SHA` from the checkout. Installed
   `wordcraft-cli --version` prints the full commit; the GUI `--version` prints its short commit.
   The macOS `Info.plist` stores the full commit, and Windows VERSIONINFO has a `BuildCommit` field.
-  A local build from a dirty checkout identifies its base commit, not an exact source snapshot;
-  published artifacts come from clean GitHub Actions checkouts.
+  A local build from a dirty checkout appends `-dirty` to its base commit, so it cannot be
+  mistaken for an exact source snapshot; published artifacts come from clean GitHub Actions
+  checkouts.
 - The local Apple Silicon DMG in this phase is **ad-hoc signed and not notarized**. The release
   workflow uses a configured signing identity and notarization credentials when available. No
   local notarization claim is made.
@@ -54,13 +62,23 @@ no-preferences test left no preferences, recovery directory, logs or user fonts 
 The app's exit callback ran, its control key was removed, and no process from the test bundle
 remained. These tests use injected control events, not physical keyboard or mouse input.
 
+A locally built universal DMG contained both arm64 and x86_64 GUI/CLI slices and its copied app
+passed strict signature verification. The x86_64 GUI was launched with LaunchServices
+`open --arch x86_64` under Rosetta and passed both isolated native smokes; the x86_64 CLI also
+ran through `arch -x86_64`. No Intel Mac hardware was used.
+
 The earlier local `kLSNoExecutableErr` from a different native launch has no established cause.
 This successful packaged launch does not explain that older error. Finder default selection,
-Spotlight indexing after an `/Applications` install, macOS Intel runtime, Linux Wayland, physical
+Spotlight indexing after an `/Applications` install, macOS Intel hardware, Linux Wayland, physical
 printing, and Windows ARM64 GUI runtime need separate evidence. The existing ARM64 MSI job checks
 native installation and CLI execution, not the GUI. The Flatpak bundle script installs and runs
-the CLI, not a sandboxed GUI edit workflow. The new hosted DEB/MSI package workflow has not yet
-completed at the time of this entry; its results must be recorded before calling Phase 7T done.
+the CLI, not a sandboxed GUI edit workflow. In hosted package run 38479505495, the installed DEB
+and x64 MSI both passed their native edit/save/export/quit smokes and uninstall preservation
+checks. The macOS DMG mounted, copied and passed strict signature verification, but its job stopped
+at an incorrectly ordered `lipo -verify_arch` check before the packaged GUI smoke. That assertion
+is corrected in the current follow-up; the full three-platform package matrix must pass before
+Phase 7T is complete. The follow-up also adds Wayland startup and recovery/quit coverage; it does
+not claim Wayland input coverage.
 
 ## Revision history
 

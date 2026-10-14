@@ -39,7 +39,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libxcursor-dev \
             libxrandr-dev libxi-dev libgtk-3-dev libfontconfig1-dev libfreetype-dev libvulkan1 \
-            mesa-vulkan-drivers openbox x11-utils xvfb desktop-file-utils
+            mesa-vulkan-drivers openbox x11-utils xvfb weston desktop-file-utils xdg-utils
       - uses: storytold/craft-common-actions/actions/install-nfpm@8f081ff5db115de44313c9db09415c359bf2ca01
         with:
           deb-arch: amd64
@@ -60,6 +60,11 @@ jobs:
           test -f dist/release/wordcraft-*-linux-x86_64.deb
           test -f dist/release/wordcraft-*-linux-x86_64.rpm
           test -f dist/release/wordcraft-*-linux-x86_64.tar.gz
+          mkdir -p '${{ runner.temp }}/tar-package'
+          tar -xzf dist/release/wordcraft-*-linux-x86_64.tar.gz -C '${{ runner.temp }}/tar-package'
+          tar_cli="$(find '${{ runner.temp }}/tar-package' -path '*/bin/wordcraft-cli' -type f -print -quit)"
+          test -x "$tar_cli"
+          "$tar_cli" --version | grep '${{ github.sha }}'
           sudo apt-get install -y ./dist/release/wordcraft-*-linux-x86_64.deb
           test -x /usr/bin/wordcraft
           test -x /usr/bin/wordcraft-cli
@@ -92,18 +97,49 @@ jobs:
             xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"
             cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
           '
+      - name: Resolve DOCX through the installed XDG MIME entry
+        run: |
+          set -euo pipefail
+          docx="$(find '${{ runner.temp }}' -name desktop-smoke.docx -type f -print -quit)"
+          test -n "$docx"
+          mime=application/vnd.openxmlformats-officedocument.wordprocessingml.document
+          test "$(xdg-mime query filetype "$docx")" = "$mime"
+          mkdir -p '${{ runner.temp }}/xdg-association'
+          export XDG_CONFIG_HOME='${{ runner.temp }}/xdg-association'
+          xdg-mime default ai.storyteller.wordcraft.desktop "$mime"
+          test "$(xdg-mime query default "$mime")" = ai.storyteller.wordcraft.desktop
+      - name: Start and quit the installed app under native Wayland
+        env:
+          WORDCRAFT_NATIVE_EXECUTABLE: /usr/bin/wordcraft
+          WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
+          WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
+          WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WGPU_BACKEND: gl
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: bash packaging/linux/wayland-smoke.sh
       - name: Uninstall without deleting a user document
         run: |
           sudo apt-get remove -y wordcraft
           test ! -e /usr/bin/wordcraft
           test ! -e /usr/share/applications/ai.storyteller.wordcraft.desktop
           grep -q 'owned by the user' '${{ runner.temp }}/documents/keep.txt'
+          find '${{ runner.temp }}' -path '*/xdg/wordcraft/ui.json' -type f | grep -q .
+          find '${{ runner.temp }}' -path '*/xdg/wordcraft/recovery/*.wcr' -type f | grep -q .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wordcraft-linux-x86_64-test-packages
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
       - name: Preserve package failure diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-package-diagnostics
-          path: ${{ runner.temp }}/wordcraft-native-smoke-*
+          path: |
+            ${{ runner.temp }}/wordcraft-native-smoke-*/wordcraft.stderr.log
+            ${{ runner.temp }}/wordcraft-native-smoke-*/*.png
+            ${{ runner.temp }}/wordcraft-wayland.*/weston.log
           if-no-files-found: warn
           retention-days: 7
 
@@ -137,8 +173,13 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")" = WordCraft
           test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftBuildCommit' "$app/Contents/Info.plist")" = '${{ github.sha }}'
           codesign --verify --strict --deep "$app"
-          lipo -verify_arch arm64 "$app/Contents/MacOS/WordCraft"
+          lipo -archs "$app/Contents/MacOS/WordCraft" | grep -qw arm64
           "$app/Contents/MacOS/WordCraft" --version | grep "${GITHUB_SHA:0:8}"
+          mkdir -p '${{ runner.temp }}/cli-zip'
+          ditto -x -k dist/release/wordcraft-cli-*-macos-aarch64.zip '${{ runner.temp }}/cli-zip'
+          cli="$(find '${{ runner.temp }}/cli-zip' -name wordcraft-cli -type f -print -quit)"
+          test -x "$cli"
+          "$cli" --version | grep '${{ github.sha }}'
           printf 'owned by the user\n' > '${{ runner.temp }}/documents/keep.txt'
       - name: Edit, save, export and quit the installed app through LaunchServices
         env:
@@ -153,12 +194,22 @@ jobs:
           rm -rf '${{ runner.temp }}/Applications/WordCraft.app'
           test ! -e '${{ runner.temp }}/Applications/WordCraft.app'
           grep -q 'owned by the user' '${{ runner.temp }}/documents/keep.txt'
+          find '${{ runner.temp }}' -path '*/Library/Application Support/WordCraft/ui.json' -type f | grep -q .
+          find '${{ runner.temp }}' -path '*/Library/Application Support/WordCraft/recovery/*.wcr' -type f | grep -q .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wordcraft-macos-arm64-test-packages
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
       - name: Preserve package failure diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-package-diagnostics
-          path: ${{ runner.temp }}/wordcraft-native-smoke-*
+          path: |
+            ${{ runner.temp }}/wordcraft-native-smoke-*/wordcraft.stderr.log
+            ${{ runner.temp }}/wordcraft-native-smoke-*/*.png
           if-no-files-found: warn
           retention-days: 7
 
@@ -199,6 +250,14 @@ jobs:
           if ($open -notlike '*wordcraft.exe*%1*') { throw "DOCX Open With command missing: $open" }
           $version = & $cli --version | Out-String
           if ($LASTEXITCODE -ne 0 -or $version -notlike '*${{ github.sha }}*') { throw "installed CLI has wrong commit: $version" }
+          $zip = (Get-ChildItem dist/release/*-windows-x64-portable.zip | Select-Object -First 1).FullName
+          if (-not $zip) { throw 'portable ZIP was not produced' }
+          $portable = Join-Path $env:RUNNER_TEMP 'portable'
+          Expand-Archive $zip $portable
+          $portableCli = (Get-ChildItem $portable -Recurse -Filter wordcraft-cli.exe | Select-Object -First 1).FullName
+          if (-not $portableCli) { throw 'portable ZIP has no CLI' }
+          $portableVersion = & $portableCli --version | Out-String
+          if ($LASTEXITCODE -ne 0 -or $portableVersion -notlike '*${{ github.sha }}*') { throw "portable CLI has wrong commit: $portableVersion" }
           $documents = Join-Path $env:RUNNER_TEMP 'documents'
           New-Item -ItemType Directory -Force $documents | Out-Null
           Set-Content (Join-Path $documents 'keep.txt') 'owned by the user'
@@ -220,11 +279,25 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "MSI uninstall exited $($p.ExitCode)" }
           if (Test-Path (Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe')) { throw 'uninstall left GUI executable' }
           if ((Get-Content (Join-Path $env:RUNNER_TEMP 'documents\keep.txt')) -ne 'owned by the user') { throw 'uninstall changed user document' }
+          $profiles = Get-ChildItem $env:RUNNER_TEMP -Directory -Filter 'wordcraft-native-smoke-*'
+          $retained = @($profiles | Where-Object {
+            (Test-Path (Join-Path $_.FullName 'AppData\WordCraft\ui.json')) -and
+            (Get-ChildItem (Join-Path $_.FullName 'AppData\WordCraft\recovery') -Filter '*.wcr' -ErrorAction SilentlyContinue)
+          })
+          if ($retained.Count -eq 0) { throw 'uninstall removed isolated preferences or recovery entries' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wordcraft-windows-x64-test-packages
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
       - name: Preserve package failure diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-package-diagnostics
-          path: ${{ runner.temp }}/wordcraft-native-smoke-*
+          path: |
+            ${{ runner.temp }}/wordcraft-native-smoke-*/wordcraft.stderr.log
+            ${{ runner.temp }}/wordcraft-native-smoke-*/*.png
           if-no-files-found: warn
           retention-days: 7

@@ -144,6 +144,9 @@ fn spawn_packaged_macos_app(profile: &Profile, port: u16, bundle: &Path, stderr_
     let empty_fonts = profile.0.join("empty-fonts");
     std::fs::create_dir(&empty_fonts).expect("create isolated empty font directory");
     let mut command = Command::new("/usr/bin/open");
+    if let Some(arch) = std::env::var_os("WORDCRAFT_NATIVE_MACOS_ARCH") {
+        command.arg("--arch").arg(arch);
+    }
     command
         .arg("-n")
         .arg("-W")

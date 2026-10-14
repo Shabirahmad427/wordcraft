@@ -53,7 +53,12 @@ $Dist = if ($env:DIST) { $env:DIST } else { Join-Path $Root 'dist\release' }
 $TargetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $Root 'target' }
 New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 
-if (-not $env:WORDCRAFT_BUILD_SHA) { $env:WORDCRAFT_BUILD_SHA = (git -C $Root rev-parse HEAD 2>$null) }
+if (-not $env:WORDCRAFT_BUILD_SHA) {
+  $env:WORDCRAFT_BUILD_SHA = (git -C $Root rev-parse HEAD 2>$null)
+  if ($env:WORDCRAFT_BUILD_SHA -and (git -C $Root status --porcelain --untracked-files=normal 2>$null)) {
+    $env:WORDCRAFT_BUILD_SHA += '-dirty'
+  }
+}
 if (-not $env:WORDCRAFT_BUILD_DATE) { $env:WORDCRAFT_BUILD_DATE = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd') }
 
 Write-Output "WordCraft $Version for Windows $Arch ($Target)"

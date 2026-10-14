@@ -89,6 +89,7 @@ jobs:
           WGPU_BACKEND: gl
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
+          # shellcheck disable=SC2016
           xvfb-run -a bash -euo pipefail -c '
             openbox --sm-disable &
             wm_pid=$!

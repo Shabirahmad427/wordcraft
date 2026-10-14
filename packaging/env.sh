@@ -34,6 +34,9 @@ export DIST
 
 if [ -z "${WORDCRAFT_BUILD_SHA:-}" ]; then
   WORDCRAFT_BUILD_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+  if [ -n "$WORDCRAFT_BUILD_SHA" ] && [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+    WORDCRAFT_BUILD_SHA="$WORDCRAFT_BUILD_SHA-dirty"
+  fi
 fi
 export WORDCRAFT_BUILD_SHA
 export WORDCRAFT_BUILD_DATE="${WORDCRAFT_BUILD_DATE:-$(date -u +%Y-%m-%d)}"

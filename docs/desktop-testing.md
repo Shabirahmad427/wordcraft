@@ -17,6 +17,9 @@ developer's preferences or recovery data. This is a real window controlled throu
 events; it is not physical mouse or keyboard input. The [installation audit](native-installation.md)
 records the DMG signature defect and correction. Hosted Linux/macOS/Windows *installed-package*
 jobs are pending; Phase 7S's source-built native smoke does not substitute for them.
+A universal DMG also passed the same two smokes with its x86_64 GUI selected through
+LaunchServices `open --arch x86_64` under Rosetta; this does not establish Intel Mac hardware
+behavior.
 
 ## Phase 7S current evidence
 

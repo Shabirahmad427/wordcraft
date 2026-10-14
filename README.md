@@ -221,6 +221,9 @@ and estimates: [ROADMAP.md](ROADMAP.md) and [where we fall short](docs/gaps.md).
 
 **Download WordCraft** from GitHub: the [latest release](https://github.com/storytold/wordcraft/releases/latest) has every build listed below, and [all releases](https://github.com/storytold/wordcraft/releases) has earlier versions and their notes. `<ver>` in the file names is the version number, and `SHA256SUMS.txt` lists a checksum for every file.
 
+Those links point to upstream releases. This fork has no published release yet; its package
+validation artifacts are produced by the [Native packages workflow](.github/workflows/native-packages.yml).
+
 For installation, upgrades, rollback and keeping your documents and recovery data, see the
 [native installation guide](docs/native-installation.md).
 
