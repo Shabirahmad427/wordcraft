@@ -1,6 +1,6 @@
 # WordCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7T native package validation in progress; ranked beta estimates unchanged · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Three-OS installed-package run passed; Windows control timeout remains unexplained · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 Forward-looking plan. The summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is
 [`gaps.md`](gaps.md); the numbers are in [`target-app-parity.md`](target-app-parity.md). Hours are
@@ -12,10 +12,12 @@ Phase 7M adds shared theme rebinding and preservation regressions. Guarded impor
 safe package XML merge before theme or style edits can be saved; see the
 [DOCX preservation contract](docx-compatibility.md#phase-7m-theme-bindings-and-style-preservation).
 
-Phase 7T is validating actual native packages. A local macOS DMG defect is corrected and an
-installed Apple Silicon app passed isolated edit/open/quit smokes; Linux DEB and Windows x64 MSI
-installed-app jobs are pending. See [native installation](native-installation.md). This work does
-not change the Word-feature estimates below.
+Phase 7T validates actual native packages. A local macOS DMG defect is corrected; the hosted
+installed DEB, DMG app and Windows x64 MSI passed the package workflow. The Windows GUI smoke had
+one control-response timeout after queuing text, then passed on retry; its cause is unknown. Linux
+headless Weston startup/recovery/quit passed without input coverage. Remaining desktop integration
+gaps are recorded in [native installation](native-installation.md). This work does not change the
+Word-feature estimates below.
 
 The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current five-gap evidence priority and distinguishes native runtime results from cross-builds.
 
@@ -85,6 +87,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-13 | minor | Phase 7T local DMG correction and installed native app smoke; hosted DEB/MSI validation pending, no beta estimate change |
+| 2026-10-14 | minor | Recorded hosted three-OS package results, Linux headless Wayland launch and unexplained Windows timeout/retry; ranked estimates unchanged |
 | 2026-10-13 | minor | Phase 7M theme binding and style preservation regressions; native six-gate CI passes, hosted matrix pending |
 | 2026-10-12 | minor | Phase 7I synthetic DOCX/PDF corpus and native matrix gate; header-float clipping diagnostic fixed without changing pagination |
 | 2026-10-12 | minor | Added five-gap cross-platform audit; DOCX export safety improved in shared Rust, while native and Word 365 comparisons remain pending |

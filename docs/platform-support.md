@@ -1,6 +1,6 @@
 # Native desktop platform support
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7T local macOS DMG validation and hosted package workflow added · **Target:** Linux, macOS and Windows desktop builds
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Hosted installed-package matrix results recorded; one-off Windows timeout remains unexplained · **Target:** Linux, macOS and Windows desktop builds
 
 This matrix distinguishes source/build configuration, hosted checks, a running native window and
 physical desktop interaction. A passing shared-core test or cross-target build does not establish
@@ -11,11 +11,11 @@ that a desktop application launches or works on that target.
 | Target | Build and packaging support | Hosted checks | Native GUI launch and document workflow | Remaining runtime gaps |
 |---|---|---|---|---|
 | Linux x86_64, X11 | eframe/winit X11 support; Linux package script emits x86_64 packages. Main CI builds the Linux GUI/CLI. | Printing run 38476284508 passed native startup, focus, Unicode/bold editing, Insert › Table, cell text, Undo/Redo, DOCX/PDF workflow and normal `app.quit` under Xvfb/Openbox/software GL. Native package run 38479505495 installed the generated DEB and passed the same GUI workflow, XDG desktop integration and uninstall preservation checks. The discovered 2×2 target center `(166, 200)` resolved the prior fixed point `(166, 190)`, which landed between rows. | Local physical Linux desktop not available. | No physical X11 desktop, native Wayland input, or printer workflow was run locally. |
-| Linux x86_64, Wayland | eframe enables Wayland. Linux prefers X11 when `DISPLAY` is set for drag/drop; set `WORDCRAFT_WAYLAND=1` to select native Wayland. Clipboard has Wayland data-control support with X11 fallback. | A follow-up package workflow adds headless Weston startup/recovery/quit; hosted result is pending. | Not yet run. The Xvfb check is X11 and does not establish Wayland behavior. | Weston headless has no input devices, so desktop-level drag/drop, dialogs and physical input still need a compositor-backed interactive check. |
+| Linux x86_64, Wayland | eframe enables Wayland. Linux prefers X11 when `DISPLAY` is set for drag/drop; set `WORDCRAFT_WAYLAND=1` to select native Wayland. Clipboard has Wayland data-control support with X11 fallback. | Native package run 38502639179 passed installed-app startup, recovery and normal quit under headless Weston. | No interactive Wayland input; Weston headless provides no input devices. | Desktop-level drag/drop, dialogs and physical input still need a compositor-backed interactive check. |
 | Linux aarch64 | Linux release workflow builds/packages on an ARM64 runner; Flatpak and other package outputs are configured for ARM64. | Release workflow only; current document regression GUI build is x86_64. | Not run in this phase. | Native ARM64 GUI launch and editing remain unverified. |
 | macOS Apple Silicon (arm64) | Native Rust target and macOS app bundle script; local release GUI/CLI build. | Printing run 38476284508 passed both native-window smokes on `macos-latest` and reported `macos-aarch64`. | Hosted LaunchServices smokes use fresh profiles; editing, DOCX/PDF workflow, `app.quit`, eframe exit callback, recovery snapshot and focus readiness passed. `open -W` waiters returned 0 and control keys were removed. A raw-executable launch from a non-interactive test launcher stalls in AppKit before winit resume; the same occurs in a minimal eframe probe with wgpu and glow. | The underlying macOS condition behind the raw-launch stall is not narrowed to a specific environment setting. The separate earlier release launch's reported exit 143 has no identified sender. Physical input, native panels, Finder association, printer and Word 365 comparison remain untested. |
 | macOS Intel (x86_64) | Release packaging script requests a universal app and compiles both Apple Silicon and Intel slices. | Printing run 38476284508 logged `macos-aarch64`; it did not exercise Intel. | A local universal DMG's x86_64 GUI passed both isolated native smokes when launched with `open --arch x86_64` under Rosetta; the x86_64 CLI also ran. | No Intel Mac hardware runtime evidence; Rosetta is translation on Apple Silicon. |
-| Windows x64 | Windows packaging supports x64 MSI/portable outputs; eframe Windows and Win32/WinRT adapters are configured. | Printing run 38476284508 passed native focus, Unicode/bold editing, Insert-tab activation, table insertion, cell text, Undo/Redo, DOCX/PDF workflow and normal `app.quit`. Native package run 38479505495 installed the generated MSI and passed the packaged GUI workflow, shortcut/file association checks, uninstall preservation and portable CLI version checks. It reported `windows-x86_64`; the table-cell center was discovered from live widget bounds. | No local Windows machine. | Physical user input, native panels, printer selection and Word 365 comparison remain untested. |
+| Windows x64 | Windows packaging supports x64 MSI/portable outputs; eframe Windows and Win32/WinRT adapters are configured. | Printing run 38476284508 passed native focus, Unicode/bold editing, Insert-tab activation, table insertion, cell text, Undo/Redo, DOCX/PDF workflow and normal `app.quit`. Package run 38502639179 passed MSI/portable checks, installed-app GUI workflow, shortcut/file association checks, uninstall preservation and normal quit after its failed GUI job was retried. The first attempt timed out reading the control response after text-event queuing and force-terminated the child after failure; the retry passed the same smoke. Cause is unknown. | No local Windows machine. | The one-off control timeout needs a reproducible cause; physical user input, native panels, printer selection and Word 365 comparison remain untested. |
 | Windows ARM64 | Packaging cross-compiles the ARM64 executable and MSI from x64. | Scheduled Windows 11 ARM job installs/checks/uninstalls packages and runs the CLI natively. It does not launch the GUI. | Not run locally; Phase 7S window smoke is not yet configured on the ARM64 runner. | No GUI launch or interactive workflow evidence; do not infer it from package installation or CLI execution. |
 
 ## Shared and native integration boundaries
@@ -90,11 +90,12 @@ rollback behavior, and the separate profile locations. The
 DEB, macOS DMG app and Windows x64 MSI, then points the existing native-window smoke at the
 installed application. The Linux job also checks desktop and DOCX MIME metadata; the Windows job
 checks Start Menu and Open With registry entries; the macOS job checks bundle metadata, signing
-and a LaunchServices DOCX Open With event. In run 38479505495, Linux and Windows installed-package
-GUI workflows passed. macOS mounted and copied the DMG and passed strict signature verification,
-then failed at a malformed `lipo` assertion before GUI launch. The argument check is fixed in the
-follow-up workflow, which also adds package artifact uploads and headless Wayland startup coverage;
-that rerun is pending. Do not treat the workflow definition as runtime evidence.
+and a LaunchServices DOCX Open With event. Run 38479505495 passed the installed Linux and Windows
+workflows; its macOS job stopped at a malformed `lipo` assertion after DMG install and signature
+verification. Corrected package run 38502639179 passed all three OS jobs, including Linux headless
+Wayland startup/recovery/quit and packaged macOS LaunchServices launch. The Windows GUI smoke
+failed once at a control response timeout after queuing text, then passed on retry with normal quit.
+The cause of that one-off timeout is unknown, so Phase 7T remains open.
 
 Locally on Apple Silicon, the corrected arm64 DMG was mounted and copied into a disposable
 Applications directory. Its copied app passed strict code-signature verification and both
@@ -114,3 +115,4 @@ still need runtime checks.
 | 2026-10-13 | minor | Recorded hosted Linux startup success but text-input failure, and Windows tab-boundary click root cause plus local macOS verification of the corrected coordinate |
 | 2026-10-13 | minor | Printing run 38476284508 passed all three native smoke jobs with editing, table insertion, Undo/Redo and normal quit; raw native input and broader desktop integration remain separate gaps |
 | 2026-10-13 | major | Began Phase 7T with a verified macOS DMG signature correction, installed-app native smoke and a pending three-OS package workflow |
+| 2026-10-14 | minor | Recorded successful three-OS installed-package run, Linux headless Wayland startup and the unexplained Windows timeout/retry |

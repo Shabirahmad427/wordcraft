@@ -1,6 +1,6 @@
 # Where WordCraft falls short of Word
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7T packaging audit and local macOS DMG correction; ranked gap estimates are unchanged · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Hosted native package matrix recorded; ranked gap estimates unchanged · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 The work list. One entry per shortfall, ranked by how much it stops a Word user from switching
 (**B** = blocks beta). Each says what's missing, the evidence, who it hurts, an Opus 5.5 agent
@@ -21,9 +21,11 @@ Phase 7R fixes a local editing focus defect in Insert › Table's size grid. Thi
 
 Phase 7T found that a copied macOS DMG app failed strict signature verification because HFS
 imaging added FinderInfo attributes after bundle signing. The corrected local DMG and copied app
-now verify and pass an isolated native edit/open/quit smoke. Linux and Windows installed-package
-runtime jobs are pending. This packaging gap is tracked in the [native installation audit](native-installation.md)
-and does not change the ranked Word-feature estimates.
+now verify and pass isolated native edit/open/quit smokes. Hosted package run 38502639179 passed
+Linux, macOS and Windows; a Windows text-stage control timeout occurred once and passed on retry,
+with no cause identified. Linux headless Weston startup/recovery/quit also passed. Other desktop
+integration limits remain in the [native installation audit](native-installation.md), and these
+results do not change the ranked Word-feature estimates.
 
 ## Ranked
 

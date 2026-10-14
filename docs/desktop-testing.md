@@ -1,6 +1,6 @@
 # Desktop GUI validation
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** Phase 7T installed macOS DMG smoke passed locally · **Target:** WordCraft desktop on Linux, macOS and Windows
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Hosted installed-package matrix and one-off Windows timeout recorded · **Target:** WordCraft desktop on Linux, macOS and Windows
 
 This document separates a live desktop window, egui event-driven tests, offscreen rendering and
 hosted builds. A CI job that compiles or tests the GUI is not evidence that a person used a desktop
@@ -15,8 +15,11 @@ edited text and a table, used Undo/Redo, saved/reopened DOCX, exported PDF and e
 `app.quit` with the eframe exit callback and key cleanup observed. No test profile wrote to the
 developer's preferences or recovery data. This is a real window controlled through synthetic
 events; it is not physical mouse or keyboard input. The [installation audit](native-installation.md)
-records the DMG signature defect and correction. Hosted Linux/macOS/Windows *installed-package*
-jobs are pending; Phase 7S's source-built native smoke does not substitute for them.
+records the DMG signature defect and correction. Hosted installed-package run 38502639179 passed
+on Linux, macOS and Windows after a Windows retry. The first Windows attempt timed out on a control
+response after text-event queuing and force-terminated the child after the test failed; the retry
+passed normally. That transient remains unexplained. Phase 7S's source-built native smoke does not
+substitute for installed-package checks.
 A universal DMG also passed the same two smokes with its x86_64 GUI selected through
 LaunchServices `open --arch x86_64` under Rosetta; this does not establish Intel Mac hardware
 behavior.
@@ -199,3 +202,4 @@ This protocol has not been run. No Word 365 compatibility result is claimed.
 | 2026-10-13 | minor | Linux Openbox and picker target discovery passed its full native workflow; Windows now reaches table cell editing and exposed an immediate Undo assertion race, so bounded Undo/Redo state waits were added pending hosted validation |
 | 2026-10-13 | minor | Printing run 38476284508 passed Linux, macOS and Windows native smoke workflows, including editing, table insertion, Undo/Redo and normal quit; recorded native versus headless evidence separately |
 | 2026-10-13 | major | Recorded corrected DMG installation and packaged-app LaunchServices Open With, editing and quit evidence separately from source-built native smokes |
+| 2026-10-14 | minor | Recorded the completed installed-package matrix, Linux Weston startup check and unexplained one-off Windows control timeout followed by a passing retry |

@@ -1,6 +1,6 @@
 # Native installation and package validation
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Status:** Phase 7T in progress · **Target:** Linux, macOS and Windows packages
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress · **Target:** Linux, macOS and Windows packages
 
 WordCraft uses one Rust desktop application. The release scripts in `packaging/` make Linux
 AppImage, DEB, RPM, tarball and Flatpak outputs, a macOS DMG containing `WordCraft.app`, and
@@ -75,13 +75,18 @@ native installation and CLI execution, not the GUI. The Flatpak bundle script in
 the CLI, not a sandboxed GUI edit workflow. In hosted package run 38479505495, the installed DEB
 and x64 MSI both passed their native edit/save/export/quit smokes and uninstall preservation
 checks. The macOS DMG mounted, copied and passed strict signature verification, but its job stopped
-at an incorrectly ordered `lipo -verify_arch` check before the packaged GUI smoke. That assertion
-is corrected in the current follow-up; the full three-platform package matrix must pass before
-Phase 7T is complete. The follow-up also adds Wayland startup and recovery/quit coverage; it does
-not claim Wayland input coverage.
+at an incorrectly ordered `lipo -verify_arch` check before the packaged GUI smoke. The corrected
+package run 38502639179 passed on Linux, macOS and Windows, including headless Weston startup,
+recovery and quit on Linux. The Windows GUI step failed once before passing on a retry of the
+same job: its first attempt timed out reading the control response immediately after queuing text,
+and the harness force-terminated the still-running child after the assertion failure. The retry
+passed both native smoke tests with normal shutdown. The one-off Windows timeout has no identified
+cause and is not considered fixed; Phase 7T remains in progress. Weston headless has no input
+devices, so its Wayland result covers startup/recovery/quit, not Wayland input.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-13 | major | Audited existing packages, corrected the macOS DMG signature defect, added installed-package native smoke paths and documented current runtime limits |
+| 2026-10-14 | minor | Recorded passing Linux/macOS/Windows installed-package run, headless Wayland startup and one unexplained Windows control timeout followed by a passing retry |
