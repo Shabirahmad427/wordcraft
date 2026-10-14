@@ -189,6 +189,7 @@
 	Delete Style	Удалить стиль
 	Delete Table	Удалить таблицу
 	Design	Дизайн
+	No document is open. Create a document or open one first.	Нет открытого документа. Сначала создайте или откройте документ.
 	Search	Поиск
 	Title Bar	Строка заголовка
 	development build	сборка для разработки
@@ -1721,7 +1722,8 @@ preview	Title	Пример
 	Formatted	Отформатировано
 	Deleted	Удалено
 	Interface size:	Размер интерфейса:
-	Makes the ribbon, menus and dialogs larger or smaller, on top of your system's display scaling. Document zoom is separate.	Увеличивает или уменьшает ленту, меню и диалоговые окна поверх системного масштабирования экрана. Масштаб документа настраивается отдельно.
+	Auto ({percent}%)	Авто ({percent}%)
+	Makes the ribbon, menus and dialogs larger or smaller. Auto follows your system's display scaling; 100% is one screen pixel per point. Document zoom is separate.	Увеличивает или уменьшает ленту, меню и диалоговые окна. «Авто» следует системному масштабированию экрана; 100% — один пиксель экрана на точку. Масштаб документа настраивается отдельно.
 	Copyright Sign	Знак авторского права
 	Demote	Понизить уровень
 	Edit Field Code	Изменить код поля
@@ -2189,6 +2191,79 @@ preview	Title	Пример
 	Swap footnotes and endnotes	Поменять сноски и концевые сноски
 	Custom mark:	Особый знак:
 	Continuous numbering	Сквозная нумерация
+	Reading	Чтение
+	Reading Column Width	Ширина столбца в режиме чтения
+	Reading Line Spacing	Межстрочный интервал в режиме чтения
+	Reading Text Size	Размер текста в режиме чтения
+	Do Not Check Spelling or Grammar	Не проверять орфографию и грамматику
+	English (United Kingdom)	Английский (Великобритания)
+	Polish	Польский
+
+# Built-in file browser (#576).
+	Documents	Документы
+	Word document	Документ Word
+	All files	Все файлы
+	Recipient lists	Списки получателей
+	The system file dialog isn't available, so WordCraft shows its own. To get the system dialog, install a file chooser portal (such as xdg-desktop-portal-gtk) or zenity.	Системное диалоговое окно выбора файлов недоступно, поэтому WordCraft показывает собственное. Чтобы пользоваться системным, установите портал выбора файлов (например, xdg-desktop-portal-gtk) или zenity.
+	Up one level	На уровень вверх
+	Home folder	Домашняя папка
+	{name} wasn't found.	{name} не найден.
+	{name} already exists. Choose Save again to replace it.	{name} уже существует. Чтобы заменить его, снова выберите «Сохранить».
+	This folder can't be read: {error}	Не удаётся прочитать папку: {error}
+	Showing the first {count} items.	Показаны первые элементы: {count}.
+	File name:	Имя файла:
+	Browse in WordCraft…	Обзор в WordCraft…
+	Open a file with WordCraft's own browser when the system file dialog doesn't appear.	Открыть файл во встроенном обозревателе WordCraft, если системное диалоговое окно выбора файлов не появляется.
+	Hide White Space	Скрыть пустое место между страницами
+	Current page	Текущая страница
+	Selected pages	Выбранные страницы
+	Custom range	Свой диапазон
+	All pages in the range	Все страницы диапазона
+	Odd pages only	Только нечётные страницы
+	Even pages only	Только чётные страницы
+	Collate copies	Разобрать по копиям
+	Pages like 1-3, 5	Страницы, например 1-3, 5
+	{count} of {total} pages will print	Будет напечатано страниц: {count} из {total}
+	Save these pages as PDF…	Сохранить эти страницы как PDF…
+	The printer, two-sided printing and pages per sheet are chosen in that dialog.	Принтер, двусторонняя печать и число страниц на листе выбираются в этом диалоге.
+	Previous Page	Предыдущая страница
+	Print to PDF	Печать в PDF
+# Word XML Document (#548).
+	Word XML Document (*.xml)	Документ Word XML (*.xml)
+	Word 2003 XML Document (*.xml)	Документ Word 2003 XML (*.xml)
+# Find and Replace special characters and wildcards (#543).
+	Use wildcards	Подстановочные знаки
+	Special	Специальный
+	Match prefix	Начало слова
+	Match suffix	Конец слова
+	Ignore punctuation characters	Не учитывать знаки препинания
+	Ignore white-space characters	Не учитывать пробелы
+	Regular expressions	Регулярные выражения
+	Search Options	Параметры поиска
+	Tab Character	Знак табуляции
+	Any Character	Любой знак
+	Any Digit	Любая цифра
+	Any Letter	Любая буква
+	Caret Character	Знак вставки (^)
+	Section Character	Знак раздела
+	Paragraph Character	Знак абзаца
+	Graphic	Графический объект
+	Manual Line Break	Разрыв строки
+	Manual Page Break	Разрыв страницы
+	Section Break	Разрыв раздела
+	White Space	Пробельный знак
+	Clipboard Contents	Содержимое буфера обмена
+	Find What Text	Текст для поиска
+	Find What Expression	Найденное выражение
+	Character in Range	Знак из диапазона
+	Beginning of Word	Начало слова
+	End of Word	Конец слова
+	Expression	Выражение
+	Not	Не
+	Num Occurrences	Число вхождений
+	Previous 1 or More	Предыдущий знак 1 или более раз
+	0 or More Characters	0 или более знаков
+# Insert SmartArt (#497).
 	Add Shape	Добавить фигуру
 	Change Colors	Изменить цвета
 	Change Layout	Изменить макет
@@ -2417,3 +2492,10 @@ preview	Title	Пример
 	Level 7	Уровень 7
 	Level 8	Уровень 8
 	Level 9	Уровень 9
+	Privacy Options	Параметры конфиденциальности
+	Trust Center	Центр управления безопасностью
+	Privacy for this document	Конфиденциальность этого документа
+	Remove my name from comments, changes and file properties when saving	Удалять моё имя из примечаний, изменений и свойств файла при сохранении
+	Leave out the date and time of comments and tracked changes when saving	Не сохранять дату и время примечаний и отслеживаемых изменений
+	The document you are editing keeps the names and dates; only the saved file leaves them out.	Редактируемый документ сохраняет имена и даты; их не будет только в сохранённом файле.
+	Privacy Settings	Текущие параметры конфиденциальности

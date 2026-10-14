@@ -6,6 +6,12 @@ WordCraft is a clean-room, open-source, Rust-native word processor targeting Mic
 1. Read `plan/STATUS.md` (current milestone, next task), then the task in `plan/execution-plan.md` and the relevant `plan/architecture.md` section. `plan/` is gitignored (local only); if it's missing, start from `ROADMAP.md`, `docs/gaps.md` and `docs/roadmap.md` (Current focus).
 2. Follow the autonomous operation protocol (`plan/execution-plan.md` §5). Don't stop to ask unless a decision is genuinely the owner's (licensing, publishing, pushing to new remotes, secrets).
 
+## Fork updates and installation
+- Before an update or installation task, check the latest published `storytold/wordcraft` release and compare its version and commit with this fork and the installed GUI/CLI.
+- Integrate newer released code into this existing checkout, retaining the fork's commits and custom behavior. Resolve conflicts and validate the combined code before installing; changing only the version number is insufficient.
+- Use `/Users/shabir/software/wordcraft` on this Mac and the existing `/home/shabir/software/wordcraft` checkout on `docinho` for Linux. Do not create duplicate repository or installed app folders for version updates. Before changing the Linux checkout, inventory and preserve its current branch and commits; integrate the validated fork update into that same repository and update its existing installation.
+- After required gates and native checks pass, rebuild GUI/CLI with the validated commit identity and update the existing installation. Preserve preferences, logs, recovery entries and user documents.
+
 ## Never crash
 People trust WordCraft with their writing; a crash loses their work. **This outranks feature work**: never ship a feature through a panic path, and fix a crash before building on top of it. Standard: [`craftrules/standards/never-crash.md`](https://github.com/storytold/craftrules/blob/main/standards/never-crash.md).
 - **No panics in non-test code:** no `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!`, `unimplemented!`; no `unsafe` (`unsafe_code = "forbid"`).

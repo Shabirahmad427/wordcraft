@@ -171,17 +171,19 @@ pub(super) fn store_clipboard(s: &mut Session, f: Fragment) -> CmdResult {
 pub(super) fn store_clipboard_text(s: &mut Session, f: Fragment, text: String) -> CmdResult {
     s.clipboard_text = text;
     s.clip_history.push(&f, &s.clipboard_text);
-    s.clipboard = Some(f.clone());
-    let html = s
+    s.clipboard = Some(f);
+    Ok(copy_result(s))
+}
+
+/// Return the selected fragment with its source styles, media and MathML, bounded for native transport.
+pub(crate) fn copy_result(s: &mut Session) -> Value {
+    s.clipboard_html = s
         .clipboard
         .as_ref()
         .map(|f| wordcraft_formats::html::export_fragment(&s.doc, &f.blocks))
-        .filter(|h| h.len() <= super::paste::MAX_PASTE_BYTES);
-    let mut result = json!({"text": s.clipboard_text});
-    if let Some(html) = html {
-        result["html"] = json!(html);
-    }
-    Ok(result)
+        .filter(|html| html.len() <= super::paste::MAX_PASTE_BYTES)
+        .unwrap_or_default();
+    if s.clipboard_html.is_empty() { json!({"text": s.clipboard_text}) } else { json!({"text": s.clipboard_text, "html": s.clipboard_html}) }
 }
 
 fn cut(s: &mut Session, v: &Value) -> CmdResult {

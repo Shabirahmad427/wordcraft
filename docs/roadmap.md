@@ -13,10 +13,11 @@ safe package XML merge before theme or style edits can be saved; see the
 [DOCX preservation contract](docx-compatibility.md#phase-7m-theme-bindings-and-style-preservation).
 
 Phase 7T validates actual native packages. A local macOS DMG defect is corrected; the hosted
-installed DEB, DMG app and Windows x64 MSI passed the existing package workflow. The follow-up
-replaces fork-owned 0.6.1 packages from commit `9270097` with current 0.6.1 packages, checking
-isolated preference and recovery state plus Windows control-request tracing. It uses one source
-checkout and awaits hosted execution.
+installed DEB, DMG app and Windows x64 MSI passed the prior package workflow. Upstream's released
+0.7.0 source is now merged into the existing 0.6.1 fork history. The package workflow upgrades
+from fork commit `9270097` (0.6.1) to 0.7.0 in one checkout, checking isolated preference and
+recovery state plus Windows control-request tracing. Six local CI gates pass; hosted upgrade
+execution is pending.
 The Windows GUI smoke's earlier control-response timeout passed on retry but remains unexplained.
 Linux headless Weston startup/recovery/quit passed without input coverage. Remaining desktop
 integration gaps are recorded in [native installation](native-installation.md). This work does not
@@ -89,6 +90,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Integrated upstream 0.7.0; all local CI gates and isolated Apple Silicon GUI/recovery shutdown checks pass; hosted package upgrade checks pending |
 | 2026-10-13 | minor | Phase 7T local DMG correction and installed native app smoke; hosted DEB/MSI validation pending, no beta estimate change |
 | 2026-10-14 | minor | Recorded hosted three-OS package results, Linux headless Wayland launch and unexplained Windows timeout/retry; ranked estimates unchanged |
 | 2026-10-14 | minor | Added verified-baseline package upgrade checks and Windows control lifecycle diagnostics; hosted validation pending |

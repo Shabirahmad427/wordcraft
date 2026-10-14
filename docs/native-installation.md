@@ -1,17 +1,16 @@
 # Native installation and package validation
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress; fork-owned 0.6.1 package replacement checks awaiting hosted rerun · **Target:** Linux, macOS and Windows packages
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress; 0.6.1-to-0.7.0 upgrade checks awaiting hosted validation · **Target:** Linux, macOS and Windows packages
 
 ## Phase 7T.1 upgrade verification
 
 The hosted package workflow uses a single source checkout to build a baseline DEB, DMG app and x64 MSI from fork commit
 `9270097dfbada244ae9e3b608da7dc9a451905c1`, then replaces each with the package built from the
-current checkout, switching one source tree between commits. Both are version 0.6.1; embedded build
-commits distinguish the baseline and current binaries. This exercises same-version package
-replacement, not an upgrade between semantic versions. Each runner creates preferences and a dirty-document recovery snapshot under a
+current 0.7.0 checkout, switching one source tree between commits. Embedded build commits
+distinguish the baseline and current binaries. Each runner creates preferences and a dirty-document recovery snapshot under a
 runner-temporary profile before replacement, hashes them and checks they remain unchanged. Linux
 also checks a separate synthetic user document; macOS copies the current bundle from the mounted
-DMG into its disposable Applications directory; Windows verifies same-version MSI replacement and
+DMG into its disposable Applications directory; Windows verifies MSI replacement and
 a single current uninstall entry. The replacement app then loads the saved preference, verifies
 recovery, runs the editing smoke and quits normally. The hosted run is pending; this does not prove
 every release upgrade or rollback path.
@@ -30,6 +29,14 @@ macOS/Windows builds lacked a newer diagnostic callback marker. Those failures w
 mismatches, not package upgrade results. The workflow now builds the baseline from the fork's
 0.6.1 commit instead.
 
+The 0.6.1 baseline run [38513406587](https://github.com/Shabirahmad427/wordcraft/actions/runs/38513406587)
+failed on all three systems after normal process exit because `RUST_LOG` enabled only control
+modules, hiding the INFO-level exit callback in the application root. The baseline source contains
+that callback; absence of its log did not prove absence of cleanup. The workflow now includes
+`warn,wordcraft=info` alongside control tracing. A regression reads the actual workflow filters and
+failed before this correction, then passed afterward. Profile/recovery assertions and successful
+exit remain required; hosted upgrade validation is still pending.
+
 The intermittent Windows `document.inspect` timeout has not been reproduced. On the Windows v0.5.0
 test fixture in run 38510684885, tracing recorded `document.inspect` returning in 277 ms and
 `app.quit` returning in 387 ms, followed by process exit status 0; that attempt stopped on a
@@ -41,6 +48,13 @@ native package workflow now emits an opaque request ID with bounded stage logs
 for request receipt, UI submission, UI dispatch, processing, response handoff and TCP response
 write. It records method names and durations, never keys or document text. The timeout remains a
 failure, and its duration is unchanged.
+
+The release-source integration now merges the upstream `v0.7.0` tag (`fc419188`) into this
+fork's existing history. On Apple Silicon, the 0.7.0 GUI and CLI release builds both report
+version 0.7.0. The isolated native GUI smoke created a window, accepted text and table input,
+completed its edit workflow, and exited through the eframe callback; the recovery-shutdown smoke
+also passed with its profile under a temporary directory. The developer's preferences and recovery
+store were not used. Hosted 0.6.1-to-0.7.0 package upgrade verification remains pending.
 
 WordCraft uses one Rust desktop application. The release scripts in `packaging/` make Linux
 AppImage, DEB, RPM, tarball and Flatpak outputs, a macOS DMG containing `WordCraft.app`, and
@@ -128,6 +142,7 @@ devices, so its Wayland result covers startup/recovery/quit, not Wayland input.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Integrated upstream 0.7.0, passed all six local gates and isolated Apple Silicon GUI and recovery-shutdown smokes; hosted package upgrade matrix pending |
 | 2026-10-13 | major | Audited existing packages, corrected the macOS DMG signature defect, added installed-package native smoke paths and documented current runtime limits |
 | 2026-10-14 | minor | Recorded passing Linux/macOS/Windows installed-package run, headless Wayland startup and one unexplained Windows control timeout followed by a passing retry |
 | 2026-10-14 | minor | Added checksum-verified v0.5.0-to-current upgrade scenarios and staged control-request tracing; hosted validation pending |

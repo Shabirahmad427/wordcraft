@@ -1064,6 +1064,57 @@ fn clipboard_round_trip() {
     assert_eq!(text(&s), "plain\ntext");
 }
 
+/// Equations in the paragraphs of a session's body, as linear text.
+fn equations(s: &Session) -> Vec<String> {
+    let mut out = Vec::new();
+    for b in &s.doc.body {
+        if let wordcraft_doc::Block::Para(p) = &**b {
+            for o in &p.objects {
+                if let wordcraft_doc::para::InlineObject::Equation { linear, .. } = o {
+                    out.push(linear.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn copying_an_equation_puts_mathml_on_the_clipboard() {
+    // #816: other programs get the equation as MathML in HTML, beside the linear text.
+    let mut s = s();
+    run(&mut s, "document.setText", json!({"text": "Speed "}));
+    run(&mut s, "caret.docEnd", json!({}));
+    run(&mut s, "insert.equation", json!({"linear": "y=2x_s", "edit": false}));
+    run(&mut s, "select.all", json!({}));
+    let r = run(&mut s, "edit.copy", json!({}));
+    let html = r["html"].as_str().unwrap_or_default().to_string();
+    assert!(html.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">"), "{html}");
+    assert!(html.contains("<msub><mrow><mi>x</mi></mrow><mrow><mi>s</mi></mrow></msub>"), "{html}");
+    assert!(html.contains("Speed"), "{html}");
+    assert_eq!(s.clipboard_html, html);
+    assert!(r["text"].as_str().unwrap_or_default().contains("y=2x_s"));
+    let clip = r["text"].as_str().unwrap_or_default().to_string();
+
+    // Pasting it into another document reads the equation back from the HTML.
+    let mut t = Session::new(wordcraft_doc::Document::new());
+    run(&mut t, "edit.paste", json!({"text": clip, "html": html}));
+    assert_eq!(equations(&t), vec!["y=2x_s".to_string()]);
+    assert!(text(&t).starts_with("Speed"), "{}", text(&t));
+
+    // And back into this one, from our own copy.
+    run(&mut s, "caret.docEnd", json!({}));
+    run(&mut s, "edit.paste", json!({"text": clip, "html": html}));
+    assert_eq!(equations(&s), vec!["y=2x_s".to_string(), "y=2x_s".to_string()]);
+
+    // A plain-text selection carries rich HTML but no equation markup.
+    run(&mut s, "select.range", json!({"anchor": {"block": 0, "off": 0}, "focus": {"block": 0, "off": 5}}));
+    let r = run(&mut s, "edit.copy", json!({}));
+    let plain_html = r["html"].as_str().unwrap_or_default();
+    assert!(plain_html.contains("Speed") && !plain_html.contains("<math"), "{r}");
+    assert_eq!(s.clipboard_html, plain_html);
+}
+
 #[test]
 fn system_clipboard_copy_includes_only_the_selected_rich_html_fragment() {
     let mut doc = wordcraft_doc::Document::from_text("before α<& after");
@@ -1972,6 +2023,56 @@ fn set_author_names_tracked_changes_headlessly() {
 }
 
 #[test]
+fn privacy_options_strip_names_and_dates_from_the_saved_docx_only() {
+    // Issue #1062: Remove personal information / date and time apply to the saved file.
+    let mut s = s();
+    run(&mut s, "text.insert", json!({"text": "original"}));
+    run(&mut s, "file.setAuthor", json!({"name": "Mira Calloway"}));
+    run(&mut s, "file.properties", json!({"author": "Mira Calloway"}));
+    run(&mut s, "review.trackChanges", json!({"value": true}));
+    run(&mut s, "text.insert", json!({"text": " added"}));
+    run(&mut s, "select.text", json!({"text": "added"}));
+    run(&mut s, "review.newComment", json!({"text": "Tightened."}));
+    let off = run(&mut s, "file.privacy", json!({}));
+    assert_eq!(off, json!({"removePersonalInfo": false, "removeDateTime": false}));
+    let plain = wordcraft_docx::write(&s.doc).unwrap();
+    let back = wordcraft_docx::read(&plain).unwrap();
+    assert!(back.comments.values().all(|c| c.author == "Mira Calloway" && !c.date.is_empty()));
+    let on = run(&mut s, "file.privacyOptions", json!({"removePersonalInfo": true, "removeDateTime": true}));
+    assert_eq!(on, json!({"removePersonalInfo": true, "removeDateTime": true}));
+    let back = wordcraft_docx::read(&wordcraft_docx::write(&s.doc).unwrap()).unwrap();
+    assert!(back.settings.remove_personal_info && back.settings.remove_date_time);
+    assert!(back.comments.values().all(|c| c.author == "Author" && c.date.is_empty()), "{:?}", back.comments);
+    assert!(!back.revisions.is_empty());
+    assert!(back.revisions.iter().all(|r| r.author == "Author" && r.date.is_empty()), "{:?}", back.revisions);
+    assert!(back.core.creator.is_empty() && back.core.last_modified_by.is_empty());
+    // The open document keeps the real names and dates.
+    assert!(s.doc.comments.values().all(|c| c.author == "Mira Calloway" && !c.date.is_empty()));
+    assert!(s.doc.revisions.iter().any(|r| r.author == "Mira Calloway"));
+    assert_eq!(s.doc.core.creator, "Mira Calloway");
+    // Undoable like any document change.
+    run(&mut s, "edit.undo", json!({}));
+    assert!(!s.doc.settings.remove_personal_info);
+}
+
+/// Reading the privacy settings changes nothing: no undo step, no unsaved changes, and it works
+/// on a protected document. `file.privacyOptions` without a setting is refused, not a silent edit.
+#[test]
+fn reading_privacy_options_is_side_effect_free() {
+    let mut s = s();
+    run(&mut s, "text.insert", json!({"text": "Draft"}));
+    s.dirty = false;
+    let undo = s.undo_depth();
+    assert_eq!(run(&mut s, "file.privacy", json!({})), json!({"removePersonalInfo": false, "removeDateTime": false}));
+    assert!(s.run("file.privacyOptions", &json!({})).is_err());
+    assert!(s.run("file.privacyOptions", &json!({"removePersonalInfo": "yes"})).is_err());
+    assert_eq!(s.undo_depth(), undo, "no undo step");
+    assert!(!s.dirty, "no unsaved changes");
+    s.doc.settings.protection = Some("readOnly".into());
+    assert_eq!(run(&mut s, "file.privacy", json!({}))["removeDateTime"], false);
+}
+
+#[test]
 fn set_author_refuses_blank_names_and_clamps_long_ones() {
     let mut s = s();
     for bad in [json!(null), json!({}), json!({"name": 5}), json!({"name": ""}), json!({"name": " \t\n "}), json!({"name": "\u{0}\u{7}"})] {
@@ -2052,6 +2153,27 @@ fn comments() {
     run(&mut s, "review.deleteComment", json!({"id": id}));
     assert!(s.doc.comments.is_empty());
     assert_eq!(s.doc.para_at(&Pos::body(0, 0)).unwrap().objects.len(), 0);
+}
+
+/// #1085: a new comment with no text, in an empty document or on a word, goes with Review ›
+/// Delete at the caret (no id) and by id.
+#[test]
+fn empty_comments_delete() {
+    for body in ["", "Some text here"] {
+        for by_id in [false, true] {
+            let mut s = Session::new(wordcraft_doc::Document::new());
+            if !body.is_empty() {
+                run(&mut s, "text.insert", json!({"text": body}));
+                run(&mut s, "caret.set", json!({"pos": {"story": "body", "path": [0], "off": 6}}));
+            }
+            let id = run(&mut s, "review.newComment", json!({}))["id"].clone();
+            assert_eq!(run(&mut s, "review.comments", json!({}))[0]["text"], "");
+            run(&mut s, "review.deleteComment", if by_id { json!({"id": id}) } else { json!({}) });
+            assert!(s.doc.comments.is_empty(), "{body:?} by id {by_id}");
+            assert_eq!(s.doc.para_at(&Pos::body(0, 0)).unwrap().objects.len(), 0, "{body:?}: anchors gone");
+            assert_eq!(text(&s), body);
+        }
+    }
 }
 
 #[test]
@@ -3025,10 +3147,43 @@ fn modify_style_takes_hex_colours_like_format_color() {
     assert_eq!(color(&s), Some(red));
     assert_eq!(s.doc.styles.resolve_char(Some("Heading1"), &CharProps::default()).color, red);
 
-    for bad in [json!("1B16"), json!("not a colour"), json!({"Rgb": "1B1611"}), json!(7)] {
+    for bad in [json!("1B16"), json!("not a colour"), json!({"Rgb": "1B16"}), json!(7)] {
         let r = modify(&mut s, bad.clone());
         assert!(matches!(r, Err(crate::CmdError::Params(_))), "{bad}: {r:?}");
         assert_eq!(color(&s), Some(red), "{bad} leaves the style alone");
+    }
+    modify(&mut s, json!({"Rgb": "1B1611"})).unwrap();
+    assert_eq!(color(&s), Some(TextColor::Rgb(Rgb(0x1B, 0x16, 0x11))), "the hex string also reads inside {{\"Rgb\": …}}");
+}
+
+/// #865: the other colours in CharProps and ParaProps (`underlineColor`, `shading`, a border's
+/// `color`) take `RRGGBB` / `#RRGGBB` like `para.borders` and `table.shading`, and still `[r, g, b]`.
+#[test]
+fn props_colours_take_hex_strings() {
+    use wordcraft_doc::{Pos, Rgb};
+    let ink = Rgb(0x1B, 0x16, 0x11);
+    let mut s = s();
+    run(
+        &mut s,
+        "styles.modify",
+        json!({"style": "Heading1",
+            "chr": {"underlineColor": "1B1611", "shading": "#1b1611", "border": {"style": "single", "width": 1, "color": "1B1611"}},
+            "para": {"shading": "1B1611", "borders": {"bottom": {"style": "single", "width": 1, "color": "#1B1611"}}}}),
+    );
+    let st = s.doc.styles.get("Heading1").unwrap();
+    assert_eq!((st.chr.underline_color, st.chr.shading, st.chr.border.and_then(|b| b.color)), (Some(ink), Some(ink), Some(ink)));
+    assert_eq!((st.para.shading, st.para.borders.and_then(|b| b.bottom).and_then(|b| b.color)), (Some(ink), Some(ink)));
+
+    run(&mut s, "text.insert", json!({"text": "Hello"}));
+    run(&mut s, "para.set", json!({"props": {"shading": "C00000"}}));
+    assert_eq!(s.doc.para_at(&Pos::body(0, 0)).unwrap().props.shading, Some(Rgb(0xC0, 0, 0)));
+    run(&mut s, "para.set", json!({"props": {"shading": [1, 2, 3]}}));
+    assert_eq!(s.doc.para_at(&Pos::body(0, 0)).unwrap().props.shading, Some(Rgb(1, 2, 3)), "[r, g, b] still reads");
+
+    for bad in [json!("C0000"), json!("auto"), json!([1, 2]), json!([1, 2, 300]), json!(7)] {
+        let r = s.run("para.set", &json!({"props": {"shading": bad}}));
+        assert!(matches!(r, Err(crate::CmdError::Params(_))), "{bad}: {r:?}");
+        assert_eq!(s.doc.para_at(&Pos::body(0, 0)).unwrap().props.shading, Some(Rgb(1, 2, 3)), "{bad} changes nothing");
     }
 }
 
@@ -3466,6 +3621,244 @@ fn recovery_docx_retains_original_unknown_parts_and_layout_after_restart() {
     run(&mut after, "file.new", json!({}));
     assert!(after.source_package.is_none());
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn asian_typography_sets_flags_on_selected_paragraphs_and_undoes() {
+    let mut s = s();
+    run(&mut s, "document.setText", json!({"text": "一\n二\n三"}));
+    run(&mut s, "select.all", json!({}));
+    let r = run(&mut s, "para.asianTypography", json!({"kinsoku": false, "wordWrap": false, "topLinePunct": true}));
+    assert_eq!(r["asianTypography"]["kinsoku"], false);
+    assert_eq!(r["asianTypography"]["autoSpaceDE"], true, "a flag left out keeps its default");
+    for p in s.doc.body.iter().filter_map(|b| b.as_para()) {
+        assert_eq!(
+            (p.props.kinsoku, p.props.word_wrap, p.props.top_line_punct, p.props.overflow_punct),
+            (Some(false), Some(false), Some(true), None)
+        );
+    }
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.doc.body.iter().filter_map(|b| b.as_para()).all(|p| p.props.kinsoku.is_none() && p.props.word_wrap.is_none()));
+    // Without flags it only reports them.
+    let r = run(&mut s, "para.asianTypography", json!({}));
+    assert_eq!(r["asianTypography"]["kinsoku"], true);
+}
+
+#[test]
+fn manage_styles_lists_paragraph_character_linked_and_table_styles() {
+    let mut s = s();
+    let list = run(&mut s, "styles.manage", json!({"sort": "alphabetical"}));
+    let list = list.as_array().unwrap();
+    let find = |name: &str| list.iter().find(|x| x["name"] == name).unwrap_or_else(|| panic!("{name} listed"));
+    assert_eq!(find("Normal")["type"], "paragraph");
+    assert_eq!(find("Normal")["builtIn"], true);
+    assert_eq!(find("Normal")["inGallery"], true);
+    assert_eq!(find("Heading 1")["type"], "linked");
+    assert_eq!(find("Heading 1")["basedOn"], "Normal");
+    assert!(find("Heading 1")["format"]["size"].is_number(), "description formatting");
+    assert_eq!(find("Table Grid")["type"], "table");
+    assert!(list.iter().any(|x| x["type"] == "character"));
+    // The character half of a linked pair is listed once, as the linked style.
+    assert!(!list.iter().any(|x| x["id"] == "Heading1Char"));
+    let names: Vec<String> = list.iter().map(|x| x["name"].as_str().unwrap().to_lowercase()).collect();
+    assert!(names.windows(2).all(|w| w[0] <= w[1]), "alphabetical");
+    // Recommended order starts with Normal (priority 0); listing is not an edit.
+    let rec = run(&mut s, "styles.manage", json!({}));
+    assert_eq!(rec[0]["name"], "Normal");
+    assert!(s.run("styles.manage", &json!({"sort": "sideways"})).is_err());
+    assert!(!s.dirty);
+}
+
+#[test]
+fn deleting_a_style_falls_back_to_its_base_and_undoes() {
+    let mut s = s();
+    run(&mut s, "text.insert", json!({"text": "Styled"}));
+    run(&mut s, "styles.create", json!({"name": "Mine", "basedOn": "Heading 1"}));
+    run(&mut s, "styles.create", json!({"name": "Child", "basedOn": "Mine", "fromSelection": false}));
+    run(&mut s, "styles.apply", json!({"style": "Mine"}));
+    assert_eq!(para_style(&s, 0).as_deref(), Some("Mine"));
+    let r = run(&mut s, "styles.delete", json!({"style": "Mine"}));
+    assert_eq!(r["restyled"], 1);
+    assert!(s.doc.styles.get("Mine").is_none());
+    assert_eq!(para_style(&s, 0).as_deref(), Some("Heading1"), "falls back to its base");
+    assert_eq!(s.doc.styles.get("Child").and_then(|c| c.based_on.clone()).as_deref(), Some("Heading1"), "rebased");
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.doc.styles.get("Mine").is_some());
+    assert_eq!(para_style(&s, 0).as_deref(), Some("Mine"));
+    // Built-in styles are refused, unknown ones are errors.
+    assert!(s.run("styles.delete", &json!({"style": "Heading 1"})).is_err());
+    assert!(s.run("styles.delete", &json!({"style": "No Such Style"})).is_err());
+    assert!(s.doc.styles.get("Heading1").is_some());
+}
+
+/// Manage Styles' Delete on a table style is Table Design's Delete Table Style: its tables take
+/// Table Grid, styles based on it keep their look, and Word's built-in table styles are refused.
+#[test]
+fn deleting_a_table_style_from_manage_styles_uses_table_style_deletion() {
+    use wordcraft_doc::Rgb;
+    let mut s = s();
+    run(&mut s, "insert.table", json!({"rows": 2, "cols": 2}));
+    let (tp, _, _) = s.sel.focus.path.cell().unwrap();
+    run(&mut s, "table.newStyle", json!({"name": "Base", "headerRow": {"fill": "C00000"}}));
+    run(&mut s, "table.newStyle", json!({"name": "Child", "basedOn": "Base", "apply": false}));
+    let r = run(&mut s, "styles.delete", json!({"style": "Base"}));
+    assert_eq!((r["deleted"][0].as_str(), r["restyled"].as_u64()), (Some("Base"), Some(1)));
+    assert_eq!(s.doc.table(StoryRef::Body, &tp).unwrap().props.style.as_deref(), Some("TableGrid"));
+    assert_eq!(s.doc.styles.table_style("Child").unwrap().parts.header_fill, Some(Rgb(0xC0, 0, 0)), "the child keeps its look");
+    for st in s.doc.styles.styles.iter_mut() {
+        st.builtin = false;
+    }
+    assert!(s.run("styles.delete", &json!({"style": "Table Grid"})).is_err());
+    let list = run(&mut s, "styles.manage", json!({}));
+    let grid = list.as_array().unwrap().iter().find(|x| x["name"] == "Table Grid").unwrap();
+    assert_eq!(grid["builtIn"], true);
+}
+
+#[test]
+fn style_visibility_round_trips_through_docx() {
+    let mut s = s();
+    run(&mut s, "styles.create", json!({"name": "Mine", "fromSelection": false}));
+    run(&mut s, "styles.setVisibility", json!({"style": "Heading 1", "gallery": false}));
+    run(&mut s, "styles.setVisibility", json!({"style": "Mine", "hidden": true}));
+    run(&mut s, "styles.setVisibility", json!({"style": "Heading 4", "gallery": true}));
+    assert!(s.run("styles.setVisibility", &json!({"style": "Mine"})).is_err());
+    let gallery: Vec<String> = s.doc.styles.gallery().iter().map(|x| x.id.clone()).collect();
+    assert!(!gallery.contains(&"Heading1".to_string()) && !gallery.contains(&"Mine".to_string()) && gallery.contains(&"Heading4".to_string()));
+    let bytes = crate::io::save_bytes("v.docx", &s.doc).unwrap();
+    let doc = crate::io::open_bytes("v.docx", &bytes).unwrap();
+    let st = |id: &str| doc.styles.get(id).cloned().unwrap_or_else(|| panic!("{id} kept"));
+    assert!(!st("Heading1").quick && !st("Heading1").hidden);
+    assert!(st("Mine").hidden && !st("Mine").builtin);
+    assert!(st("Heading4").quick);
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.doc.styles.get("Heading4").is_some_and(|h| !h.quick), "undoable");
+}
+
+/// #548: `.xml` saves a Word XML Document (Flat OPC) and opens it again; other XML is refused.
+#[test]
+fn word_xml_saves_and_opens_through_io() {
+    let mut s = s();
+    run(&mut s, "text.insert", json!({"text": "Kept in one XML file"}));
+    let bytes = crate::io::save_bytes("notes.xml", &s.doc).unwrap();
+    assert_eq!(wordcraft_docx::sniff_xml(&bytes), wordcraft_docx::XmlKind::FlatOpc);
+    let doc = crate::io::open_bytes("notes.XML", &bytes).unwrap();
+    assert_eq!(doc.body, crate::io::open_bytes("n.docx", &crate::io::save_bytes("n.docx", &s.doc).unwrap()).unwrap().body);
+    let err = crate::io::open_bytes("feed.xml", b"<rss><channel/></rss>").unwrap_err();
+    assert!(err.contains("not a Word XML document"), "{err}");
+}
+
+/// #1081: `format: "wordml2003"` saves an `.xml` file as a Word 2003 XML Document, a plain save
+/// over such a file keeps that format, and `format: "flatopc"` converts it back.
+#[test]
+fn word_2003_xml_saves_through_the_save_commands() {
+    let mut s = s();
+    run(&mut s, "text.insert", json!({"text": "Kept for old readers"}));
+    let dir = std::env::temp_dir().join(format!("wordcraft-2003-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("old.xml").to_string_lossy().to_string();
+    let kind = |p: &str| wordcraft_docx::sniff_xml(&std::fs::read(p).unwrap());
+    run(&mut s, "file.saveAs", json!({"path": path, "format": "wordml2003"}));
+    assert_eq!(kind(&path), wordcraft_docx::XmlKind::WordMl2003);
+    assert!(crate::io::open_path(std::path::Path::new(&path)).unwrap().plain_text(wordcraft_doc::StoryRef::Body).contains("Kept for old readers"));
+    run(&mut s, "file.save", json!({}));
+    assert_eq!(kind(&path), wordcraft_docx::XmlKind::WordMl2003);
+    run(&mut s, "file.save", json!({"path": path, "format": "flatopc"}));
+    assert_eq!(kind(&path), wordcraft_docx::XmlKind::FlatOpc);
+    for bad in [
+        json!({"path": dir.join("a.docx").to_string_lossy(), "format": "wordml2003"}),
+        json!({"path": path, "format": "bogus"}),
+        json!({"path": path, "format": 7}),
+    ] {
+        assert!(s.run("file.save", &bad).is_err(), "{bad}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #146: the first/last column, total row and banded column regions apply in layout (later
+/// regions win: the total row's fill beats the first column's) and round-trip through .docx.
+#[test]
+fn custom_table_style_column_and_total_regions() {
+    use wordcraft_doc::Rgb;
+    let mut s = s();
+    run(&mut s, "insert.table", json!({"rows": 3, "cols": 4}));
+    run(
+        &mut s,
+        "table.look",
+        json!({"headerRow": false, "bandedRows": false, "firstColumn": true, "lastColumn": true, "totalRow": true, "bandedColumns": true}),
+    );
+    let r = run(
+        &mut s,
+        "table.newStyle",
+        json!({"name": "Ledger",
+            "firstColumn": {"fill": "112233", "bold": true},
+            "lastColumn": {"fill": "445566"},
+            "lastRow": {"fill": "778899", "borders": true},
+            "bandedColumns": {"fill": "ABCDEF"}}),
+    );
+    let id = r["id"].as_str().unwrap().to_string();
+    let fills = |s: &mut Session, c: Rgb| {
+        s.layout().pages[0].items.iter().filter(|i| matches!(i, crate::layout::Placed::Fill { color, .. } if *color == c)).count()
+    };
+    // 3 rows x 4 columns: the total row takes all 4 of its cells, the first and last columns the
+    // two cells above it, and the column band (column 2 of the inner columns 2 and 3) one each.
+    assert_eq!(fills(&mut s, Rgb(0x77, 0x88, 0x99)), 4, "total row");
+    assert_eq!(fills(&mut s, Rgb(0x11, 0x22, 0x33)), 2, "first column");
+    assert_eq!(fills(&mut s, Rgb(0x44, 0x55, 0x66)), 2, "last column");
+    assert_eq!(fills(&mut s, Rgb(0xAB, 0xCD, 0xEF)), 2, "first column band");
+
+    let back = wordcraft_docx::read(&wordcraft_docx::write(&s.doc).unwrap()).unwrap();
+    let p = back.styles.get(&id).unwrap().table.clone().unwrap();
+    assert_eq!(
+        (p.first_col_fill, p.first_col_chr.bold, p.last_col_fill, p.total_fill, p.col_band_fill),
+        (Some(Rgb(0x11, 0x22, 0x33)), Some(true), Some(Rgb(0x44, 0x55, 0x66)), Some(Rgb(0x77, 0x88, 0x99)), Some(Rgb(0xAB, 0xCD, 0xEF)))
+    );
+    assert!(p.total_borders.is_some_and(|b| b.any_visible()));
+}
+
+/// #146: deleting a custom table style re-bases the styles based on it (keeping their look),
+/// puts its tables on Table Grid, refuses built-in styles, and undoes.
+#[test]
+fn delete_table_style_falls_back_and_undoes() {
+    use wordcraft_doc::Rgb;
+    let mut s = s();
+    run(&mut s, "insert.table", json!({"rows": 2, "cols": 2}));
+    let (tp, _, _) = s.sel.focus.path.cell().unwrap();
+    run(&mut s, "table.newStyle", json!({"name": "Base", "headerRow": {"fill": "C00000"}}));
+    run(&mut s, "table.newStyle", json!({"name": "Child", "basedOn": "Base", "apply": false, "wholeTable": {"bold": true}}));
+    let style = |s: &Session| s.doc.table(StoryRef::Body, &tp).unwrap().props.style.clone();
+    assert_eq!(style(&s).as_deref(), Some("Base"));
+    assert!(s.run("table.deleteStyle", &json!({"style": "Table Grid"})).is_err(), "built-in");
+    assert!(s.run("table.deleteStyle", &json!({"style": "Normal Table"})).is_err(), "built-in");
+
+    let r = run(&mut s, "table.deleteStyle", json!({}));
+    assert_eq!((r["deleted"].as_str(), r["tables"].as_u64()), (Some("Base"), Some(1)));
+    assert!(s.doc.styles.get("Base").is_none());
+    assert_eq!(style(&s).as_deref(), Some("TableGrid"), "tables fall back to Table Grid");
+    let child = s.doc.styles.table_style("Child").unwrap();
+    assert_eq!((child.parts.header_fill, child.chr.bold), (Some(Rgb(0xC0, 0, 0)), Some(true)), "the child keeps its look");
+    assert_eq!(s.doc.styles.get("Child").unwrap().based_on.as_deref(), Some("TableGrid"));
+
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.doc.styles.get("Base").is_some());
+    assert_eq!(style(&s).as_deref(), Some("Base"));
+    assert_eq!(s.doc.styles.get("Child").unwrap().based_on.as_deref(), Some("Base"));
+}
+
+/// #146: a .docx may mark Word's built-in table styles as custom; they still can't be deleted, so
+/// no table is left pointing at a style that's gone.
+#[test]
+fn builtin_table_styles_marked_custom_in_a_docx_cant_be_deleted() {
+    let mut s = s();
+    run(&mut s, "insert.table", json!({"rows": 1, "cols": 1}));
+    for st in s.doc.styles.styles.iter_mut() {
+        st.builtin = false;
+    }
+    for name in ["Table Grid", "Normal Table", "TableGrid"] {
+        assert!(s.run("table.deleteStyle", &json!({"style": name})).is_err(), "{name}");
+    }
+    let (tp, _, _) = s.sel.focus.path.cell().unwrap();
+    let id = s.doc.table(StoryRef::Body, &tp).unwrap().props.style.clone().unwrap();
+    assert!(s.doc.styles.get(&id).is_some(), "the table's style still exists");
 }
 
 /// Delete Cells can leave a row shorter than the table grid; Delete Columns then removed that row's
@@ -4150,6 +4543,48 @@ fn portuguese_proofing_through_the_review_commands() {
 /// Review › Language and the proofing commands work in Polish end to end: the language makes
 /// the document's words Polish, F7 and the issue list use the Polish dictionary and grammar,
 /// suggestions come from it, and a suggestion fixes the text.
+fn italian_test_dictionary() {
+    let aff = "SET UTF-8\nTRY aeiortnsclcaffèéè\nMAP 2\nMAP aà\nMAP eéè\nREP 1\nREP caffe caffè\n";
+    let dic = "6\ncasa\ncaffè\nroma\ndisse\ne\nper\n";
+    wordcraft_proof::it::install_dictionary(aff, dic).unwrap();
+}
+
+/// Review › Language and the proofing commands work in Italian end to end: the language makes
+/// the document's words Italian, F7 and the issue list use the Italian dictionary and grammar,
+/// suggestions come from it, and a suggestion fixes the text.
+#[test]
+fn italian_proofing_through_the_review_commands() {
+    italian_test_dictionary();
+    let mut s = s();
+    run(&mut s, "document.setText", json!({"text": "Casa caffe, e roma roma disse."}));
+    // English by default: the Italian words are English misspellings.
+    assert!(run(&mut s, "review.issues", json!({})).as_array().unwrap().len() >= 3);
+    run(&mut s, "select.all", json!({}));
+    run(&mut s, "review.language", json!({"lang": "it_IT", "default": true}));
+    assert_eq!(s.doc.styles.default_chr.lang.as_deref(), Some("it-IT"), "the tag is normalized");
+    assert_eq!(run(&mut s, "format.state", json!({}))["lang"], "it-IT");
+    let issues = run(&mut s, "review.issues", json!({}));
+    let arr = issues.as_array().unwrap();
+    let has = |text: &str, kind: &str, sugg: &str| {
+        arr.iter()
+            .any(|i| i["text"] == text && i["kind"] == kind && i["lang"] == "it" && i["suggestions"].as_array().unwrap().iter().any(|x| x == sugg))
+    };
+    assert!(has("caffe", "spelling", "caffè"), "{issues}");
+    assert!(has("roma roma", "grammar", "roma"), "{issues}");
+    assert_eq!(arr.len(), 2, "{issues}");
+    assert!(arr.iter().any(|i| i["message"] == "Parola ripetuta: \"roma\""), "{issues}");
+    // F7 from the start selects the first issue; Change applies a suggestion.
+    run(&mut s, "caret.docStart", json!({}));
+    let first = run(&mut s, "review.spelling", json!({}));
+    assert_eq!(first["text"], "caffe");
+    run(&mut s, "review.applySuggestion", json!({"text": "caffè"}));
+    assert!(text(&s).starts_with("Casa caffè,"), "{}", text(&s));
+    // Add to Dictionary works for Italian words too.
+    run(&mut s, "review.addToDictionary", json!({"word": "caffe"}));
+    let left = run(&mut s, "review.issues", json!({}));
+    assert_eq!(left.as_array().unwrap().len(), 1, "{left}");
+}
+
 #[test]
 fn polish_proofing_through_the_review_commands() {
     polish_test_dictionary();
@@ -4887,5 +5322,27 @@ fn insert_picture_takes_a_windows_metafile() {
     std::fs::write(&path, b"not a picture").unwrap();
     let err = s.run("insert.picture", &json!({"path": path.to_string_lossy()})).unwrap_err();
     assert!(err.to_string().contains("WMF, EMF"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn exported_page_images_draw_headers_at_full_strength() {
+    // file.exportPng (and `wordcraft-cli render`) drew headers and footers dimmed, as the screen
+    // does while the body is edited; Word's exported pages and WordCraft's PDF don't.
+    let mut s = s();
+    run(&mut s, "text.insert", json!({"text": "Body"}));
+    let mut hp = wordcraft_doc::Paragraph::with_text("HEADER", wordcraft_doc::props::CharProps { size: Some(28.0), ..Default::default() });
+    hp.props.align = Some(wordcraft_doc::props::Align::Left);
+    let id = s.doc.add_part(wordcraft_doc::PartKind::Header, vec![wordcraft_doc::para_block(hp)]);
+    s.doc.last_section.headers.default = Some(id);
+    let dir = std::env::temp_dir().join(format!("wordcraft-png-header-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("p.png");
+    s.run("file.exportPng", &json!({"path": path.to_string_lossy(), "scale": 1.0})).unwrap();
+    let img = image::open(&path).unwrap().to_luma8();
+    // The darkest pixel in the top tenth of the page (the header) is black, not grey.
+    let top = img.height() / 10;
+    let darkest = (0..top).flat_map(|y| (0..img.width()).map(move |x| (x, y))).map(|(x, y)| img.get_pixel(x, y)[0]).min().unwrap();
+    assert!(darkest < 60, "header drawn dimmed: darkest pixel {darkest}");
     let _ = std::fs::remove_dir_all(&dir);
 }

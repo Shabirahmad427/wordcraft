@@ -51,6 +51,9 @@ pub struct ExportOptions {
     pub markup: bool,
     /// With `markup`, show the comments (Track Changes Options › Comments).
     pub comments: bool,
+    /// An `.xml` copy is a Word 2003 XML Document (WordprocessingML 2003) instead of a Word XML
+    /// Document (Flat OPC): `format: "wordml2003"` on the save commands.
+    pub word2003: bool,
 }
 
 /// A document password: wiped from memory when dropped, never printed (`Debug` shows `***`).
@@ -383,6 +386,25 @@ fn read_regular_file(path: &std::path::Path, limit: u64) -> Option<Vec<u8>> {
 pub fn read_file(path: &str) -> Result<Vec<u8>, String> {
     crate::file_access::check_read(path)?;
     std::fs::read(path).map_err(|e| format!("{path}: {e}"))
+}
+
+/// Read at most `limit` bytes from a regular file after applying automation read-root checks.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_file_prefix(path: &str, limit: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    crate::file_access::check_read(path)?;
+    let file = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+    if !file.metadata().map_err(|e| format!("{path}: {e}"))?.is_file() {
+        return Err(format!("{path}: not a regular file"));
+    }
+    let mut bytes = Vec::with_capacity(usize::try_from(limit.min(64 * 1024)).unwrap_or(0));
+    file.take(limit).read_to_end(&mut bytes).map_err(|e| format!("{path}: {e}"))?;
+    Ok(bytes)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn read_file_prefix(path: &str, _limit: u64) -> Result<Vec<u8>, String> {
+    Err(format!("{path}: files are opened through the browser on the web"))
 }
 
 #[cfg(target_arch = "wasm32")]

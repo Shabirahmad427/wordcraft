@@ -1,6 +1,6 @@
 # Desktop GUI validation
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Corrected baseline package assertions; hosted upgrade rerun pending · **Target:** WordCraft desktop on Linux, macOS and Windows
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Integrated upstream 0.7.0; local Apple Silicon native smoke and all six local gates pass; hosted package upgrade rerun pending · **Target:** WordCraft desktop on Linux, macOS and Windows
 
 This document separates a live desktop window, egui event-driven tests, offscreen rendering and
 hosted builds. A CI job that compiles or tests the GUI is not evidence that a person used a desktop
@@ -28,7 +28,7 @@ The package workflow uses one source checkout: it builds baseline 0.6.1 packages
 `9270097dfbada244ae9e3b608da7dc9a451905c1`, then replaces them with packages built from the current
 commit. It switches that checkout between commits instead of creating a duplicate source tree. It
 compares embedded commit identity and checks isolated preferences and recovery data.
-This is same-version package replacement, not a semantic-version upgrade. The first attempt,
+The current source is now 0.7.0, so the matrix tests a 0.6.1-to-0.7.0 upgrade. The first attempt,
 [38510684885](https://github.com/Shabirahmad427/wordcraft/actions/runs/38510684885), used upstream
 v0.5.0 packages and stopped on incorrect baseline assertions before any upgrade. The corrected
 fork-owned baseline matrix is awaiting hosted execution. In that first attempt, the Windows v0.5.0
@@ -36,6 +36,18 @@ test fixture's `document.inspect` completed in 277 ms and `app.quit` returned in
 process exit; this does not reproduce the earlier timeout in the newer Windows package. Its cause
 remains unknown. Request traces identify lifecycle stages without logging keys or document text.
 Package artifacts are retained for 90 days.
+
+Source native smoke [38513406559](https://github.com/Shabirahmad427/wordcraft/actions/runs/38513406559)
+passed Linux, macOS and Windows on `ff6ac5a`. Package baseline run 38513406587 failed after normal
+exit on all three systems: its log filter excluded the application-root exit callback. The filter
+is corrected with a failing-before/passing-after regression; package upgrade results await rerun.
+
+After integrating upstream release `0.7.0` (`fc419188`) into this fork, the local Apple Silicon
+native-window smoke passed with a temporary profile. It created a window, verified window/editor
+focus, entered Unicode and bold text, inserted a table and typed into a cell, exercised Undo/Redo,
+saved and reopened DOCX, exported PDF and exited through `app.quit` with the eframe callback. A
+separate isolated recovery-shutdown smoke passed. These are local macOS native GUI results; they do
+not substitute for the pending hosted Linux/macOS/Windows package-upgrade matrix.
 
 ## Phase 7S current evidence
 
@@ -208,6 +220,7 @@ This protocol has not been run. No Word 365 compatibility result is claimed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Integrated upstream 0.7.0, passed all local CI gates and Apple Silicon native edit/quit smokes; hosted package upgrade matrix pending |
 | 2026-10-13 | minor | Located the raw-launch stall in AppKit's pre-resume event wait; verified LaunchServices native smokes, isolated profile safety, recovery shutdown and normal child status |
 | 2026-10-13 | minor | Recorded hosted native smoke failures on Linux and Windows and enabled dependency installation plus isolated Windows failure diagnostics |
 | 2026-10-13 | minor | Found Windows ribbon click hit the title/tab boundary; corrected it and added an active-tab check. Linux hosted startup is fixed, but first page text input remains unresolved |

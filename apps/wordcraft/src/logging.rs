@@ -367,6 +367,23 @@ mod tests {
     }
 
     #[test]
+    fn package_workflow_filters_keep_shutdown_and_control_diagnostics() {
+        let workflow = include_str!("../../../.github/workflows/native-packages.yml");
+        let mut found = 0;
+        for line in workflow.lines() {
+            let line = line.trim();
+            let Some(spec) = line.strip_prefix("RUST_LOG:").or_else(|| line.strip_prefix("$env:RUST_LOG =")) else { continue };
+            let spec = spec.trim().trim_matches(['\'', '"']);
+            let filter = Filter::parse(spec);
+            assert!(filter.level_for("wordcraft") >= LevelFilter::Info, "shutdown callback is hidden by {spec}");
+            assert!(filter.level_for("wordcraft::control_server") >= LevelFilter::Debug, "control tracing is hidden by {spec}");
+            assert!(filter.level_for("wordcraft_ui_egui::control") >= LevelFilter::Debug, "UI tracing is hidden by {spec}");
+            found += 1;
+        }
+        assert!(found >= 3, "native package jobs must configure diagnostic filters");
+    }
+
+    #[test]
     fn directives_follow_env_logger_and_the_most_specific_one_wins() {
         let f = Filter::parse("info,wgpu_core=error,wordcraft_pdf=trace,wordcraft_pdf::fonts=off");
         assert_eq!(f.level_for("eframe"), LevelFilter::Info);

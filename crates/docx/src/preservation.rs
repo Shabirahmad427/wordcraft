@@ -399,6 +399,14 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
         .map(|r| r.target.clone())
         .unwrap_or_else(|| "word/document.xml".into());
     let original_flavor = flavor(&pkg, &main)?;
+    // The native writer can remove personal metadata from the model projection, but a guarded
+    // package may contain unsupported annotation-bearing parts that it does not know about.
+    // Returning the original bytes here would silently defeat the user's privacy settings.
+    if edits.is_empty() && (doc.settings.remove_personal_info || doc.settings.remove_date_time) {
+        return Err(error(
+            "privacy settings cannot be applied safely to a guarded DOCX with unsupported package content; original file was not overwritten",
+        ));
+    }
     if signed(&pkg) && (!edits.is_empty() || requested != original_flavor) {
         return Err(error("editing this package would invalidate its digital signature; original content was preserved"));
     }

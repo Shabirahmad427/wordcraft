@@ -25,7 +25,12 @@ pub(crate) fn publish(app: &WordApp, ctx: &egui::Context, result: &Value) {
             }
         })
     });
-    if rich != Some(true) {
+    let legacy_rich = rich.is_none()
+        && result
+            .get("html")
+            .and_then(Value::as_str)
+            .is_some_and(|html| !html.is_empty() && app.services.set_clipboard_html.as_ref().is_some_and(|copy| copy(html, text)));
+    if rich != Some(true) && !legacy_rich {
         ctx.copy_text(text.to_owned());
     }
 }
@@ -84,6 +89,12 @@ pub(crate) fn fill(app: &mut WordApp, id: &str, params: &mut Value) -> Option<Re
         }
     }
     None
+}
+
+/// Put what Copy or Cut returned on the system clipboard using the shared native adapter.
+#[cfg(test)]
+pub(crate) fn put_result(app: &WordApp, ctx: &egui::Context, r: &Value) {
+    publish(app, ctx, r);
 }
 
 /// Format names worth showing: not the clipboard protocol's own bookkeeping targets.
@@ -265,5 +276,36 @@ mod tests {
         };
         let e = app(unreadable).run("edit.paste", json!({})).unwrap_err();
         assert!(e.contains("couldn't be read") && e.contains("isn't supported"), "{e}");
+    }
+
+    #[test]
+    fn copying_an_equation_puts_its_html_on_the_system_clipboard() {
+        // #816: the host gets HTML with the equation as MathML beside the text.
+        let got = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(String, String)>::new()));
+        let sink = got.clone();
+        let mut a = app(Services {
+            set_clipboard_html: Some(Box::new(move |h, t| {
+                sink.borrow_mut().push((h.to_string(), t.to_string()));
+                true
+            })),
+            ..Default::default()
+        });
+        a.run("document.setText", json!({"text": "Speed "})).unwrap();
+        a.run("caret.docEnd", json!({})).unwrap();
+        a.run("insert.equation", json!({"linear": "y=2x_s", "edit": false})).unwrap();
+        a.run("select.all", json!({})).unwrap();
+        let ctx = egui::Context::default();
+        let r = a.run("edit.copy", json!({})).unwrap();
+        put_result(&a, &ctx, &r);
+        let got_now = got.borrow().clone();
+        assert_eq!(got_now.len(), 1);
+        assert!(got_now[0].0.contains("<math") && got_now[0].1.contains("y=2x_s"), "{got_now:?}");
+        // Plain text selections also carry rich HTML for native clipboard services, without MathML.
+        a.run("select.range", json!({"anchor": {"block": 0, "off": 0}, "focus": {"block": 0, "off": 5}})).unwrap();
+        let r = a.run("edit.copy", json!({})).unwrap();
+        put_result(&a, &ctx, &r);
+        let copied = got.borrow();
+        assert_eq!(copied.len(), 2);
+        assert!(copied[1].0.contains("Speed") && !copied[1].0.contains("<math"), "{copied:?}");
     }
 }

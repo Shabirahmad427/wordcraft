@@ -118,7 +118,7 @@ jobs:
           WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
           WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
-          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
+          RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
           WGPU_BACKEND: gl
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
@@ -151,7 +151,7 @@ jobs:
           WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
           WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
-          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
+          RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
           WGPU_BACKEND: gl
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
@@ -277,7 +277,7 @@ jobs:
           WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
           WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
-          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
+          RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
         run: |
           set -euo pipefail
           baseline='${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.6.1-macos-aarch64.dmg'
@@ -330,7 +330,7 @@ jobs:
           WORDCRAFT_NATIVE_EXPECT_THEME: dark
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
           WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
-          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
+          RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
         run: cargo test -p wordcraft --test native_window --locked -- isolated_native_window_smoke --ignored --nocapture --test-threads=1
       - name: Edit, save, export and quit the installed app through LaunchServices
         env:
@@ -446,7 +446,7 @@ jobs:
           $env:WORDCRAFT_NATIVE_PROFILE_PATH = $upgradeProfile
           $env:WORDCRAFT_PRESERVE_NATIVE_PROFILE = '1'
           $env:WORDCRAFT_NATIVE_CONTROL_TRACE = '1'
-          $env:RUST_LOG = 'wordcraft::control_server=debug,wordcraft_ui_egui::control=debug'
+          $env:RUST_LOG = 'warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug'
           cargo test -p wordcraft --test native_window --locked -- isolated_native_shutdown_checkpoints_recovery_before_exit --ignored --nocapture --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw "old installed GUI recovery smoke exited $LASTEXITCODE" }
           $profile = Join-Path $upgradeProfile 'AppData\WordCraft'
@@ -494,7 +494,7 @@ jobs:
           WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
           WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
-          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
+          RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
         run: |
           $env:WORDCRAFT_NATIVE_EXECUTABLE = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
           cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
@@ -508,7 +508,7 @@ jobs:
           WORDCRAFT_NATIVE_EXPECT_THEME: dark
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
           WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
-          RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
+          RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
         run: |
           $env:WORDCRAFT_NATIVE_EXECUTABLE = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
           cargo test -p wordcraft --test native_window --locked -- isolated_native_window_smoke --ignored --nocapture --test-threads=1
