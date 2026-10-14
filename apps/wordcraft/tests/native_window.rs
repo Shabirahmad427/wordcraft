@@ -434,15 +434,12 @@ fn isolated_native_window_smoke() {
     let mut control = Control { port, key, next_id: 0 };
 
     if reuse_profile {
-        let expected_percent = std::env::var("WORDCRAFT_NATIVE_EXPECT_INTERFACE_PERCENT")
-            .expect("upgrade smoke needs an expected persisted interface size")
-            .parse::<u64>()
-            .expect("parse expected interface size");
+        let expected_theme = std::env::var("WORDCRAFT_NATIVE_EXPECT_THEME").expect("upgrade smoke needs an expected persisted theme");
         let state = control.call("ui.inspect", json!({}));
         assert_eq!(
-            state.pointer("/ui/interfaceSize").and_then(Value::as_u64),
-            Some(expected_percent),
-            "upgraded app did not load the isolated profile preference: {state}"
+            state.pointer("/ui/theme").and_then(Value::as_str),
+            Some(expected_theme.as_str()),
+            "upgraded app did not load the isolated profile theme: {state}"
         );
         assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
     }
@@ -581,7 +578,7 @@ fn isolated_native_window_smoke() {
         let saved: Value =
             serde_json::from_slice(&std::fs::read(profile.settings().join("ui.json")).expect("upgraded app retained profile preferences"))
                 .expect("parse persisted upgrade preferences");
-        assert_eq!(saved.pointer("/interfaceSize").and_then(Value::as_u64), Some(125));
+        assert_eq!(saved.pointer("/theme").and_then(Value::as_str), Some("dark"));
         assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
     } else {
         for path in [
@@ -614,7 +611,7 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
     let key = wait_for_key(&mut process.0, &key_path, &stderr_path);
     let mut control = Control { port, key, next_id: 0 };
     wait_for_page(&mut control);
-    control.execute("ui.interfaceSize", json!({"percent": 125}));
+    control.execute("ui.theme", json!({"value": "dark"}));
     control.execute("text.insert", json!({"text": "checkpoint before native shutdown"}));
     wait_for_document_text(&mut control, "checkpoint before native shutdown", &profile);
     control.call("app.quit", json!({}));
@@ -625,7 +622,7 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
     assert!(!key_path.exists(), "normal shutdown left its control key at {}", key_path.display());
     let saved: Value = serde_json::from_slice(&std::fs::read(profile.settings().join("ui.json")).expect("native shutdown saved UI preferences"))
         .expect("parse saved native shutdown preferences");
-    assert_eq!(saved.pointer("/interfaceSize").and_then(Value::as_u64), Some(125));
+    assert_eq!(saved.pointer("/theme").and_then(Value::as_str), Some("dark"));
     assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
 }
 
