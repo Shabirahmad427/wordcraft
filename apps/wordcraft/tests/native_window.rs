@@ -442,6 +442,17 @@ fn isolated_native_window_smoke() {
             "upgraded app did not load the isolated profile theme: {state}"
         );
         assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
+        match state.pointer("/dialog/dialog").and_then(Value::as_str) {
+            Some("recovery") => {
+                eprintln!("closing startup recovery chooser while preserving its recovery entries");
+                control.execute("ui.closeDialog", json!({}));
+                let after_close = control.call("ui.inspect", json!({}));
+                assert!(after_close.get("dialog").is_none_or(Value::is_null), "recovery chooser did not close: {after_close}");
+                assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
+            }
+            None => {}
+            Some(other) => panic!("unexpected startup dialog blocks the upgraded-profile smoke: {other}; UI state: {state}"),
+        }
     }
 
     let page = wait_for_page(&mut control);
