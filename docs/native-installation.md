@@ -16,6 +16,13 @@ a single current uninstall entry. The replacement app then loads the saved prefe
 recovery, runs the editing smoke and quits normally. The hosted run is pending; this does not prove
 every release upgrade or rollback path.
 
+The fixed baseline installer is cached by commit, operating system and architecture. An exact
+cache hit skips rebuilding that baseline; a cache miss builds it in the single source checkout.
+Only main-branch runs save the cache. Each run still builds the current release package and checks
+the installed baseline's build identity, profile preservation and native document workflow.
+The first run pays the baseline build cost; cache eviction causes another build. Hosted cache
+reuse and its timing benefit still need verification.
+
 The first attempt, [run 38510684885](https://github.com/Shabirahmad427/wordcraft/actions/runs/38510684885),
 used upstream v0.5.0 packages because the fork had no published installer. It stopped on baseline
 assertions before upgrading: the DEB lacked the CLI and used Debian version `0.5.0-1`, and the old
@@ -126,3 +133,4 @@ devices, so its Wayland result covers startup/recovery/quit, not Wayland input.
 | 2026-10-14 | minor | Added checksum-verified v0.5.0-to-current upgrade scenarios and staged control-request tracing; hosted validation pending |
 | 2026-10-14 | minor | Fixed v0.5.0 package metadata and legacy exit-marker assertions after first matrix run; corrected hosted rerun pending |
 | 2026-10-14 | minor | Rebuilt the baseline from fork 0.6.1 using one source checkout and removed temporary duplicate app copies |
+| 2026-10-14 | minor | Added exact-commit baseline installer caching to avoid rebuilding unchanged packages; hosted reuse awaits validation |
