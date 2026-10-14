@@ -1,27 +1,34 @@
 # Native installation and package validation
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress; corrected upgrade checks awaiting hosted rerun · **Target:** Linux, macOS and Windows packages
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress; fork-owned 0.6.1 package replacement checks awaiting hosted rerun · **Target:** Linux, macOS and Windows packages
 
 ## Phase 7T.1 upgrade verification
 
-The hosted package workflow now stages the published upstream v0.5.0 DEB, universal DMG and x64
-MSI, checks each against that release's `SHA256SUMS.txt`, and upgrades each disposable runner to
-the package built from the checked-out commit. It creates preferences and a dirty-document recovery
-snapshot under a runner-temporary profile before upgrading, hashes both, and checks they survive
-installation. Linux also checks a separate synthetic user document; macOS replaces the app bundle
-with a staged copy and restores the previous bundle if the replacement move fails; Windows checks
-the MSI uninstall identity/version and that exactly one current WordCraft entry remains. The
-upgraded app then loads the saved preference, verifies the recovery snapshot, runs the editing
-smoke, and quits normally. These checks exercise hosted package transitions only after this
-workflow revision passes; they do not prove every release upgrade or rollback path.
+The hosted package workflow uses a single source checkout to build a baseline DEB, DMG app and x64 MSI from fork commit
+`9270097dfbada244ae9e3b608da7dc9a451905c1`, then replaces each with the package built from the
+current checkout, switching one source tree between commits. Both are version 0.6.1; embedded build
+commits distinguish the baseline and current binaries. This exercises same-version package
+replacement, not an upgrade between semantic versions. Each runner creates preferences and a dirty-document recovery snapshot under a
+runner-temporary profile before replacement, hashes them and checks they remain unchanged. Linux
+also checks a separate synthetic user document; macOS copies the current bundle from the mounted
+DMG into its disposable Applications directory; Windows verifies same-version MSI replacement and
+a single current uninstall entry. The replacement app then loads the saved preference, verifies
+recovery, runs the editing smoke and quits normally. The hosted run is pending; this does not prove
+every release upgrade or rollback path.
 
-The first execution of the new matrix, [run 38510684885](https://github.com/Shabirahmad427/wordcraft/actions/runs/38510684885), stopped on baseline assertions before any package upgrade. Inspection of the published v0.5.0 DEB showed `Version: 0.5.0-1` and only `/usr/bin/wordcraft`; the test had assumed a bare `0.5.0` version and a CLI binary. The old macOS and Windows apps received `app.quit` and exited with status 0, but did not emit the exit-callback log marker added to the newer source. The workflow now reads package metadata directly, and the baseline recovery test checks successful exit, preference/recovery persistence and control-key cleanup; the marker assertion remains in the current-app smoke. The corrected hosted rerun is pending.
+The first attempt, [run 38510684885](https://github.com/Shabirahmad427/wordcraft/actions/runs/38510684885),
+used upstream v0.5.0 packages because the fork had no published installer. It stopped on baseline
+assertions before upgrading: the DEB lacked the CLI and used Debian version `0.5.0-1`, and the old
+macOS/Windows builds lacked a newer diagnostic callback marker. Those failures were test-fixture
+mismatches, not package upgrade results. The workflow now builds the baseline from the fork's
+0.6.1 commit instead.
 
 The intermittent Windows `document.inspect` timeout has not been reproduced. On the Windows v0.5.0
-baseline in run 38510684885, tracing recorded `document.inspect` returning in 277 ms and `app.quit`
-returning in 387 ms, followed by process exit status 0. These timings cover the old baseline app
-and do not explain the earlier timeout in the newer package. The original failure and identical
-retry only establish that a control reply was absent at the five-second harness read deadline once.
+test fixture in run 38510684885, tracing recorded `document.inspect` returning in 277 ms and
+`app.quit` returning in 387 ms, followed by process exit status 0; that attempt stopped on a
+subsequent callback-log assertion. These timings do not explain the earlier timeout in the newer
+package. The original failure and identical retry only establish that a control reply was absent at
+the five-second harness read deadline once.
 They do not establish whether the server received the request or the UI thread processed it. The
 native package workflow now emits an opaque request ID with bounded stage logs
 for request receipt, UI submission, UI dispatch, processing, response handoff and TCP response
@@ -118,3 +125,4 @@ devices, so its Wayland result covers startup/recovery/quit, not Wayland input.
 | 2026-10-14 | minor | Recorded passing Linux/macOS/Windows installed-package run, headless Wayland startup and one unexplained Windows control timeout followed by a passing retry |
 | 2026-10-14 | minor | Added checksum-verified v0.5.0-to-current upgrade scenarios and staged control-request tracing; hosted validation pending |
 | 2026-10-14 | minor | Fixed v0.5.0 package metadata and legacy exit-marker assertions after first matrix run; corrected hosted rerun pending |
+| 2026-10-14 | minor | Rebuilt the baseline from fork 0.6.1 using one source checkout and removed temporary duplicate app copies |

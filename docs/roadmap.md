@@ -14,8 +14,9 @@ safe package XML merge before theme or style edits can be saved; see the
 
 Phase 7T validates actual native packages. A local macOS DMG defect is corrected; the hosted
 installed DEB, DMG app and Windows x64 MSI passed the existing package workflow. The follow-up
-adds checksum-verified v0.5.0-to-current upgrade scenarios with isolated preference and recovery
-state checks, plus staged Windows control-request tracing. These changes await hosted execution.
+replaces fork-owned 0.6.1 packages from commit `9270097` with current 0.6.1 packages, checking
+isolated preference and recovery state plus Windows control-request tracing. It uses one source
+checkout and awaits hosted execution.
 The Windows GUI smoke's earlier control-response timeout passed on retry but remains unexplained.
 Linux headless Weston startup/recovery/quit passed without input coverage. Remaining desktop
 integration gaps are recorded in [native installation](native-installation.md). This work does not

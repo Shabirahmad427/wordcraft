@@ -618,8 +618,7 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
 
     let status = wait_for_exit(&mut process.0, Duration::from_secs(15), &stderr_path);
     assert!(status.success(), "native app launch did not finish successfully: {status}; stderr: {}", read_log(&stderr_path));
-    // This test also seeds profiles with older installed packages, whose builds predate our
-    // diagnostic callback log. Verify shutdown through its observable cleanup below instead.
+    assert_app_exit_callback(&stderr_path);
     assert!(!key_path.exists(), "normal shutdown left its control key at {}", key_path.display());
     let saved: Value = serde_json::from_slice(&std::fs::read(profile.settings().join("ui.json")).expect("native shutdown saved UI preferences"))
         .expect("parse saved native shutdown preferences");

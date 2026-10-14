@@ -1,6 +1,6 @@
 # Native desktop platform support
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Corrected v0.5.0 upgrade-test assumptions; hosted rerun pending · **Target:** Linux, macOS and Windows desktop builds
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Use a fork-owned 0.6.1 baseline and a single source checkout; hosted rerun pending · **Target:** Linux, macOS and Windows desktop builds
 
 This matrix distinguishes source/build configuration, hosted checks, a running native window and
 physical desktop interaction. A passing shared-core test or cross-target build does not establish
@@ -108,17 +108,15 @@ The earlier `kLSNoExecutableErr` remains unexplained; this successful packaged l
 separate observation. Intel macOS, Windows ARM64 GUI, Linux Wayland and physical device behavior
 still need runtime checks.
 
-### Phase 7T.1 upgrade checks (corrected hosted rerun pending)
+### Phase 7T.1 package replacement checks (hosted rerun pending)
 
-The native package workflow now downloads the upstream v0.5.0 DEB, universal DMG and x64 MSI,
-verifies their published SHA-256 checksums, creates isolated preferences and a dirty-document
-recovery snapshot, then upgrades to the current build. It compares profile state across the install
-and validates current package identity. Windows checks the MSI uninstall entry and replacement
-binary; macOS stages and validates the new bundle before swapping it in. The first hosted execution
-(run 38510684885) stopped before upgrading: the v0.5.0 DEB does not ship `wordcraft-cli` and its
-package version includes the `-1` Debian revision; the older macOS and Windows apps exited normally
-but lacked the newer exit-callback log marker. The assertions now match those baseline artifacts.
-This run is not a passing upgrade result. Linux Wayland native input, macOS Intel hardware, Windows ARM64 GUI,
+The native package workflow uses one source checkout to build a baseline from fork commit `9270097dfbada244ae9e3b608da7dc9a451905c1`
+(version 0.6.1), then replaces it with the current commit's package using one source tree. The run verifies build identity,
+isolated preferences and recovery snapshots, plus Linux user documents, macOS bundle replacement,
+and Windows same-version MSI metadata. This is same-version package replacement, not a semantic
+version upgrade. The first hosted execution (run 38510684885) used upstream v0.5.0 and stopped on
+incorrect baseline assertions before upgrading; it is not passing upgrade evidence. The workflow now
+uses a fork-owned 0.6.1 baseline and is awaiting hosted results. Linux Wayland native input, macOS Intel hardware, Windows ARM64 GUI,
 notarization and external application file associations remain separate gaps.
 
 ## Revision history
@@ -131,3 +129,4 @@ notarization and external application file associations remain separate gaps.
 | 2026-10-14 | minor | Recorded successful three-OS installed-package run, Linux headless Wayland startup and the unexplained Windows timeout/retry |
 | 2026-10-14 | minor | Added previous-to-current upgrade checks and Windows control lifecycle tracing; hosted results pending |
 | 2026-10-14 | minor | Corrected old-package CLI/version and exit-log assumptions after run 38510684885; upgrade rerun pending |
+| 2026-10-14 | minor | Switched to a fork-owned 0.6.1 baseline and removed duplicate source and temporary app copies |

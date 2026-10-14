@@ -31,19 +31,12 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      WORDCRAFT_UPGRADE_BASELINE_SHA: 9270097dfbada244ae9e3b608da7dc9a451905c1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Download and verify the previous Linux package
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          baseline='${{ runner.temp }}/upgrade-baseline-linux'
-          mkdir -p "$baseline"
-          gh release download v0.5.0 --repo storytold/wordcraft \
-            --pattern wordcraft-0.5.0-linux-x86_64.deb --pattern SHA256SUMS.txt --dir "$baseline"
-          (cd "$baseline" && grep -E '^[0-9a-f]{64}  wordcraft-0\.5\.0-linux-x86_64\.deb$' SHA256SUMS.txt | sha256sum --check --status)
-          test -s "$baseline/wordcraft-0.5.0-linux-x86_64.deb"
+        with:
+          fetch-depth: 0
       - name: Install desktop and packaging dependencies
         run: |
           sudo apt-get update
@@ -61,6 +54,17 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native-packages-linux
+      - name: Build the fork 0.6.1 DEB baseline
+        env:
+          WORDCRAFT_BUILD_SHA: ${{ env.WORDCRAFT_UPGRADE_BASELINE_SHA }}
+        run: |
+          set -euo pipefail
+          baseline_dist='${{ runner.temp }}/upgrade-baseline-linux'
+          mkdir -p "$baseline_dist"
+          git checkout --detach "$WORDCRAFT_UPGRADE_BASELINE_SHA"
+          DIST="$baseline_dist" CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" packaging/linux/package.sh --formats deb
+          test -s "$baseline_dist/wordcraft-0.6.1-linux-x86_64.deb"
+          git checkout --detach "$GITHUB_SHA"
       - name: Build deb, rpm and tar packages
         env:
           WORDCRAFT_BUILD_SHA: ${{ github.sha }}
@@ -79,11 +83,14 @@ jobs:
           tar_cli="$(find '${{ runner.temp }}/tar-package' -path '*/bin/wordcraft-cli' -type f -print -quit)"
           test -x "$tar_cli"
           "$tar_cli" --version | grep '${{ github.sha }}'
-          sudo apt-get install -y '${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.5.0-linux-x86_64.deb'
+          baseline='${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.6.1-linux-x86_64.deb'
+          sudo apt-get install -y "$baseline"
           test -x /usr/bin/wordcraft
-          baseline_version="$(dpkg-deb -f '${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.5.0-linux-x86_64.deb' Version)"
+          test -x /usr/bin/wordcraft-cli
+          baseline_version="$(dpkg-deb -f "$baseline" Version)"
           test "$(dpkg-query -W -f='${Version}' wordcraft)" = "$baseline_version"
-          /usr/bin/wordcraft --version | grep '0.5.0'
+          /usr/bin/wordcraft --version | grep "${WORDCRAFT_UPGRADE_BASELINE_SHA:0:8}"
+          /usr/bin/wordcraft-cli --version | grep "$WORDCRAFT_UPGRADE_BASELINE_SHA"
           desktop-file-validate /usr/share/applications/ai.storyteller.wordcraft.desktop
           grep -q 'Exec=wordcraft %F' /usr/share/applications/ai.storyteller.wordcraft.desktop
           grep -q 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' /usr/share/applications/ai.storyteller.wordcraft.desktop
@@ -114,7 +121,7 @@ jobs:
           current=(dist/release/wordcraft-*-linux-x86_64.deb)
           test "${#current[@]}" -eq 1
           package_version="$(dpkg-deb -f "${current[0]}" Version)"
-          sudo apt-get install -y "${current[0]}"
+          sudo apt-get install --reinstall -y "${current[0]}"
           test "$(dpkg-query -W -f='${Version}' wordcraft)" = "$package_version"
           test -x /usr/bin/wordcraft
           test -x /usr/bin/wordcraft-cli
@@ -186,18 +193,12 @@ jobs:
   macos:
     runs-on: macos-latest
     timeout-minutes: 90
+    env:
+      WORDCRAFT_UPGRADE_BASELINE_SHA: 9270097dfbada244ae9e3b608da7dc9a451905c1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Download and verify the previous macOS app
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          baseline='${{ runner.temp }}/upgrade-baseline-macos'
-          mkdir -p "$baseline"
-          gh release download v0.5.0 --repo storytold/wordcraft \
-            --pattern wordcraft-0.5.0-macos-universal.dmg --pattern SHA256SUMS.txt --dir "$baseline"
-          (cd "$baseline" && grep -E '^[0-9a-f]{64}  wordcraft-0\.5\.0-macos-universal\.dmg$' SHA256SUMS.txt | shasum -a 256 --check --status)
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: stable
@@ -205,6 +206,17 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native-packages-macos
+      - name: Build the fork 0.6.1 DMG baseline
+        env:
+          WORDCRAFT_BUILD_SHA: ${{ env.WORDCRAFT_UPGRADE_BASELINE_SHA }}
+        run: |
+          set -euo pipefail
+          baseline_dist='${{ runner.temp }}/upgrade-baseline-macos'
+          mkdir -p "$baseline_dist"
+          git checkout --detach "$WORDCRAFT_UPGRADE_BASELINE_SHA"
+          DIST="$baseline_dist" CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" packaging/macos/package.sh --arch aarch64
+          test -s "$baseline_dist/wordcraft-0.6.1-macos-aarch64.dmg"
+          git checkout --detach "$GITHUB_SHA"
       - name: Build the Apple Silicon DMG
         env:
           WORDCRAFT_BUILD_SHA: ${{ github.sha }}
@@ -242,7 +254,7 @@ jobs:
           RUST_LOG: wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
         run: |
           set -euo pipefail
-          baseline='${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.5.0-macos-universal.dmg'
+          baseline='${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.6.1-macos-aarch64.dmg'
           mkdir -p '${{ runner.temp }}/old-volume'
           rm -rf '${{ runner.temp }}/Applications/WordCraft.app'
           hdiutil attach -nobrowse -readonly -mountpoint '${{ runner.temp }}/old-volume' "$baseline"
@@ -250,8 +262,9 @@ jobs:
           hdiutil detach '${{ runner.temp }}/old-volume'
           app='${{ runner.temp }}/Applications/WordCraft.app'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = ai.storyteller.wordcraft
-          test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftVersion' "$app/Contents/Info.plist")" = 0.5.0
-          "$app/Contents/MacOS/WordCraft" --version | grep '0.5.0'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftVersion' "$app/Contents/Info.plist")" = 0.6.1
+          test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftBuildCommit' "$app/Contents/Info.plist")" = "$WORDCRAFT_UPGRADE_BASELINE_SHA"
+          "$app/Contents/MacOS/WordCraft" --version | grep "${WORDCRAFT_UPGRADE_BASELINE_SHA:0:8}"
           cargo test -p wordcraft --test native_window --locked -- isolated_native_shutdown_checkpoints_recovery_before_exit --ignored --nocapture --test-threads=1
           profile='${{ runner.temp }}/upgrade-profile/Library/Application Support/WordCraft'
           test -s "$profile/ui.json"
@@ -268,18 +281,13 @@ jobs:
           test "${#dmg[@]}" -eq 1
           mkdir -p '${{ runner.temp }}/current-volume'
           hdiutil attach -nobrowse -readonly -mountpoint '${{ runner.temp }}/current-volume' "${dmg[0]}"
-          ditto '${{ runner.temp }}/current-volume/WordCraft.app' '${{ runner.temp }}/Applications/WordCraft.next.app'
+          source_app='${{ runner.temp }}/current-volume/WordCraft.app'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$source_app/Contents/Info.plist")" = ai.storyteller.wordcraft
+          test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftBuildCommit' "$source_app/Contents/Info.plist")" = '${{ github.sha }}'
+          codesign --verify --strict --deep "$source_app"
+          rm -rf '${{ runner.temp }}/Applications/WordCraft.app'
+          ditto "$source_app" '${{ runner.temp }}/Applications/WordCraft.app'
           hdiutil detach '${{ runner.temp }}/current-volume'
-          staged='${{ runner.temp }}/Applications/WordCraft.next.app'
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$staged/Contents/Info.plist")" = ai.storyteller.wordcraft
-          test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftBuildCommit' "$staged/Contents/Info.plist")" = '${{ github.sha }}'
-          codesign --verify --strict --deep "$staged"
-          mv '${{ runner.temp }}/Applications/WordCraft.app' '${{ runner.temp }}/Applications/WordCraft.previous.app'
-          if ! mv "$staged" '${{ runner.temp }}/Applications/WordCraft.app'; then
-            mv '${{ runner.temp }}/Applications/WordCraft.previous.app' '${{ runner.temp }}/Applications/WordCraft.app'
-            exit 1
-          fi
-          rm -rf '${{ runner.temp }}/Applications/WordCraft.previous.app'
           app='${{ runner.temp }}/Applications/WordCraft.app'
           test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftVersion' "$app/Contents/Info.plist")" = "$current_version"
           "$app/Contents/MacOS/WordCraft" --version | grep "${GITHUB_SHA:0:8}"
@@ -333,22 +341,12 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 90
+    env:
+      WORDCRAFT_UPGRADE_BASELINE_SHA: 9270097dfbada244ae9e3b608da7dc9a451905c1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Download and verify the previous Windows MSI
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $baseline = Join-Path $env:RUNNER_TEMP 'upgrade-baseline-windows'
-          New-Item -ItemType Directory -Force $baseline | Out-Null
-          gh release download v0.5.0 --repo storytold/wordcraft --pattern wordcraft-0.5.0-windows-x64.msi --pattern SHA256SUMS.txt --dir $baseline
-          if ($LASTEXITCODE -ne 0) { throw "baseline download exited $LASTEXITCODE" }
-          $line = Select-String -Path (Join-Path $baseline 'SHA256SUMS.txt') -Pattern '^([0-9a-f]{64})  wordcraft-0\.5\.0-windows-x64\.msi$' | Select-Object -First 1
-          if (-not $line) { throw 'baseline MSI is absent from SHA256SUMS.txt' }
-          $actual = (Get-FileHash (Join-Path $baseline 'wordcraft-0.5.0-windows-x64.msi') -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne $line.Matches[0].Groups[1].Value) { throw 'baseline MSI checksum mismatch' }
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: stable
@@ -359,6 +357,21 @@ jobs:
       - uses: storytold/craft-common-actions/actions/install-wix@8f081ff5db115de44313c9db09415c359bf2ca01
         with:
           wix-version: 5.0.2
+      - name: Build the fork 0.6.1 MSI baseline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baselineDist = Join-Path $env:RUNNER_TEMP 'upgrade-baseline-windows'
+          New-Item -ItemType Directory -Force $baselineDist | Out-Null
+          git checkout --detach $env:WORDCRAFT_UPGRADE_BASELINE_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'could not select baseline commit' }
+          $env:WORDCRAFT_BUILD_SHA = $env:WORDCRAFT_UPGRADE_BASELINE_SHA
+          $env:DIST = $baselineDist
+          $env:CARGO_TARGET_DIR = Join-Path $env:GITHUB_WORKSPACE 'target'
+          ./packaging/windows/package.ps1 -Arch x64
+          if (-not (Test-Path (Join-Path $baselineDist 'wordcraft-0.6.1-windows-x64.msi'))) { throw 'baseline 0.6.1 MSI was not created' }
+          git checkout --detach $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'could not restore tested commit' }
       - name: Build x64 MSI and portable ZIP
         shell: pwsh
         env:
@@ -376,15 +389,16 @@ jobs:
             if ($inWorkspacePackage -and $line -match '^\s*version\s*=\s*"([^"]+)"') { $currentVersion = ($Matches[1] -split '-')[0]; break }
           }
           if (-not $currentVersion) { throw 'could not read current workspace package version' }
-          $baselineMsi = Join-Path $env:RUNNER_TEMP 'upgrade-baseline-windows\wordcraft-0.5.0-windows-x64.msi'
+          $baselineMsi = Join-Path $env:RUNNER_TEMP 'upgrade-baseline-windows\wordcraft-0.6.1-windows-x64.msi'
           $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$baselineMsi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-old-install.log`"" -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\wordcraft-old-install.log" -Tail 80; throw "old MSI install exited $($p.ExitCode)" }
           $oldEntry = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'WordCraft' } | Select-Object -First 1
-          if (-not $oldEntry -or $oldEntry.DisplayVersion -ne '0.5.0') { throw 'older MSI uninstall identity/version missing' }
+          if (-not $oldEntry -or $oldEntry.DisplayVersion -ne '0.6.1') { throw 'baseline MSI uninstall identity/version missing' }
           $oldExe = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
           if (-not (Test-Path $oldExe)) { throw 'older MSI executable is missing' }
           $oldGuiVersion = & $oldExe --version | Out-String
-          if ($LASTEXITCODE -ne 0 -or $oldGuiVersion -notlike '*0.5.0*') { throw "older MSI executable identity/version mismatch: $oldGuiVersion" }
+          $baselineShortSha = $env:WORDCRAFT_UPGRADE_BASELINE_SHA.Substring(0, 8)
+          if ($LASTEXITCODE -ne 0 -or $oldGuiVersion -notlike "*$baselineShortSha*") { throw "baseline MSI executable build identity mismatch: $oldGuiVersion" }
           $upgradeProfile = Join-Path $env:RUNNER_TEMP 'upgrade-profile'
           New-Item -ItemType Directory -Force $upgradeProfile | Out-Null
           $env:WORDCRAFT_NATIVE_EXECUTABLE = $oldExe
