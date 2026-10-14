@@ -476,7 +476,7 @@ jobs:
 
       - name: Upgrade MSI and verify package and user data
         shell: pwsh
-        timeout-minutes: 15
+        timeout-minutes: 4
         run: |
           $ErrorActionPreference = 'Stop'
           $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -494,11 +494,19 @@ jobs:
           New-Item -ItemType Directory -Force $documents | Out-Null
           Set-Content (Join-Path $documents 'keep.txt') 'owned by the user'
           Write-Host "[$($clock.Elapsed)] Upgrading baseline MSI to $msi"
-          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-install.log`"" -Wait -PassThru
+          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-install.log`"" -PassThru
+          if (-not $p.WaitForExit(120000)) {
+            Write-Host "[$($clock.Elapsed)] MSI upgrade exceeded 120 seconds; collecting installer diagnostics"
+            Get-Process msiexec -ErrorAction SilentlyContinue | Select-Object Id, StartTime, CPU, Responding | Format-Table | Out-String | Write-Host
+            if (Test-Path "$env:RUNNER_TEMP\wordcraft-install.log") { Get-Content "$env:RUNNER_TEMP\wordcraft-install.log" -Tail 100 }
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw 'MSI upgrade timed out after 120 seconds; forced termination is a test failure'
+          }
           if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\wordcraft-install.log" -Tail 80; throw "MSI install exited $($p.ExitCode)" }
           Write-Host "[$($clock.Elapsed)] Current MSI upgrade returned $($p.ExitCode)"
           $currentEntries = @(Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'WordCraft' })
           if ($currentEntries.Count -ne 1 -or $currentEntries[0].DisplayVersion -ne $currentVersion) { throw "current MSI upgrade metadata mismatch: $($currentEntries | ConvertTo-Json -Compress)" }
+          Write-Host "[$($clock.Elapsed)] MSI uninstall metadata verified"
           $dir = Join-Path $env:ProgramFiles 'WordCraft'
           $exe = Join-Path $dir 'wordcraft.exe'
           $cli = Join-Path $dir 'wordcraft-cli.exe'
@@ -511,11 +519,13 @@ jobs:
           $guiVersion = & $exe --version | Out-String
           $guiShortSha = '${{ github.sha }}'.Substring(0, 8)
           if ($LASTEXITCODE -ne 0 -or $guiVersion -notlike "*$guiShortSha*") { throw "installed GUI has wrong commit: $guiVersion" }
+          Write-Host "[$($clock.Elapsed)] Installed GUI identity verified: $($guiVersion.Trim())"
           $profile = Join-Path (Join-Path $env:RUNNER_TEMP 'upgrade-profile') 'AppData\WordCraft'
           $after = Get-ChildItem $profile -Recurse -File | Where-Object { $_.Name -eq 'ui.json' -or $_.Extension -eq '.wcr' } | Sort-Object FullName | ForEach-Object { "$($_.FullName.Substring($profile.Length)) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" }
           $before = Get-Content (Join-Path $env:RUNNER_TEMP 'upgrade-profile-state.txt')
           if (Compare-Object $before $after) { throw 'MSI upgrade changed isolated preferences or recovery snapshots' }
           if ((Get-Content (Join-Path $env:RUNNER_TEMP 'documents\keep.txt')) -ne 'owned by the user') { throw 'MSI upgrade changed user document' }
+          Write-Host "[$($clock.Elapsed)] Isolated preferences, recovery snapshots and user document verified"
           $zip = (Get-ChildItem dist/release/*-windows-x64-portable.zip | Select-Object -First 1).FullName
           if (-not $zip) { throw 'portable ZIP was not produced' }
           $portable = Join-Path $env:RUNNER_TEMP 'portable'
