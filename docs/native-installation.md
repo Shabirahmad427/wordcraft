@@ -1,6 +1,6 @@
 # Native installation and package validation
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress; same-version 0.7.0 package replacement checks awaiting hosted validation · **Target:** Linux, macOS and Windows packages
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress; Windows 0.7.0 replacement passed, Linux/macOS same-version package checks pending · **Target:** Linux, macOS and Windows packages
 
 ## Phase 7T.1 package replacement verification
 
@@ -14,15 +14,19 @@ DMG into its disposable Applications directory; Windows verifies MSI replacement
 a single current uninstall entry. The replacement app then loads the saved preference, verifies
 recovery and quits normally. A separate fresh-profile smoke performs the edit, table, Undo/Redo,
 save and export workflow. Keeping those checks separate avoids typing behind WordCraft's expected
-startup recovery chooser while retaining the pending recovery data. The hosted run is pending; this
-does not prove every release upgrade or rollback path.
+startup recovery chooser while retaining the pending recovery data. Windows run
+[38619307562](https://github.com/Shabirahmad427/wordcraft/actions/runs/38619307562) passed this
+workflow on commit `c2342badbab141b7e9415b2acd9affc8f64c37c2`; Linux and macOS were skipped in the
+Windows-only dispatch. This does not prove every release upgrade or rollback path.
 
 The fixed baseline installer is cached by commit, operating system and architecture. An exact
 cache hit skips rebuilding that baseline; a cache miss builds it in the single source checkout.
-Only main-branch runs save the cache. Each run still builds the current release package and checks
-the installed baseline's build identity, profile preservation and native document workflow.
-The first run pays the baseline build cost; cache eviction causes another build. Hosted cache
-reuse and its timing benefit still need verification.
+Only main-branch runs save the cache. Windows run 38619307562 seeded the 0.7.0 baseline MSI cache;
+its baseline build took 12m43s. The current release package and native test target also needed
+first-build compilation, so the Windows-only workflow took about 33 minutes overall. The Rust
+target cache save completed; subsequent runs with this lockfile and baseline cache should avoid
+those cold-build costs. Each run still builds the current release package and checks the installed
+baseline's identity, profile preservation and native document workflow.
 
 The first attempt, [run 38510684885](https://github.com/Shabirahmad427/wordcraft/actions/runs/38510684885),
 used upstream v0.5.0 packages because the fork had no published installer. It stopped on baseline
@@ -148,6 +152,7 @@ devices, so its Wayland result covers startup/recovery/quit, not Wayland input.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Windows-only run 38619307562 passed 0.7.0 same-version MSI replacement, recovery preservation, native edit/export/quit and uninstall; Linux/macOS package checks remain pending |
 | 2026-10-14 | minor | Rebased validation on 0.7.0 same-version package replacement; preserved-profile startup verifies theme/recovery then exits, while editing runs in a separate fresh profile |
 | 2026-10-14 | minor | Integrated upstream 0.7.0 and passed all six local gates plus isolated Apple Silicon GUI/recovery-shutdown smokes; hosted same-version package replacement pending |
 | 2026-10-13 | major | Audited existing packages, corrected the macOS DMG signature defect, added installed-package native smoke paths and documented current runtime limits |
