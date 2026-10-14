@@ -13,6 +13,7 @@ mod crypt;
 mod custom;
 mod custom_xml;
 mod flat;
+mod fonts;
 mod opaque;
 mod package;
 mod preservation;
@@ -42,6 +43,7 @@ pub use crypt::{
     is_encrypted, protection_hash,
 };
 pub use flat::{XmlKind, sniff_xml, write as write_flat};
+pub use fonts::embedded_fonts;
 pub use read::read;
 pub use smart_art::smart_art_items;
 pub use wordml2003_write::write as write_wordml2003;

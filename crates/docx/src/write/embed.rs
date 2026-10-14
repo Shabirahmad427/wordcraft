@@ -13,7 +13,7 @@ use wordcraft_doc::graphic::Embedded;
 use wordcraft_doc::para::Float;
 
 use super::PartRels;
-use crate::package::{EMBEDDED_PARTS, EmbeddedManifest, MAX_EMBEDDED_PARTS, VBA_PROJECT_PART, VBA_RELATED, relative, rt};
+use crate::package::{EMBEDDED_PARTS, EmbeddedManifest, FONT_TABLE_PART, MAX_EMBEDDED_PARTS, VBA_PROJECT_PART, VBA_RELATED, relative, rt};
 use crate::units::{MAX_LEN_PT, emu, int};
 use crate::xml::{self, El, MAX_DEPTH};
 
@@ -26,9 +26,6 @@ const PART_COST: u64 = 4096;
 
 /// Where the stories' parts live: every story this writer makes is a part in `word/`.
 const STORY_PART: &str = "word/document.xml";
-
-/// The font table kept from a file (read by `Reader::keep_part_tree`).
-const FONT_TABLE_PART: &str = "word/fontTable.xml";
 
 /// The embedded-object parts of a package being written.
 pub(crate) struct EmbedWriter<'d> {

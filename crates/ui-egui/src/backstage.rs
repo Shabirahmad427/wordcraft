@@ -129,6 +129,12 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
             });
         });
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.ribbon).inner_margin(egui::Margin::symmetric(40, 30))).show(ui, |ui| {
+        // The asynchronous host print page fills the pane; its settings and preview own their
+        // scroll areas. The native spooler page keeps the existing capability controls below.
+        if app.ui.backstage_page == "print" && app.services.native_print.is_none() {
+            crate::print_page::show(app, ui);
+            return;
+        }
         egui::ScrollArea::vertical().show(ui, |ui| match app.ui.backstage_page.as_str() {
             "home" => home_page(app, ui),
             "new" => new_page(app, ui),

@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      WORDCRAFT_UPGRADE_BASELINE_SHA: 9270097dfbada244ae9e3b608da7dc9a451905c1
+      WORDCRAFT_UPGRADE_BASELINE_SHA: aeb37dfb272bae6480ea57b299f709f8012cb3e9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -61,13 +61,13 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native-packages-linux
-      - name: Restore the fixed 0.6.1 DEB baseline
+      - name: Restore the 0.7.0 same-version DEB baseline
         id: baseline-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.6.1-linux-x86_64.deb
+          path: ${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.7.0-linux-x86_64.deb
           key: native-upgrade-baseline-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.WORDCRAFT_UPGRADE_BASELINE_SHA }}
-      - name: Build the fork 0.6.1 DEB baseline
+      - name: Build the fork 0.7.0 DEB baseline
         if: steps.baseline-cache.outputs.cache-hit != 'true'
         env:
           WORDCRAFT_BUILD_SHA: ${{ env.WORDCRAFT_UPGRADE_BASELINE_SHA }}
@@ -77,19 +77,19 @@ jobs:
           mkdir -p "$baseline_dist"
           git checkout --detach "$WORDCRAFT_UPGRADE_BASELINE_SHA"
           DIST="$baseline_dist" CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" packaging/linux/package.sh --formats deb
-          test -s "$baseline_dist/wordcraft-0.6.1-linux-x86_64.deb"
+          test -s "$baseline_dist/wordcraft-0.7.0-linux-x86_64.deb"
           git checkout --detach "$GITHUB_SHA"
-      - name: Cache the fixed 0.6.1 DEB baseline
+      - name: Cache the 0.7.0 same-version DEB baseline
         if: github.ref == 'refs/heads/main' && steps.baseline-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.6.1-linux-x86_64.deb
+          path: ${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.7.0-linux-x86_64.deb
           key: ${{ steps.baseline-cache.outputs.cache-primary-key }}
       - name: Build deb, rpm and tar packages
         env:
           WORDCRAFT_BUILD_SHA: ${{ github.sha }}
         run: packaging/linux/package.sh --formats deb,rpm,tar
-      - name: Install the older DEB and inspect its identity
+      - name: Install the baseline DEB and inspect its identity
         run: |
           set -euo pipefail
           deb=(dist/release/wordcraft-*-linux-x86_64.deb)
@@ -103,7 +103,7 @@ jobs:
           tar_cli="$(find '${{ runner.temp }}/tar-package' -path '*/bin/wordcraft-cli' -type f -print -quit)"
           test -x "$tar_cli"
           "$tar_cli" --version | grep '${{ github.sha }}'
-          baseline='${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.6.1-linux-x86_64.deb'
+          baseline='${{ runner.temp }}/upgrade-baseline-linux/wordcraft-0.7.0-linux-x86_64.deb'
           sudo apt-get install -y "$baseline"
           test -x /usr/bin/wordcraft
           test -x /usr/bin/wordcraft-cli
@@ -135,7 +135,7 @@ jobs:
           test -s "$profile/ui.json"
           find "$profile/recovery" -type f -name '*.wcr' -print -quit | grep -q .
           find "$profile" -type f \( -name ui.json -o -name '*.wcr' \) -print0 | sort -z | xargs -0 sha256sum > '${{ runner.temp }}/upgrade-profile-state.sha256'
-      - name: Upgrade to the current DEB and verify package and user data
+      - name: Replace the baseline DEB and verify package and user data
         run: |
           set -euo pipefail
           current=(dist/release/wordcraft-*-linux-x86_64.deb)
@@ -217,7 +217,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 90
     env:
-      WORDCRAFT_UPGRADE_BASELINE_SHA: 9270097dfbada244ae9e3b608da7dc9a451905c1
+      WORDCRAFT_UPGRADE_BASELINE_SHA: aeb37dfb272bae6480ea57b299f709f8012cb3e9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -229,13 +229,13 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native-packages-macos
-      - name: Restore the fixed 0.6.1 DMG baseline
+      - name: Restore the 0.7.0 same-version DMG baseline
         id: baseline-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.6.1-macos-aarch64.dmg
+          path: ${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.7.0-macos-aarch64.dmg
           key: native-upgrade-baseline-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.WORDCRAFT_UPGRADE_BASELINE_SHA }}
-      - name: Build the fork 0.6.1 DMG baseline
+      - name: Build the fork 0.7.0 DMG baseline
         if: steps.baseline-cache.outputs.cache-hit != 'true'
         env:
           WORDCRAFT_BUILD_SHA: ${{ env.WORDCRAFT_UPGRADE_BASELINE_SHA }}
@@ -245,13 +245,13 @@ jobs:
           mkdir -p "$baseline_dist"
           git checkout --detach "$WORDCRAFT_UPGRADE_BASELINE_SHA"
           DIST="$baseline_dist" CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" packaging/macos/package.sh --arch aarch64
-          test -s "$baseline_dist/wordcraft-0.6.1-macos-aarch64.dmg"
+          test -s "$baseline_dist/wordcraft-0.7.0-macos-aarch64.dmg"
           git checkout --detach "$GITHUB_SHA"
-      - name: Cache the fixed 0.6.1 DMG baseline
+      - name: Cache the 0.7.0 same-version DMG baseline
         if: github.ref == 'refs/heads/main' && steps.baseline-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.6.1-macos-aarch64.dmg
+          path: ${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.7.0-macos-aarch64.dmg
           key: ${{ steps.baseline-cache.outputs.cache-primary-key }}
       - name: Build the Apple Silicon DMG
         env:
@@ -279,7 +279,7 @@ jobs:
           test -x "$cli"
           "$cli" --version | grep '${{ github.sha }}'
           printf 'owned by the user\n' > '${{ runner.temp }}/documents/keep.txt'
-      - name: Install the older app and create isolated upgrade data
+      - name: Install the baseline app and create isolated upgrade data
         env:
           WORDCRAFT_NATIVE_APP_BUNDLE: ${{ runner.temp }}/Applications/WordCraft.app
           WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
@@ -290,7 +290,7 @@ jobs:
           RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
         run: |
           set -euo pipefail
-          baseline='${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.6.1-macos-aarch64.dmg'
+          baseline='${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.7.0-macos-aarch64.dmg'
           mkdir -p '${{ runner.temp }}/old-volume'
           rm -rf '${{ runner.temp }}/Applications/WordCraft.app'
           hdiutil attach -nobrowse -readonly -mountpoint '${{ runner.temp }}/old-volume' "$baseline"
@@ -298,7 +298,7 @@ jobs:
           hdiutil detach '${{ runner.temp }}/old-volume'
           app='${{ runner.temp }}/Applications/WordCraft.app'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = ai.storyteller.wordcraft
-          test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftVersion' "$app/Contents/Info.plist")" = 0.6.1
+          test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftVersion' "$app/Contents/Info.plist")" = 0.7.0
           test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftBuildCommit' "$app/Contents/Info.plist")" = "$WORDCRAFT_UPGRADE_BASELINE_SHA"
           "$app/Contents/MacOS/WordCraft" --version | grep "${WORDCRAFT_UPGRADE_BASELINE_SHA:0:8}"
           cargo test -p wordcraft --test native_window --locked -- isolated_native_shutdown_checkpoints_recovery_before_exit --ignored --nocapture --test-threads=1
@@ -331,7 +331,7 @@ jobs:
           find "$profile" -type f \( -name ui.json -o -name '*.wcr' \) -print0 | sort -z | xargs -0 shasum -a 256 > '${{ runner.temp }}/upgrade-profile-state-after-install.sha256'
           diff -u '${{ runner.temp }}/upgrade-profile-state.sha256' '${{ runner.temp }}/upgrade-profile-state-after-install.sha256'
           grep -q 'owned by the user' '${{ runner.temp }}/documents/keep.txt'
-      - name: Launch upgraded app with preserved profile and verify normal shutdown
+      - name: Launch replacement app with preserved profile and verify normal shutdown
         env:
           WORDCRAFT_NATIVE_APP_BUNDLE: ${{ runner.temp }}/Applications/WordCraft.app
           WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
@@ -379,7 +379,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     env:
-      WORDCRAFT_UPGRADE_BASELINE_SHA: 9270097dfbada244ae9e3b608da7dc9a451905c1
+      WORDCRAFT_UPGRADE_BASELINE_SHA: aeb37dfb272bae6480ea57b299f709f8012cb3e9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -395,13 +395,13 @@ jobs:
       - uses: storytold/craft-common-actions/actions/install-wix@8f081ff5db115de44313c9db09415c359bf2ca01
         with:
           wix-version: 5.0.2
-      - name: Restore the fixed 0.6.1 MSI baseline
+      - name: Restore the 0.7.0 same-version MSI baseline
         id: baseline-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ${{ runner.temp }}/upgrade-baseline-windows/wordcraft-0.6.1-windows-x64.msi
+          path: ${{ runner.temp }}/upgrade-baseline-windows/wordcraft-0.7.0-windows-x64.msi
           key: native-upgrade-baseline-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.WORDCRAFT_UPGRADE_BASELINE_SHA }}
-      - name: Build the fork 0.6.1 MSI baseline
+      - name: Build the fork 0.7.0 MSI baseline
         if: steps.baseline-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
@@ -414,42 +414,42 @@ jobs:
           $env:DIST = $baselineDist
           $env:CARGO_TARGET_DIR = Join-Path $env:GITHUB_WORKSPACE 'target'
           ./packaging/windows/package.ps1 -Arch x64
-          if (-not (Test-Path (Join-Path $baselineDist 'wordcraft-0.6.1-windows-x64.msi'))) { throw 'baseline 0.6.1 MSI was not created' }
+          if (-not (Test-Path (Join-Path $baselineDist 'wordcraft-0.7.0-windows-x64.msi'))) { throw 'baseline 0.7.0 MSI was not created' }
           git checkout --detach $env:GITHUB_SHA
           if ($LASTEXITCODE -ne 0) { throw 'could not restore tested commit' }
-      - name: Cache the fixed 0.6.1 MSI baseline
+      - name: Cache the 0.7.0 same-version MSI baseline
         if: github.ref == 'refs/heads/main' && steps.baseline-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ${{ runner.temp }}/upgrade-baseline-windows/wordcraft-0.6.1-windows-x64.msi
+          path: ${{ runner.temp }}/upgrade-baseline-windows/wordcraft-0.7.0-windows-x64.msi
           key: ${{ steps.baseline-cache.outputs.cache-primary-key }}
       - name: Build x64 MSI and portable ZIP
         shell: pwsh
         env:
           WORDCRAFT_BUILD_SHA: ${{ github.sha }}
         run: ./packaging/windows/package.ps1 -Arch x64
-      - name: Install older MSI and inspect identity
+      - name: Install baseline MSI and inspect identity
         shell: pwsh
         timeout-minutes: 10
         run: |
           $ErrorActionPreference = 'Stop'
           $clock = [Diagnostics.Stopwatch]::StartNew()
-          $baselineMsi = Join-Path $env:RUNNER_TEMP 'upgrade-baseline-windows\wordcraft-0.6.1-windows-x64.msi'
+          $baselineMsi = Join-Path $env:RUNNER_TEMP 'upgrade-baseline-windows\wordcraft-0.7.0-windows-x64.msi'
           if (-not (Test-Path $baselineMsi)) { throw "baseline MSI missing: $baselineMsi" }
           Write-Host "[$($clock.Elapsed)] Installing baseline MSI: $baselineMsi"
           $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$baselineMsi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-old-install.log`"" -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\wordcraft-old-install.log" -Tail 80; throw "old MSI install exited $($p.ExitCode)" }
           Write-Host "[$($clock.Elapsed)] Baseline MSI install returned $($p.ExitCode)"
           $oldEntry = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'WordCraft' } | Select-Object -First 1
-          if (-not $oldEntry -or $oldEntry.DisplayVersion -ne '0.6.1') { throw 'baseline MSI uninstall identity/version missing' }
+          if (-not $oldEntry -or $oldEntry.DisplayVersion -ne '0.7.0') { throw 'baseline MSI uninstall identity/version missing' }
           $oldExe = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
-          if (-not (Test-Path $oldExe)) { throw 'older MSI executable is missing' }
+          if (-not (Test-Path $oldExe)) { throw 'baseline MSI executable is missing' }
           $oldGuiVersion = & $oldExe --version | Out-String
           $baselineShortSha = $env:WORDCRAFT_UPGRADE_BASELINE_SHA.Substring(0, 8)
           if ($LASTEXITCODE -ne 0 -or $oldGuiVersion -notlike "*$baselineShortSha*") { throw "baseline MSI executable build identity mismatch: $oldGuiVersion" }
           Write-Host "[$($clock.Elapsed)] Baseline executable identity verified: $($oldGuiVersion.Trim())"
 
-      - name: Run recovery smoke against older installed GUI
+      - name: Run recovery smoke against baseline installed GUI
         shell: pwsh
         timeout-minutes: 20
         env:
@@ -475,7 +475,7 @@ jobs:
           $before = Get-ChildItem $profile -Recurse -File | Where-Object { $_.Name -eq 'ui.json' -or $_.Extension -eq '.wcr' } | Sort-Object FullName | ForEach-Object { "$($_.FullName.Substring($profile.Length)) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" }
           Set-Content (Join-Path $env:RUNNER_TEMP 'upgrade-profile-state.txt') $before
 
-      - name: Upgrade MSI and verify package and user data
+      - name: Replace the baseline MSI with the 0.7.0 package and verify data
         shell: pwsh
         timeout-minutes: 4
         run: |
@@ -497,16 +497,16 @@ jobs:
           Write-Host "[$($clock.Elapsed)] Upgrading baseline MSI to $msi"
           $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-install.log`"" -PassThru
           if (-not $p.WaitForExit(120000)) {
-            Write-Host "[$($clock.Elapsed)] MSI upgrade exceeded 120 seconds; collecting installer diagnostics"
+            Write-Host "[$($clock.Elapsed)] MSI replacement exceeded 120 seconds; collecting installer diagnostics"
             Get-Process msiexec -ErrorAction SilentlyContinue | Select-Object Id, StartTime, CPU, Responding | Format-Table | Out-String | Write-Host
             if (Test-Path "$env:RUNNER_TEMP\wordcraft-install.log") { Get-Content "$env:RUNNER_TEMP\wordcraft-install.log" -Tail 100 }
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-            throw 'MSI upgrade timed out after 120 seconds; forced termination is a test failure'
+            throw 'MSI replacement timed out after 120 seconds; forced termination is a test failure'
           }
           if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\wordcraft-install.log" -Tail 80; throw "MSI install exited $($p.ExitCode)" }
-          Write-Host "[$($clock.Elapsed)] Current MSI upgrade returned $($p.ExitCode)"
+          Write-Host "[$($clock.Elapsed)] Current MSI replacement returned $($p.ExitCode)"
           $currentEntries = @(Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'WordCraft' })
-          if ($currentEntries.Count -ne 1 -or $currentEntries[0].DisplayVersion -ne $currentVersion) { throw "current MSI upgrade metadata mismatch: $($currentEntries | ConvertTo-Json -Compress)" }
+          if ($currentEntries.Count -ne 1 -or $currentEntries[0].DisplayVersion -ne $currentVersion) { throw "current MSI replacement metadata mismatch: $($currentEntries | ConvertTo-Json -Compress)" }
           Write-Host "[$($clock.Elapsed)] MSI uninstall metadata verified"
           $dir = Join-Path $env:ProgramFiles 'WordCraft'
           $exe = Join-Path $dir 'wordcraft.exe'
@@ -524,8 +524,8 @@ jobs:
           $profile = Join-Path (Join-Path $env:RUNNER_TEMP 'upgrade-profile') 'AppData\WordCraft'
           $after = Get-ChildItem $profile -Recurse -File | Where-Object { $_.Name -eq 'ui.json' -or $_.Extension -eq '.wcr' } | Sort-Object FullName | ForEach-Object { "$($_.FullName.Substring($profile.Length)) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" }
           $before = Get-Content (Join-Path $env:RUNNER_TEMP 'upgrade-profile-state.txt')
-          if (Compare-Object $before $after) { throw 'MSI upgrade changed isolated preferences or recovery snapshots' }
-          if ((Get-Content (Join-Path $env:RUNNER_TEMP 'documents\keep.txt')) -ne 'owned by the user') { throw 'MSI upgrade changed user document' }
+          if (Compare-Object $before $after) { throw 'MSI replacement changed isolated preferences or recovery snapshots' }
+          if ((Get-Content (Join-Path $env:RUNNER_TEMP 'documents\keep.txt')) -ne 'owned by the user') { throw 'MSI replacement changed user document' }
           Write-Host "[$($clock.Elapsed)] Isolated preferences, recovery snapshots and user document verified"
           $zip = (Get-ChildItem dist/release/*-windows-x64-portable.zip | Select-Object -First 1).FullName
           if (-not $zip) { throw 'portable ZIP was not produced' }
@@ -535,7 +535,7 @@ jobs:
           if (-not $portableCli) { throw 'portable ZIP has no CLI' }
           $portableVersion = & $portableCli --version | Out-String
           if ($LASTEXITCODE -ne 0 -or $portableVersion -notlike '*${{ github.sha }}*') { throw "portable CLI has wrong commit: $portableVersion" }
-          Write-Host "[$($clock.Elapsed)] MSI upgrade, preservation, and portable identity checks passed"
+          Write-Host "[$($clock.Elapsed)] MSI replacement, preservation, and portable identity checks passed"
       - name: Edit, save, export and quit the installed GUI
         shell: pwsh
         env:
@@ -548,7 +548,7 @@ jobs:
           $env:WORDCRAFT_NATIVE_EXECUTABLE = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
           cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw "installed GUI smoke exited $LASTEXITCODE" }
-      - name: Launch upgraded MSI with preserved profile
+      - name: Launch replacement MSI with preserved profile
         shell: pwsh
         env:
           WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
@@ -561,7 +561,7 @@ jobs:
         run: |
           $env:WORDCRAFT_NATIVE_EXECUTABLE = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
           cargo test -p wordcraft --test native_window --locked -- isolated_native_window_smoke --ignored --nocapture --test-threads=1
-          if ($LASTEXITCODE -ne 0) { throw "upgraded profile GUI smoke exited $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) { throw "replacement profile GUI verification exited $LASTEXITCODE" }
       - name: Uninstall without deleting a user document
         shell: pwsh
         run: |

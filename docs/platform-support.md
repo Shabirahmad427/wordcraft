@@ -1,6 +1,6 @@
 # Native desktop platform support
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Integrated upstream 0.7.0 and passed Apple Silicon native smoke; hosted upgrade rerun pending · **Target:** Linux, macOS and Windows desktop builds
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Upstream integration merged locally; hosted 0.7.0 package replacement validation pending · **Target:** Linux, macOS and Windows desktop builds
 
 This matrix distinguishes source/build configuration, hosted checks, a running native window and
 physical desktop interaction. A passing shared-core test or cross-target build does not establish
@@ -110,24 +110,30 @@ still need runtime checks.
 
 ### Phase 7T.1 package replacement checks (hosted rerun pending)
 
-The native package workflow uses one source checkout to build a baseline from fork commit `9270097dfbada244ae9e3b608da7dc9a451905c1`
-(version 0.6.1), then replaces it with the current commit's package using one source tree. The run verifies build identity,
+The native package workflow now builds a baseline from fork commit `aeb37dfb272bae6480ea57b299f709f8012cb3e9`
+(version 0.7.0), then replaces it with the current package using one source tree. It verifies build identity,
 isolated preferences and recovery snapshots, plus Linux user documents, macOS bundle replacement,
-and Windows MSI metadata. The current source is 0.7.0, so this now tests an upgrade from 0.6.1.
-The first hosted execution (run 38510684885) used upstream v0.5.0 and stopped on
-incorrect baseline assertions before upgrading; it is not passing upgrade evidence. The workflow now
-uses a fork-owned 0.6.1 baseline and is awaiting hosted results. Linux Wayland native input, macOS Intel hardware, Windows ARM64 GUI,
+and Windows MSI metadata. Both builds are 0.7.0, so this is a same-version replacement check, not a
+version upgrade. No newer upstream release was available; a genuine cross-version upgrade remains
+unverified. The earlier 0.5.0 and 0.6.1 fixture failures below are retained as historical evidence.
+Windows-only run 38611092944 passed package installation, recovery smoke, MSI replacement,
+document editing, PDF export, normal shutdown and uninstall. It used the historical 0.6.1 baseline,
+so it does not validate the new 0.7.0 baseline or a three-OS replacement matrix. The first hosted
+execution (run 38510684885) used upstream v0.5.0 and stopped on incorrect baseline assertions before
+replacement; it is not passing replacement evidence. Linux Wayland native input, macOS Intel hardware, Windows ARM64 GUI,
 notarization and external application file associations remain separate gaps.
 
 Run 38513406559 passed all three source native smokes on `ff6ac5a`. Package run 38513406587 failed
 after normal baseline exit because its log filter hid the application's exit callback. The filter
-is corrected and has regression coverage; this does not establish a passing package upgrade yet.
+is corrected and has regression coverage; this does not establish a passing 0.7.0 replacement run.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-14 | minor | Integrated upstream 0.7.0 into the fork and passed local Apple Silicon native edit/quit and recovery shutdown smokes; hosted upgrade rerun pending |
+| 2026-10-14 | minor | Windows focus failure traced to the expected startup recovery modal in the preserved-profile test; separated recovery verification from editing smoke |
+| 2026-10-14 | minor | Integrated 45 upstream main commits while preserving 149 fork-only commits; six local gates pass and hosted package verification remains pending |
+| 2026-10-14 | minor | Changed package baseline policy to 0.7.0 and distinguished same-version replacement from a genuine version upgrade |
 | 2026-10-13 | minor | Recorded hosted Linux startup success but text-input failure, and Windows tab-boundary click root cause plus local macOS verification of the corrected coordinate |
 | 2026-10-13 | minor | Printing run 38476284508 passed all three native smoke jobs with editing, table insertion, Undo/Redo and normal quit; raw native input and broader desktop integration remain separate gaps |
 | 2026-10-13 | major | Began Phase 7T with a verified macOS DMG signature correction, installed-app native smoke and a pending three-OS package workflow |

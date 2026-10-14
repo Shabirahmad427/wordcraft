@@ -442,17 +442,25 @@ fn isolated_native_window_smoke() {
             "upgraded app did not load the isolated profile theme: {state}"
         );
         assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
-        match state.pointer("/dialog/dialog").and_then(Value::as_str) {
-            Some("recovery") => {
-                eprintln!("closing startup recovery chooser while preserving its recovery entries");
-                control.execute("ui.closeDialog", json!({}));
-                let after_close = control.call("ui.inspect", json!({}));
-                assert!(after_close.get("dialog").is_none_or(Value::is_null), "recovery chooser did not close: {after_close}");
-                assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
-            }
-            None => {}
-            Some(other) => panic!("unexpected startup dialog blocks the upgraded-profile smoke: {other}; UI state: {state}"),
-        }
+        // A preserved dirty recovery entry intentionally opens the recovery chooser at startup.
+        // Keep it intact and verify replacement startup/shutdown here; the separate fresh-profile
+        // native smoke exercises editing, tables, Undo/Redo, save and export without a modal.
+        assert_eq!(
+            state.pointer("/dialog/dialog").and_then(Value::as_str),
+            Some("recovery"),
+            "replacement app did not present the preserved recovery entry: {state}"
+        );
+        control.call("app.quit", json!({}));
+        let status = wait_for_exit(&mut process.0, Duration::from_secs(15), &stderr_path);
+        assert!(status.success(), "replacement app did not quit normally with recovery pending: {status}; stderr: {}", read_log(&stderr_path));
+        assert_app_exit_callback(&stderr_path);
+        assert!(!key_path.exists(), "normal shutdown left its control key at {}", key_path.display());
+        let saved: Value =
+            serde_json::from_slice(&std::fs::read(profile.settings().join("ui.json")).expect("replacement app retained profile preferences"))
+                .expect("parse persisted replacement preferences");
+        assert_eq!(saved.pointer("/theme").and_then(Value::as_str), Some("dark"));
+        assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
+        return;
     }
 
     let page = wait_for_page(&mut control);

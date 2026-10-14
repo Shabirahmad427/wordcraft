@@ -6,7 +6,7 @@ use wordcraft_doc::para::{Anchor, FloatAlign, NoteKind, ShapeKind, Wrap};
 use wordcraft_doc::props::{Align, Border, BorderStyle, Rgb, TextColor, VMerge};
 use wordcraft_doc::{Block, Document, InlineObject, Paragraph, RevisionKind};
 
-const W_NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office""#;
+const W_NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office""#;
 
 const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
 
@@ -1542,6 +1542,49 @@ fn theme_styled_connectors_and_callout_boxes_keep_their_paint() {
     assert!(matches!(&paras(&again)[0].objects[0], InlineObject::Shape { stroke, extra, .. } if *stroke == Some(theme[7]) && extra.arrow_end));
 }
 
+/// A rounded rectangle's corner is its `adj` (100000ths of the shorter side), read, capped and
+/// written back; without one, and for presets only drawn as rounded rectangles, the default.
+#[test]
+fn rounded_rectangle_corners_are_read_and_saved() {
+    let geom = |prst: &str, av: &str| {
+        format!(r#"<a:prstGeom prst="{prst}"><a:avLst>{av}</a:avLst></a:prstGeom><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill>"#)
+    };
+    let gd = |fmla: &str| format!(r#"<a:gd name="adj" fmla="{fmla}"/>"#);
+    let body = [
+        geom("roundRect", &gd("val 3565")),
+        geom("roundRect", ""),
+        geom("roundRect", &gd("val 90000")),
+        geom("roundRect", &gd("val -20")),
+        geom("roundRect", &gd("*/ 1 2 3")),
+        geom("roundRect", r#"<a:gd name="adj1" fmla="val 100"/>"#),
+        geom("wedgeRoundRectCallout", &gd("val 3565")),
+    ]
+    .iter()
+    .map(|sppr| anchored_wsp("Rounded", 2540000, 1270000, sppr, "", "<wps:cNvSpPr/>"))
+    .collect::<String>();
+    let corners = |d: &Document| -> Vec<(ShapeKind, Option<u32>)> {
+        paras(d)[0]
+            .objects
+            .iter()
+            .filter_map(|o| match o {
+                InlineObject::Shape { kind, extra, .. } => Some((*kind, extra.corner)),
+                _ => None,
+            })
+            .collect()
+    };
+    let rounded = ShapeKind::RoundedRectangle;
+    let expected =
+        vec![(rounded, Some(3565)), (rounded, None), (rounded, Some(50_000)), (rounded, Some(0)), (rounded, None), (rounded, None), (rounded, None)];
+    let d = read_body(&format!("<w:p>{body}</w:p>"));
+    assert_eq!(corners(&d), expected);
+    let bytes = wordcraft_docx::write(&d).unwrap();
+    let mut xml = String::new();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.as_slice())).unwrap();
+    std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml).unwrap();
+    assert!(xml.contains(r#"<a:prstGeom prst="roundRect"><a:avLst><a:gd name="adj" fmla="val 3565"/></a:avLst></a:prstGeom>"#), "{xml}");
+    assert_eq!(corners(&wordcraft_docx::read(&bytes).unwrap()), expected);
+}
+
 /// #611: legacy VML lines and rectangles (documents without DrawingML).
 #[test]
 fn vml_lines_and_rectangles() {
@@ -1711,6 +1754,28 @@ fn part_text_box(d: &Document) -> String {
         _ => None,
     });
     story.and_then(|id| d.parts.get(&id)).map(|p| p.blocks.iter().filter_map(|b| b.as_para()).map(|p| p.plain_text()).collect()).unwrap_or_default()
+}
+
+/// #743: Word's cover pages place their shapes relative to the page's size, wrapped in
+/// `mc:AlternateContent` with an offset as the Fallback, and draw their freeforms back to the
+/// start without `a:close`. Both shapes are read: placed at the offset, and filled.
+#[test]
+fn cover_page_relative_position_and_freeform_drawn_back_to_its_start() {
+    let geom = r#"<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="100" h="100"><a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:lnTo><a:pt x="0" y="90"/></a:lnTo><a:cubicBezTo><a:pt x="30" y="100"/><a:pt x="70" y="100"/><a:pt x="100" y="90"/></a:cubicBezTo><a:lnTo><a:pt x="100" y="0"/></a:lnTo><a:lnTo><a:pt x="0" y="0"/></a:lnTo></a:path><a:path w="100" h="100"><a:moveTo><a:pt x="0" y="50"/></a:moveTo><a:lnTo><a:pt x="100" y="50"/></a:lnTo></a:path></a:pathLst></a:custGeom><a:solidFill><a:srgbClr val="0E2841"/></a:solidFill>"#;
+    let pct = r#"<mc:AlternateContent><mc:Choice Requires="wp14"><wp:positionV relativeFrom="page"><wp14:pctPosVOffset>4500</wp14:pctPosVOffset></wp:positionV></mc:Choice><mc:Fallback><wp:positionV relativeFrom="page"><wp:posOffset>480695</wp:posOffset></wp:positionV></mc:Fallback></mc:AlternateContent>"#;
+    let shape = anchored_wsp("Freeform 1", 5486400, 5334000, geom, "", "<wps:cNvSpPr/>")
+        .replace(r#"<wp:positionV relativeFrom="paragraph"><wp:posOffset>25400</wp:posOffset></wp:positionV>"#, pct);
+    let check = |d: &Document| {
+        let objs = &paras(d)[0].objects;
+        let InlineObject::Shape { kind, float, freeform: Some(f), .. } = &objs[0] else { panic!("{:?}", objs[0]) };
+        assert_eq!(*kind, ShapeKind::Freeform);
+        assert_eq!((float.v_rel, float.v_align, float.y), (Anchor::Page, None, 480695.0 / 12700.0), "the Fallback's offset");
+        let closed: Vec<bool> = f.paths.iter().map(|p| p.closed).collect();
+        assert_eq!(closed, [true, false], "a path back at its start is closed and filled; an open line isn't");
+    };
+    let d = read_body(&format!("<w:p>{shape}</w:p>"));
+    check(&d);
+    check(&wordcraft_docx::read(&wordcraft_docx::write(&d).unwrap()).unwrap());
 }
 
 #[test]

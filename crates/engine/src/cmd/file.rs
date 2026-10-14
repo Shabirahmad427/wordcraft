@@ -174,19 +174,9 @@ fn open(s: &mut Session, v: &Value) -> CmdResult {
     let password = p::str(v, "password");
     let (mut doc, source, encrypted) = if let Some(data) = p::str(v, "data") {
         let bytes = super::insert::base64_decode(data).ok_or_else(|| CmdError::Params("bad base64".into()))?;
-        let (doc, encrypted) = crate::io::open_bytes_with(path, &bytes, password).map_err(CmdError::Failed)?;
-        let source = (!encrypted && crate::io::is_word_package(path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str()))
-            .then(|| crate::SourcePackage { name: path.into(), bytes: std::sync::Arc::new(bytes) });
-        (doc, source, encrypted)
-    } else if password.is_some() {
-        let bytes = crate::io::read_file_capped(path, 2 << 30, "document").map_err(CmdError::Failed)?;
-        let (doc, encrypted) = crate::io::open_bytes_with(path, &bytes, password).map_err(CmdError::Failed)?;
-        let source = (!encrypted && crate::io::is_word_package(path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str()))
-            .then(|| crate::SourcePackage { name: path.into(), bytes: std::sync::Arc::new(bytes) });
-        (doc, source, encrypted)
+        crate::io::open_bytes_in_with_source(path, &bytes, password, &s.region()).map_err(CmdError::Failed)?
     } else {
-        let (doc, source) = crate::io::open_path_with_source(std::path::Path::new(path)).map_err(CmdError::Failed)?;
-        (doc, source, false)
+        crate::io::open_path_in_with_source(std::path::Path::new(path), password, &s.region()).map_err(CmdError::Failed)?
     };
     // Plain text and Markdown carry no language: they are in the editing language.
     let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
@@ -272,7 +262,11 @@ fn save(s: &mut Session, v: &Value) -> CmdResult {
         }
     }
     let password = s.password.as_ref().map(crate::io::Password::as_str);
-    crate::io::save_path_with(&path, &doc, password, &opts).map_err(CmdError::Failed)?;
+    // A header/footer just made and left empty isn't saved (#960). Preserve the fork's
+    // transactional metadata update by writing a clone, then updating the live document on success.
+    let mut save_doc = super::insert::saved_copy(s).unwrap_or_else(|| doc.clone());
+    save_doc.core = doc.core.clone();
+    crate::io::save_path_with(&path, &save_doc, password, &opts).map_err(CmdError::Failed)?;
     s.doc.core = doc.core;
     if ["docx", "docm", "dotx", "dotm", "odt", "rtf", "json", "xml"].contains(&ext.as_str()) {
         s.path = Some(path.clone());

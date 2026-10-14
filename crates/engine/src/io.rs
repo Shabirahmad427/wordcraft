@@ -107,6 +107,49 @@ pub fn open_bytes(name: &str, bytes: &[u8]) -> Result<Document, String> {
 /// whether the file was encrypted. Without the password needed the error satisfies
 /// [`needs_password`]; with a wrong one, [`wrong_password`].
 pub fn open_bytes_with(name: &str, bytes: &[u8], password: Option<&str>) -> Result<(Document, bool), String> {
+    open_bytes_in(name, bytes, password, &wordcraft_geom::Region::default())
+}
+
+/// The page a file that gives no page size (plain text, Markdown, HTML) opens on: `region`'s
+/// paper, as a new blank document (#838, #1381), with the default margins.
+pub fn region_page(region: &wordcraft_geom::Region) -> wordcraft_doc::SectionProps {
+    let (_, w, h) = region.paper();
+    wordcraft_doc::SectionProps { page_w: w, page_h: h, ..Default::default() }
+}
+
+/// [`open_bytes_with`] in `region`: a file that gives no page size opens on the region's paper
+/// (see [`region_page`]); a document with its own page size keeps it.
+pub fn open_bytes_in(name: &str, bytes: &[u8], password: Option<&str>, region: &wordcraft_geom::Region) -> Result<(Document, bool), String> {
+    let page = region_page(region);
+    let (doc, encrypted) = read_bytes(name, bytes, password, &page)?;
+    load_embedded_fonts(&doc);
+    Ok((doc, encrypted))
+}
+
+/// [`open_bytes_in`] while retaining original, unencrypted Word-package bytes for safe saves.
+pub fn open_bytes_in_with_source(
+    name: &str,
+    bytes: &[u8],
+    password: Option<&str>,
+    region: &wordcraft_geom::Region,
+) -> Result<(Document, Option<crate::SourcePackage>, bool), String> {
+    let (doc, encrypted) = open_bytes_in(name, bytes, password, region)?;
+    let source = (!encrypted && is_word_package(&ext_of(name)))
+        .then(|| crate::SourcePackage { name: name.to_owned(), bytes: std::sync::Arc::new(bytes.to_vec()) });
+    Ok((doc, source, encrypted))
+}
+
+/// Load the fonts `doc` embeds (#1171) for this run, in memory only: text set in a font that isn't
+/// installed then lays out and exports with it instead of a fallback. Faces already available
+/// stay as they are.
+fn load_embedded_fonts(doc: &Document) {
+    let files: Vec<Vec<u8>> = wordcraft_docx::embedded_fonts(doc).iter().filter_map(|f| wordcraft_fonts::decode_font_file(f).ok()).collect();
+    if !files.is_empty() {
+        wordcraft_fonts::FontDb::global().add_document_fonts(files);
+    }
+}
+
+fn read_bytes(name: &str, bytes: &[u8], password: Option<&str>, page: &wordcraft_doc::SectionProps) -> Result<(Document, bool), String> {
     let ext = ext_of(name);
     if matches!(ext.as_str(), "docx" | "docm" | "dotx" | "dotm" | "doc" | "dot") && wordcraft_docx::is_encrypted(bytes) {
         let mut doc = wordcraft_docx::read_with_password(bytes, password).map_err(|e| e.to_string())?;
@@ -114,15 +157,15 @@ pub fn open_bytes_with(name: &str, bytes: &[u8], password: Option<&str>) -> Resu
         return Ok((doc, true));
     }
     if ext.is_empty() || signature_contradicts(&ext, bytes) {
-        return open_by_content(name, &ext, bytes, password);
+        return open_by_content(name, &ext, bytes, password, page);
     }
     let mut doc = match ext.as_str() {
         // Plain text goes through the formats importer: BOMs, unmarked UTF-16, Windows-1252.
-        "txt" | "text" | "" => wordcraft_formats::txt::import(bytes),
+        "txt" | "text" | "" => wordcraft_formats::txt::import_on(bytes, page),
         "json" => serde_json::from_slice::<Document>(bytes).map_err(|e| format!("{name}: {e}"))?,
-        other => match crate::io_ext::open(other, bytes) {
+        other => match crate::io_ext::open(other, bytes, page) {
             Some(r) => r?,
-            None => return open_by_content(name, other, bytes, password),
+            None => return open_by_content(name, other, bytes, password, page),
         },
     };
     doc.ensure_nonempty();
@@ -195,7 +238,13 @@ fn signature_contradicts(ext: &str, bytes: &[u8]) -> bool {
 /// opened by what it holds, as Word does: a Word document or RTF file by its signature, any
 /// other text through the plain-text import with encoding detection (#569). Anything else is
 /// refused with a clear error rather than shown as garbage.
-fn open_by_content(name: &str, ext: &str, bytes: &[u8], password: Option<&str>) -> Result<(Document, bool), String> {
+fn open_by_content(
+    name: &str,
+    ext: &str,
+    bytes: &[u8],
+    password: Option<&str>,
+    page: &wordcraft_doc::SectionProps,
+) -> Result<(Document, bool), String> {
     const ZIP: &[u8] = b"PK\x03\x04";
     const OLE: &[u8] = &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
     let (mut doc, encrypted) = if bytes.starts_with(OLE) && wordcraft_docx::is_encrypted(bytes) {
@@ -207,7 +256,7 @@ fn open_by_content(name: &str, ext: &str, bytes: &[u8], password: Option<&str>) 
     } else if bytes.starts_with(b"{\\rtf") {
         (wordcraft_formats::rtf::import(bytes)?, false)
     } else if wordcraft_formats::txt::is_text(bytes) {
-        (wordcraft_formats::txt::import(bytes), false)
+        (wordcraft_formats::txt::import_on(bytes, page), false)
     } else if ext.is_empty() {
         return Err(format!("{name}: not a document or text file WordCraft can open"));
     } else {
@@ -255,7 +304,23 @@ pub fn open_path(path: &std::path::Path) -> Result<Document, String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn open_path_with_source(path: &std::path::Path) -> Result<(Document, Option<crate::SourcePackage>), String> {
+pub fn open_path_with(path: &std::path::Path, password: Option<&str>) -> Result<(Document, bool), String> {
+    open_path_in(path, password, &wordcraft_geom::Region::default())
+}
+
+/// [`open_path_with`] in `region` (see [`open_bytes_in`]).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_path_in(path: &std::path::Path, password: Option<&str>, region: &wordcraft_geom::Region) -> Result<(Document, bool), String> {
+    open_path_in_with_source(path, password, region).map(|(doc, _, encrypted)| (doc, encrypted))
+}
+
+/// Open a file in a region while retaining original package bytes for safe saves.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_path_in_with_source(
+    path: &std::path::Path,
+    password: Option<&str>,
+    region: &wordcraft_geom::Region,
+) -> Result<(Document, Option<crate::SourcePackage>, bool), String> {
     crate::file_access::check_read(&path.to_string_lossy())?;
     let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if meta.len() > 2 << 30 {
@@ -266,13 +331,21 @@ pub fn open_path_with_source(path: &std::path::Path) -> Result<(Document, Option
     if matches!(ext_of(&name).as_str(), "html" | "htm" | "xhtml") {
         // Pictures referenced by a relative path load from beside the HTML file.
         let images = LocalImages::new(path.parent().unwrap_or(std::path::Path::new("")));
-        let mut doc = wordcraft_formats::html::import_with(&wordcraft_formats::html::decode(&bytes), &|src| images.load(src));
+        let html = wordcraft_formats::html::decode(&bytes);
+        let mut doc = wordcraft_formats::html::import_on(&html, &|src| images.load(src), &region_page(region));
         fit_pictures(&mut doc);
         doc.ensure_nonempty();
-        return Ok((doc, None));
+        return Ok((doc, None, false));
     }
-    let doc = open_bytes(&name, &bytes)?;
-    let source = is_word_package(&ext_of(&name)).then(|| crate::SourcePackage { name: name.to_string(), bytes: std::sync::Arc::new(bytes) });
+    let (doc, encrypted) = open_bytes_in(&name, &bytes, password, region)?;
+    let source =
+        (!encrypted && is_word_package(&ext_of(&name))).then(|| crate::SourcePackage { name: name.to_string(), bytes: std::sync::Arc::new(bytes) });
+    Ok((doc, source, encrypted))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_path_with_source(path: &std::path::Path) -> Result<(Document, Option<crate::SourcePackage>), String> {
+    let (doc, source, _) = open_path_in_with_source(path, None, &wordcraft_geom::Region::default())?;
     Ok((doc, source))
 }
 
@@ -432,6 +505,18 @@ pub fn read_file_capped(path: &str, _max: u64, _what: &str) -> Result<Vec<u8>, S
     Err(format!("{path}: files are opened through the browser on the web"))
 }
 
+/// The first `max` bytes of the file at `path` (fewer when it is shorter), inside the automation
+/// read root when there is one: enough to tell a file's format by its start.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_file_head(path: &str, max: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    crate::file_access::check_read(path)?;
+    let f = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut head = Vec::new();
+    f.take(max).read_to_end(&mut head).map_err(|e| format!("{path}: {e}"))?;
+    Ok(head)
+}
+
 /// Write `bytes` to the file at `path`, inside the automation write root when there is one.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
@@ -450,8 +535,27 @@ pub fn open_path_with_source(path: &std::path::Path) -> Result<(Document, Option
 }
 
 #[cfg(target_arch = "wasm32")]
+pub fn open_path_with(path: &std::path::Path, _password: Option<&str>) -> Result<(Document, bool), String> {
+    Err(format!("{}: files are opened through the browser on the web", path.display()))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn open_path_in_with_source(
+    path: &std::path::Path,
+    _password: Option<&str>,
+    _region: &wordcraft_geom::Region,
+) -> Result<(Document, Option<crate::SourcePackage>, bool), String> {
+    Err(format!("{}: files are opened through the browser on the web", path.display()))
+}
+
+#[cfg(target_arch = "wasm32")]
 pub fn open_path(path: &std::path::Path) -> Result<Document, String> {
     Err(format!("{}: files are opened through the browser on the web", path.display()))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn open_path_in(path: &std::path::Path, password: Option<&str>, _region: &wordcraft_geom::Region) -> Result<(Document, bool), String> {
+    open_path_with(path, password)
 }
 
 pub fn save_path(path: &std::path::Path, doc: &Document) -> Result<(), String> {
