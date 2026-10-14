@@ -500,7 +500,8 @@ jobs:
           $version = & $cli --version | Out-String
           if ($LASTEXITCODE -ne 0 -or $version -notlike '*${{ github.sha }}*') { throw "installed CLI has wrong commit: $version" }
           $guiVersion = & $exe --version | Out-String
-          if ($LASTEXITCODE -ne 0 -or $guiVersion -notlike '*${{ github.sha }}*') { throw "installed GUI has wrong commit: $guiVersion" }
+          $guiShortSha = '${{ github.sha }}'.Substring(0, 8)
+          if ($LASTEXITCODE -ne 0 -or $guiVersion -notlike "*$guiShortSha*") { throw "installed GUI has wrong commit: $guiVersion" }
           $profile = Join-Path (Join-Path $env:RUNNER_TEMP 'upgrade-profile') 'AppData\WordCraft'
           $after = Get-ChildItem $profile -Recurse -File | Where-Object { $_.Name -eq 'ui.json' -or $_.Extension -eq '.wcr' } | Sort-Object FullName | ForEach-Object { "$($_.FullName.Substring($profile.Length)) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" }
           $before = Get-Content (Join-Path $env:RUNNER_TEMP 'upgrade-profile-state.txt')
