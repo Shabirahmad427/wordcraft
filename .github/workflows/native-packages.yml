@@ -243,6 +243,7 @@ jobs:
           set -euo pipefail
           baseline='${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.5.0-macos-universal.dmg'
           mkdir -p '${{ runner.temp }}/old-volume'
+          rm -rf '${{ runner.temp }}/Applications/WordCraft.app'
           hdiutil attach -nobrowse -readonly -mountpoint '${{ runner.temp }}/old-volume' "$baseline"
           ditto '${{ runner.temp }}/old-volume/WordCraft.app' '${{ runner.temp }}/Applications/WordCraft.app'
           hdiutil detach '${{ runner.temp }}/old-volume'
@@ -380,7 +381,9 @@ jobs:
           $oldEntry = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'WordCraft' } | Select-Object -First 1
           if (-not $oldEntry -or $oldEntry.DisplayVersion -ne '0.5.0') { throw 'older MSI uninstall identity/version missing' }
           $oldExe = Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe'
-          if (-not (Test-Path $oldExe) -or (& $oldExe --version | Out-String) -notlike '*0.5.0*') { throw 'older MSI executable identity/version mismatch' }
+          if (-not (Test-Path $oldExe)) { throw 'older MSI executable is missing' }
+          $oldGuiVersion = & $oldExe --version | Out-String
+          if ($LASTEXITCODE -ne 0 -or $oldGuiVersion -notlike '*0.5.0*') { throw "older MSI executable identity/version mismatch: $oldGuiVersion" }
           $upgradeProfile = Join-Path $env:RUNNER_TEMP 'upgrade-profile'
           New-Item -ItemType Directory -Force $upgradeProfile | Out-Null
           $env:WORDCRAFT_NATIVE_EXECUTABLE = $oldExe
