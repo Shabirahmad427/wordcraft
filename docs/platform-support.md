@@ -1,6 +1,15 @@
 # Native desktop platform support
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Upstream integration pushed; Windows package replacement passed, Linux/macOS same-version package replacement remains pending · **Target:** Linux, macOS and Windows desktop builds
+Phase 7T.2 validation is in progress. Native packages now runs Linux, Apple Silicon macOS,
+and Windows by default on every push to main. Partial dispatches are labeled explicitly;
+a combined required summary rejects failed, cancelled or skipped platform jobs in full runs.
+Independent platform jobs do not cancel one another. MSI install/removal waits are bounded,
+installer failure logs are retained, and native test compilation is timed separately.
+The baseline remains 0.7.0: these checks exercise same-version replacement, not a version upgrade.
+Final three-platform execution evidence is pending; existing installations remain unchanged.
+
+
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Phase 7T.2 requires the complete package matrix; final hosted results pending · **Target:** Linux, macOS and Windows desktop builds
 
 This matrix distinguishes source/build configuration, hosted checks, a running native window and
 physical desktop interaction. A passing shared-core test or cross-target build does not establish
@@ -131,6 +140,7 @@ is corrected and has regression coverage; this does not establish a passing 0.7.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Require all three package jobs on main, prevent cancellation, report combined status, bound MSI waits and separate compilation timing; final validation pending |
 | 2026-10-14 | minor | Windows package run 38619307562 passed same-version MSI replacement and recovery/edit/quit checks; identified the prior focus failure as typing behind the startup recovery chooser |
 | 2026-10-14 | minor | Windows focus failure traced to the expected startup recovery modal in the preserved-profile test; separated recovery verification from editing smoke |
 | 2026-10-14 | minor | Integrated 45 upstream main commits while preserving 149 fork-only commits; six local gates pass and hosted package verification remains pending |

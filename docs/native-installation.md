@@ -1,5 +1,14 @@
 # Native installation and package validation
 
+Phase 7T.2 validation is in progress. Native packages now runs Linux, Apple Silicon macOS,
+and Windows by default on every push to main. Partial dispatches are labeled explicitly;
+a combined required summary rejects failed, cancelled or skipped platform jobs in full runs.
+Independent platform jobs do not cancel one another. MSI install/removal waits are bounded,
+installer failure logs are retained, and native test compilation is timed separately.
+The baseline remains 0.7.0: these checks exercise same-version replacement, not a version upgrade.
+Final three-platform execution evidence is pending; existing installations remain unchanged.
+
+
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress; Windows 0.7.0 replacement passed, Linux/macOS same-version package checks pending · **Target:** Linux, macOS and Windows packages
 
 ## Phase 7T.1 package replacement verification
@@ -97,6 +106,23 @@ manually, quit WordCraft so the executable in use and any unsaved writing are no
 Package-manager rollback is separate from document-format compatibility; keep document backups
 when trying older application versions.
 
+## Updating the existing development machines after validation
+
+Do not update either workstation until the required workflows pass on the chosen commit.
+Reuse `/home/shabir/software/wordcraft` on Ubuntu and
+`/Users/shabir/software/wordcraft` on macOS. Inspect branch and working-tree state first;
+fetch and use `git merge --ff-only` only on the intended clean branch. If it cannot fast-forward,
+stop and preserve local work. Never reset a development branch to manufacture a fast-forward.
+
+With the owner's authorization, quit the existing app normally, back up the existing executables
+or app bundle outside the active installation path, and verify the downloaded package's commit
+identity. Replace the existing installation, without creating another permanent app location.
+On Ubuntu, stage both validated binaries beside their existing `~/.local/bin` destinations before
+renaming them into place; retain the backups until isolated launch/quit and version checks pass.
+On macOS, verify the mounted DMG and staged bundle signature before replacing the existing bundle.
+Use a temporary profile for verification; never remove the real preferences or recovery store.
+These procedures have been prepared, not executed by Phase 7T.2 validation.
+
 ## Package identity and signing
 
 - The package scripts set `WORDCRAFT_BUILD_SHA` from the checkout. Installed
@@ -152,6 +178,7 @@ devices, so its Wayland result covers startup/recovery/quit, not Wayland input.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Require all three package jobs on main, prevent cancellation, report combined status, bound MSI waits and separate compilation timing; final validation pending |
 | 2026-10-14 | minor | Windows-only run 38619307562 passed 0.7.0 same-version MSI replacement, recovery preservation, native edit/export/quit and uninstall; Linux/macOS package checks remain pending |
 | 2026-10-14 | minor | Rebased validation on 0.7.0 same-version package replacement; preserved-profile startup verifies theme/recovery then exits, while editing runs in a separate fresh profile |
 | 2026-10-14 | minor | Integrated upstream 0.7.0 and passed all six local gates plus isolated Apple Silicon GUI/recovery-shutdown smokes; hosted same-version package replacement pending |

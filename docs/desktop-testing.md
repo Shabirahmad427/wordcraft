@@ -1,6 +1,15 @@
 # Desktop GUI validation
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Integrated upstream 0.7.0; local Apple Silicon native smoke and all six local gates pass; hosted package upgrade rerun pending · **Target:** WordCraft desktop on Linux, macOS and Windows
+Phase 7T.2 validation is in progress. Native packages now runs Linux, Apple Silicon macOS,
+and Windows by default on every push to main. Partial dispatches are labeled explicitly;
+a combined required summary rejects failed, cancelled or skipped platform jobs in full runs.
+Independent platform jobs do not cancel one another. MSI install/removal waits are bounded,
+installer failure logs are retained, and native test compilation is timed separately.
+The baseline remains 0.7.0: these checks exercise same-version replacement, not a version upgrade.
+Final three-platform execution evidence is pending; existing installations remain unchanged.
+
+
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Phase 7T.2 requires the complete package matrix; final hosted results pending · **Target:** WordCraft desktop on Linux, macOS and Windows
 
 This document separates a live desktop window, egui event-driven tests, offscreen rendering and
 hosted builds. A CI job that compiles or tests the GUI is not evidence that a person used a desktop
@@ -220,6 +229,7 @@ This protocol has not been run. No Word 365 compatibility result is claimed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Require all three package jobs on main, prevent cancellation, report combined status, bound MSI waits and separate compilation timing; final validation pending |
 | 2026-10-14 | minor | Integrated upstream 0.7.0, passed all local CI gates and Apple Silicon native edit/quit smokes; hosted package upgrade matrix pending |
 | 2026-10-13 | minor | Located the raw-launch stall in AppKit's pre-resume event wait; verified LaunchServices native smokes, isolated profile safety, recovery shutdown and normal child status |
 | 2026-10-13 | minor | Recorded hosted native smoke failures on Linux and Windows and enabled dependency installation plus isolated Windows failure diagnostics |

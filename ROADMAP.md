@@ -1,5 +1,14 @@
 # WordCraft roadmap
 
+Phase 7T.2 validation is in progress. Native packages now runs Linux, Apple Silicon macOS,
+and Windows by default on every push to main. Partial dispatches are labeled explicitly;
+a combined required summary rejects failed, cancelled or skipped platform jobs in full runs.
+Independent platform jobs do not cancel one another. MSI install/removal waits are bounded,
+installer failure logs are retained, and native test compilation is timed separately.
+The baseline remains 0.7.0: these checks exercise same-version replacement, not a version upgrade.
+Final three-platform execution evidence is pending; existing installations remain unchanged.
+
+
 ## Phase 7T — Native installation and desktop integration (in progress)
 
 - Audited existing Linux AppImage/DEB/RPM/tarball/Flatpak, macOS DMG and Windows MSI/portable packaging. The Linux packager's comma-separated format argument produced no packages for the RISC-V release job; it now accepts and validates both comma- and space-separated lists. Release package checks now fail on missing artifacts or a failed AppImage version run.

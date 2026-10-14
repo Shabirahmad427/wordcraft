@@ -1,19 +1,15 @@
 # Exercise generated desktop packages on disposable hosted runners. This workflow never publishes
 # a release and never uses the developer's installed application or profile.
 name: Native packages
+run-name: Native packages — ${{ inputs.platform && inputs.platform != 'all' && format('PARTIAL {0}', inputs.platform) || 'all platforms' }} — ${{ github.sha }}
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'Cargo*'
-      - 'apps/wordcraft/**'
-      - 'apps/wordcraft-cli/**'
-      - 'packaging/**'
-      - '.github/workflows/native-packages.yml'
   pull_request:
     paths:
       - 'Cargo*'
+      - 'crates/**'
       - 'apps/wordcraft/**'
       - 'apps/wordcraft-cli/**'
       - 'packaging/**'
@@ -21,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: Platform job to run manually
+        description: All platforms required for validation; other choices are partial diagnostics
         type: choice
         options: [all, linux, macos, windows]
         default: all
@@ -29,14 +25,13 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: native-packages-${{ github.ref }}
-  cancel-in-progress: true
+# Independent jobs deliberately run to completion: no fail-fast or concurrency cancellation.
+# Partial diagnostic dispatches must not cancel a required full validation run.
 
 jobs:
   linux:
     if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'linux'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       WORDCRAFT_UPGRADE_BASELINE_SHA: aeb37dfb272bae6480ea57b299f709f8012cb3e9
@@ -89,6 +84,9 @@ jobs:
         env:
           WORDCRAFT_BUILD_SHA: ${{ github.sha }}
         run: packaging/linux/package.sh --formats deb,rpm,tar
+      - name: Compile native smoke harness (reused by all installed-app checks)
+        timeout-minutes: 20
+        run: cargo test --locked -p wordcraft --test native_window --no-run
       - name: Install the baseline DEB and inspect its identity
         run: |
           set -euo pipefail
@@ -117,7 +115,7 @@ jobs:
           test -f /usr/share/icons/hicolor/256x256/apps/ai.storyteller.wordcraft.png
           mkdir -p '${{ runner.temp }}/documents'
           printf 'owned by the user\n' > '${{ runner.temp }}/documents/keep.txt'
-      - name: Create old-version preferences and a real recovery snapshot
+      - name: Create baseline preferences and a real recovery snapshot
         env:
           WORDCRAFT_NATIVE_EXECUTABLE: /usr/bin/wordcraft
           WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
@@ -209,6 +207,8 @@ jobs:
             ${{ runner.temp }}/wordcraft-native-smoke-*/wordcraft.stderr.log
             ${{ runner.temp }}/wordcraft-native-smoke-*/*.png
             ${{ runner.temp }}/wordcraft-wayland.*/weston.log
+            ${{ runner.temp }}/upgrade-profile/wordcraft.stderr.log
+            ${{ runner.temp }}/upgrade-profile/*.png
           if-no-files-found: warn
           retention-days: 90
 
@@ -257,15 +257,20 @@ jobs:
         env:
           WORDCRAFT_BUILD_SHA: ${{ github.sha }}
         run: packaging/macos/package.sh --arch aarch64
+      - name: Compile native smoke harness (reused by all installed-app checks)
+        timeout-minutes: 20
+        run: cargo test --locked -p wordcraft --test native_window --no-run
       - name: Install the actual DMG app into a disposable Applications directory
         run: |
           set -euo pipefail
           dmg=(dist/release/wordcraft-*-macos-aarch64.dmg)
           test "${#dmg[@]}" -eq 1
           mkdir -p '${{ runner.temp }}/wordcraft-volume' '${{ runner.temp }}/Applications' '${{ runner.temp }}/documents'
+          trap 'hdiutil detach "${{ runner.temp }}/wordcraft-volume"' EXIT
           hdiutil attach -nobrowse -readonly -mountpoint '${{ runner.temp }}/wordcraft-volume' "${dmg[0]}"
           ditto '${{ runner.temp }}/wordcraft-volume/WordCraft.app' '${{ runner.temp }}/Applications/WordCraft.app'
           hdiutil detach '${{ runner.temp }}/wordcraft-volume'
+          trap - EXIT
           app='${{ runner.temp }}/Applications/WordCraft.app'
           plutil -lint "$app/Contents/Info.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")" = WordCraft
@@ -279,7 +284,7 @@ jobs:
           test -x "$cli"
           "$cli" --version | grep '${{ github.sha }}'
           printf 'owned by the user\n' > '${{ runner.temp }}/documents/keep.txt'
-      - name: Install the baseline app and create isolated upgrade data
+      - name: Install the baseline app and create isolated replacement data
         env:
           WORDCRAFT_NATIVE_APP_BUNDLE: ${{ runner.temp }}/Applications/WordCraft.app
           WORDCRAFT_NATIVE_WINDOW_SMOKE: '1'
@@ -293,9 +298,11 @@ jobs:
           baseline='${{ runner.temp }}/upgrade-baseline-macos/wordcraft-0.7.0-macos-aarch64.dmg'
           mkdir -p '${{ runner.temp }}/old-volume'
           rm -rf '${{ runner.temp }}/Applications/WordCraft.app'
+          trap 'hdiutil detach "${{ runner.temp }}/old-volume"' EXIT
           hdiutil attach -nobrowse -readonly -mountpoint '${{ runner.temp }}/old-volume' "$baseline"
           ditto '${{ runner.temp }}/old-volume/WordCraft.app' '${{ runner.temp }}/Applications/WordCraft.app'
           hdiutil detach '${{ runner.temp }}/old-volume'
+          trap - EXIT
           app='${{ runner.temp }}/Applications/WordCraft.app'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = ai.storyteller.wordcraft
           test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftVersion' "$app/Contents/Info.plist")" = 0.7.0
@@ -306,7 +313,7 @@ jobs:
           test -s "$profile/ui.json"
           find "$profile/recovery" -type f -name '*.wcr' -print -quit | grep -q .
           find "$profile" -type f \( -name ui.json -o -name '*.wcr' \) -print0 | sort -z | xargs -0 shasum -a 256 > '${{ runner.temp }}/upgrade-profile-state.sha256'
-      - name: Replace old app with current DMG build and verify retained user data
+      - name: Replace baseline app with current DMG build and verify retained user data
         env:
           WORDCRAFT_BUILD_SHA: ${{ github.sha }}
         run: |
@@ -316,6 +323,7 @@ jobs:
           dmg=(dist/release/wordcraft-*-macos-aarch64.dmg)
           test "${#dmg[@]}" -eq 1
           mkdir -p '${{ runner.temp }}/current-volume'
+          trap 'hdiutil detach "${{ runner.temp }}/current-volume"' EXIT
           hdiutil attach -nobrowse -readonly -mountpoint '${{ runner.temp }}/current-volume' "${dmg[0]}"
           source_app='${{ runner.temp }}/current-volume/WordCraft.app'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$source_app/Contents/Info.plist")" = ai.storyteller.wordcraft
@@ -324,6 +332,7 @@ jobs:
           rm -rf '${{ runner.temp }}/Applications/WordCraft.app'
           ditto "$source_app" '${{ runner.temp }}/Applications/WordCraft.app'
           hdiutil detach '${{ runner.temp }}/current-volume'
+          trap - EXIT
           app='${{ runner.temp }}/Applications/WordCraft.app'
           test "$(/usr/libexec/PlistBuddy -c 'Print :WordCraftVersion' "$app/Contents/Info.plist")" = "$current_version"
           "$app/Contents/MacOS/WordCraft" --version | grep "${GITHUB_SHA:0:8}"
@@ -371,6 +380,11 @@ jobs:
           path: |
             ${{ runner.temp }}/wordcraft-native-smoke-*/wordcraft.stderr.log
             ${{ runner.temp }}/wordcraft-native-smoke-*/*.png
+            ${{ runner.temp }}/upgrade-profile/wordcraft.stderr.log
+            ${{ runner.temp }}/upgrade-profile/*.png
+            ${{ runner.temp }}/wordcraft-*-install.log
+            ${{ runner.temp }}/wordcraft-install.log
+            ${{ runner.temp }}/wordcraft-uninstall.log
           if-no-files-found: warn
           retention-days: 90
 
@@ -428,6 +442,9 @@ jobs:
         env:
           WORDCRAFT_BUILD_SHA: ${{ github.sha }}
         run: ./packaging/windows/package.ps1 -Arch x64
+      - name: Compile native smoke harness (reused by all installed-app checks)
+        timeout-minutes: 20
+        run: cargo test --locked -p wordcraft --test native_window --no-run
       - name: Install baseline MSI and inspect identity
         shell: pwsh
         timeout-minutes: 10
@@ -437,7 +454,13 @@ jobs:
           $baselineMsi = Join-Path $env:RUNNER_TEMP 'upgrade-baseline-windows\wordcraft-0.7.0-windows-x64.msi'
           if (-not (Test-Path $baselineMsi)) { throw "baseline MSI missing: $baselineMsi" }
           Write-Host "[$($clock.Elapsed)] Installing baseline MSI: $baselineMsi"
-          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$baselineMsi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-old-install.log`"" -Wait -PassThru
+          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$baselineMsi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-old-install.log`"" -PassThru
+          if (-not $p.WaitForExit(120000)) {
+            Get-Process msiexec -ErrorAction SilentlyContinue | Select-Object Id, StartTime, CPU, Responding | Format-Table
+            Get-Content "$env:RUNNER_TEMP\wordcraft-old-install.log" -Tail 100 -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw 'baseline MSI installation timed out; forced termination is a failure'
+          }
           if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\wordcraft-old-install.log" -Tail 80; throw "old MSI install exited $($p.ExitCode)" }
           Write-Host "[$($clock.Elapsed)] Baseline MSI install returned $($p.ExitCode)"
           $oldEntry = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -eq 'WordCraft' } | Select-Object -First 1
@@ -494,7 +517,7 @@ jobs:
           $documents = Join-Path $env:RUNNER_TEMP 'documents'
           New-Item -ItemType Directory -Force $documents | Out-Null
           Set-Content (Join-Path $documents 'keep.txt') 'owned by the user'
-          Write-Host "[$($clock.Elapsed)] Upgrading baseline MSI to $msi"
+          Write-Host "[$($clock.Elapsed)] Replacing same-version baseline MSI with $msi"
           $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-install.log`"" -PassThru
           if (-not $p.WaitForExit(120000)) {
             Write-Host "[$($clock.Elapsed)] MSI replacement exceeded 120 seconds; collecting installer diagnostics"
@@ -566,7 +589,13 @@ jobs:
         shell: pwsh
         run: |
           $msi = (Get-ChildItem dist/release/*-windows-x64.msi | Select-Object -First 1).FullName
-          $p = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+          $p = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP\wordcraft-uninstall.log`"" -PassThru
+          if (-not $p.WaitForExit(120000)) {
+            Get-Process msiexec -ErrorAction SilentlyContinue | Select-Object Id, StartTime, CPU, Responding | Format-Table
+            Get-Content "$env:RUNNER_TEMP\wordcraft-uninstall.log" -Tail 100 -ErrorAction SilentlyContinue
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw 'MSI uninstall timed out; forced termination is a failure'
+          }
           if ($p.ExitCode -ne 0) { throw "MSI uninstall exited $($p.ExitCode)" }
           if (Test-Path (Join-Path $env:ProgramFiles 'WordCraft\wordcraft.exe')) { throw 'uninstall left GUI executable' }
           if ((Get-Content (Join-Path $env:RUNNER_TEMP 'documents\keep.txt')) -ne 'owned by the user') { throw 'uninstall changed user document' }
@@ -590,5 +619,43 @@ jobs:
           path: |
             ${{ runner.temp }}/wordcraft-native-smoke-*/wordcraft.stderr.log
             ${{ runner.temp }}/wordcraft-native-smoke-*/*.png
+            ${{ runner.temp }}/upgrade-profile/wordcraft.stderr.log
+            ${{ runner.temp }}/upgrade-profile/*.png
+            ${{ runner.temp }}/wordcraft-*-install.log
+            ${{ runner.temp }}/wordcraft-install.log
+            ${{ runner.temp }}/wordcraft-uninstall.log
           if-no-files-found: warn
           retention-days: 90
+
+  validation-summary:
+    name: Combined native package validation
+    if: always()
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report platform results and enforce full validation
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          SELECTION: ${{ inputs.platform || 'all' }}
+          TESTED_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          selection = os.environ['SELECTION']
+          full = selection == 'all'
+          lines = [f"## {'Full' if full else 'PARTIAL'} native package validation",
+                   f"Commit: `{os.environ['TESTED_SHA']}`", "",
+                   "| Platform | Result |", "|---|---|"]
+          for platform in ('linux', 'macos', 'windows'):
+              lines.append(f"| {platform} | {results[platform]['result']} |")
+          required = ('linux', 'macos', 'windows') if full else (selection,)
+          passed = all(results[p]['result'] == 'success' for p in required)
+          lines += ["", "Full validation passed." if full and passed else
+                    "Full validation FAILED." if full else
+                    "Partial diagnostic run; this does not establish cross-platform validation."]
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('\n'.join(lines) + '\n')
+          print('\n'.join(lines))
+          raise SystemExit(0 if passed else 1)
+          PYTHON
