@@ -442,14 +442,21 @@ fn isolated_native_window_smoke() {
             "upgraded app did not load the isolated profile theme: {state}"
         );
         assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
-        // A preserved dirty recovery entry intentionally opens the recovery chooser at startup.
-        // Keep it intact and verify replacement startup/shutdown here; the separate fresh-profile
-        // native smoke exercises editing, tables, Undo/Redo, save and export without a modal.
-        assert_eq!(
-            state.pointer("/dialog/dialog").and_then(Value::as_str),
-            Some("recovery"),
-            "replacement app did not present the preserved recovery entry: {state}"
-        );
+        let legacy_recovery_before = if std::env::var_os("WORDCRAFT_NATIVE_LEGACY_RECOVERY").is_some() {
+            // The baseline app's durable .wcr archives are intentionally preserved across
+            // replacement. The current app uses a different automatic checkpoint format and
+            // does not import these archives at startup.
+            Some(legacy_recovery_files(&profile))
+        } else {
+            // Current-format recovery entries open the recovery chooser. The separate fresh
+            // profile smoke covers editing without a modal dialog.
+            assert_eq!(
+                state.pointer("/dialog/dialog").and_then(Value::as_str),
+                Some("recovery"),
+                "replacement app did not present the preserved recovery entry: {state}"
+            );
+            None
+        };
         control.call("app.quit", json!({}));
         let status = wait_for_exit(&mut process.0, Duration::from_secs(15), &stderr_path);
         assert!(status.success(), "replacement app did not quit normally with recovery pending: {status}; stderr: {}", read_log(&stderr_path));
@@ -460,6 +467,9 @@ fn isolated_native_window_smoke() {
                 .expect("parse persisted replacement preferences");
         assert_eq!(saved.pointer("/theme").and_then(Value::as_str), Some("dark"));
         assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
+        if let Some(before) = legacy_recovery_before {
+            assert_eq!(legacy_recovery_files(&profile), before, "replacement launch or shutdown changed the legacy recovery archive");
+        }
         return;
     }
 
@@ -629,6 +639,27 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
     let key_path = profile.settings().join(format!("control-key.local-{port}"));
     let key = wait_for_key(&mut process.0, &key_path, &stderr_path);
     let mut control = Control { port, key, next_id: 0 };
+
+    if std::env::var_os("WORDCRAFT_NATIVE_LEGACY_RECOVERY").is_some() {
+        // The baseline's ui.inspect synchronously computes caret and layout state. On Windows the
+        // request reached the UI thread but did not reply within the harness bound. This smoke
+        // verifies persistence and normal shutdown, so it avoids that unrelated inspection.
+        control.execute("ui.theme", json!({"value": "dark"}));
+        control.execute("text.insert", json!({"text": "checkpoint before native shutdown"}));
+        control.call("app.quit", json!({}));
+
+        let status = wait_for_exit(&mut process.0, Duration::from_secs(15), &stderr_path);
+        assert!(status.success(), "baseline app did not quit normally: {status}; stderr: {}", read_log(&stderr_path));
+        assert_app_exit_callback(&stderr_path);
+        assert!(!key_path.exists(), "normal shutdown left its control key at {}", key_path.display());
+        let saved: Value =
+            serde_json::from_slice(&std::fs::read(profile.settings().join("ui.json")).expect("baseline shutdown saved UI preferences"))
+                .expect("parse baseline shutdown preferences");
+        assert_eq!(saved.pointer("/theme").and_then(Value::as_str), Some("dark"));
+        assert_recovery_snapshot(&profile, "checkpoint before native shutdown");
+        return;
+    }
+
     wait_for_page(&mut control);
     control.execute("ui.theme", json!({"value": "dark"}));
     control.execute("text.insert", json!({"text": "checkpoint before native shutdown"}));
@@ -647,15 +678,7 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
 
 fn assert_recovery_snapshot(profile: &Profile, expected_text: &str) {
     if std::env::var_os("WORDCRAFT_NATIVE_LEGACY_RECOVERY").is_some() {
-        let store = wordcraft_engine::recovery::legacy::Store::new(profile.settings().join("recovery")).expect("open isolated legacy recovery store");
-        let entries = store.list().expect("read isolated legacy recovery entries");
-        assert!(!entries.is_empty(), "native shutdown did not preserve the dirty document in legacy recovery");
-        assert!(
-            entries.iter().any(|entry| {
-                store.load(&entry.id).is_ok_and(|snapshot| snapshot.doc.plain_text(wordcraft_doc::StoryRef::Body).contains(expected_text))
-            }),
-            "legacy recovery entries do not contain {expected_text:?}"
-        );
+        assert_legacy_recovery_snapshot(profile, expected_text);
         return;
     }
     let mut session = wordcraft_engine::Session::new(wordcraft_doc::Document::new());
@@ -682,6 +705,35 @@ fn assert_recovery_snapshot(profile: &Profile, expected_text: &str) {
         assert!(Instant::now() < deadline, "recovery snapshot does not contain {expected_text:?}; error: {:?}", session.recovery_error());
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn assert_legacy_recovery_snapshot(profile: &Profile, expected_text: &str) {
+    let store = wordcraft_engine::recovery::legacy::Store::new(profile.settings().join("recovery")).expect("open isolated legacy recovery store");
+    let entries = store.list().expect("read isolated legacy recovery entries");
+    assert!(!entries.is_empty(), "native shutdown did not preserve the dirty document in legacy recovery");
+    assert!(
+        entries.iter().any(|entry| {
+            store.load(&entry.id).is_ok_and(|snapshot| snapshot.doc.plain_text(wordcraft_doc::StoryRef::Body).contains(expected_text))
+        }),
+        "legacy recovery entries do not contain {expected_text:?}"
+    );
+}
+
+fn legacy_recovery_files(profile: &Profile) -> Vec<(PathBuf, Vec<u8>)> {
+    let dir = profile.settings().join("recovery");
+    let mut files = std::fs::read_dir(&dir)
+        .unwrap_or_else(|error| panic!("read isolated legacy recovery directory {}: {error}", dir.display()))
+        .filter_map(|entry| {
+            let path = entry.expect("read legacy recovery directory entry").path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("wcr") {
+                return None;
+            }
+            let bytes = std::fs::read(&path).unwrap_or_else(|error| panic!("read legacy recovery archive {}: {error}", path.display()));
+            Some((path, bytes))
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
 }
 
 fn read_log(path: &Path) -> String {

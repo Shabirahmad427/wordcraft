@@ -165,7 +165,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
           bash packaging/linux/with-xvfb-openbox.sh cargo test -p wordcraft --test native_window --locked -- isolated_native_ --ignored --nocapture --test-threads=1
-          WORDCRAFT_NATIVE_PROFILE_PATH='${{ runner.temp }}/upgrade-profile' WORDCRAFT_NATIVE_EXPECT_THEME=dark bash packaging/linux/with-xvfb-openbox.sh cargo test -p wordcraft --test native_window --locked -- isolated_native_window_smoke --ignored --nocapture --test-threads=1
+          WORDCRAFT_NATIVE_PROFILE_PATH='${{ runner.temp }}/upgrade-profile' WORDCRAFT_NATIVE_EXPECT_THEME=dark WORDCRAFT_NATIVE_LEGACY_RECOVERY=1 bash packaging/linux/with-xvfb-openbox.sh cargo test -p wordcraft --test native_window --locked -- isolated_native_window_smoke --ignored --nocapture --test-threads=1
       - name: Resolve DOCX through the installed XDG MIME entry
         run: |
           set -euo pipefail
@@ -352,6 +352,7 @@ jobs:
           WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
           WORDCRAFT_NATIVE_EXPECT_THEME: dark
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_LEGACY_RECOVERY: '1'
           WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
           RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
         run: cargo test -p wordcraft --test native_window --locked -- isolated_native_window_smoke --ignored --nocapture --test-threads=1
@@ -585,6 +586,7 @@ jobs:
           WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
           WORDCRAFT_NATIVE_EXPECT_THEME: dark
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_LEGACY_RECOVERY: '1'
           WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
           RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
         run: |
