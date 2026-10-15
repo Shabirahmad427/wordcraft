@@ -646,15 +646,30 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
 }
 
 fn assert_recovery_snapshot(profile: &Profile, expected_text: &str) {
-    let store = wordcraft_engine::recovery::legacy::Store::new(profile.settings().join("recovery")).expect("open isolated recovery store");
-    let entries = store.list().expect("read isolated recovery entries");
+    let mut session = wordcraft_engine::Session::new(wordcraft_doc::Document::new());
+    session.enable_recovery(profile.settings().join("recovery"), std::sync::Arc::new(|| {})).expect("open isolated native recovery store");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        session.recovery_tick();
+        if session.recovery_ready() && !session.recovery_busy() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "isolated recovery scan timed out: {:?}", session.recovery_error());
+        thread::sleep(Duration::from_millis(10));
+    }
+    let entries = session.recovery_documents();
     assert!(!entries.is_empty(), "native shutdown did not preserve the dirty document in recovery");
-    assert!(
-        entries.iter().any(|entry| {
-            store.load(&entry.id).is_ok_and(|snapshot| snapshot.doc.plain_text(wordcraft_doc::StoryRef::Body).contains(expected_text))
-        }),
-        "recovery entries do not contain {expected_text:?}"
-    );
+    let id = entries[0].id.clone();
+    session.run("file.recover", &json!({"restore": id})).expect("restore shutdown recovery snapshot");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        session.recovery_tick();
+        if session.recovery_ready() && !session.recovery_busy() && session.doc.plain_text(wordcraft_doc::StoryRef::Body).contains(expected_text) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "recovery snapshot does not contain {expected_text:?}; error: {:?}", session.recovery_error());
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn read_log(path: &Path) -> String {
@@ -664,6 +679,7 @@ fn read_log(path: &Path) -> String {
 fn assert_app_exit_callback(stderr_path: &Path) {
     let log = read_log(stderr_path);
     assert!(log.contains("eframe application exit callback entered"), "WordCraft did not reach eframe's normal exit callback: {log}");
+    assert!(log.contains("final desktop recovery checkpoint completed"), "WordCraft did not complete its final recovery checkpoint: {log}");
 }
 
 fn wait_for_exit(child: &mut Child, timeout: Duration, stderr_path: &Path) -> ExitStatus {

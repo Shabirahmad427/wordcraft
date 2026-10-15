@@ -504,6 +504,12 @@ impl Recovery {
     pub fn document_is(&self, document: u64) -> bool {
         self.document == Some(document)
     }
+    pub fn checkpointed(&self, document: u64, revision: u64) -> bool {
+        self.alive && self.ready && !self.busy && self.document == Some(document) && self.revision == Some(revision)
+    }
+    pub fn checkpoint_now(&mut self) {
+        self.due = Instant::now();
+    }
     pub fn wait(&self, document: u64, revision: u64) -> Option<Duration> {
         if !self.alive || !self.ready || self.busy || (self.document == Some(document) && self.revision == Some(revision)) {
             return None;
@@ -809,6 +815,22 @@ mod tests {
         save_now(&mut s);
         assert!(s.recovery_documents().is_empty(), "discard isn't undone by the next timer");
         assert_eq!(s.doc, expected, "discard deletes the copy, not the editing document");
+    }
+
+    #[test]
+    fn graceful_shutdown_checkpoint_saves_before_the_periodic_interval() {
+        let t = Temp::new();
+        let mut s = session(&t.0);
+        s.run("text.insert", &json!({"text": "Saved at graceful shutdown"})).unwrap();
+
+        s.checkpoint_recovery(Duration::from_secs(5)).unwrap();
+
+        let id = s.recovery_documents().first().map(|document| document.id.clone()).expect("shutdown checkpoint is discoverable");
+        drop(s);
+        let mut store = Store::new(t.0.clone()).unwrap();
+        store.scan().unwrap();
+        let snapshot = store.load(&id).unwrap();
+        assert_eq!(snapshot.document.plain_text(StoryRef::Body), "Saved at graceful shutdown");
     }
 
     #[test]

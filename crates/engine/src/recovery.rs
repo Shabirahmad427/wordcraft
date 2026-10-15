@@ -82,6 +82,36 @@ impl Session {
             self.recovery = Some(r);
         }
     }
+    /// Persist the current dirty document before a graceful desktop shutdown.
+    /// The worker remains asynchronous during editing; shutdown waits only for this final
+    /// checkpoint and is bounded so a stalled filesystem cannot hang application exit forever.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn checkpoint_recovery(&mut self, timeout: std::time::Duration) -> Result<(), String> {
+        use std::time::{Duration, Instant};
+
+        if !self.dirty || self.password.is_some() || self.recovery.is_none() {
+            return Ok(());
+        }
+        let deadline = Instant::now() + timeout;
+        let target = (self.document_id(), self.rev());
+        loop {
+            self.recovery_tick();
+            let Some(recovery) = self.recovery.as_mut() else { return Ok(()) };
+            if let Some(error) = &recovery.error {
+                return Err(error.clone());
+            }
+            if recovery.checkpointed(target.0, target.1) {
+                return Ok(());
+            }
+            if recovery.ready && !recovery.busy {
+                recovery.checkpoint_now();
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("recovery checkpoint did not finish within {timeout:?}"));
+            }
+            std::thread::sleep(Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())));
+        }
+    }
     pub fn recovery_wait(&self) -> Option<std::time::Duration> {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(r) = &self.recovery

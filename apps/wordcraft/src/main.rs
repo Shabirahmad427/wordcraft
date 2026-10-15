@@ -107,6 +107,10 @@ impl eframe::App for App {
 
 fn finish_recovery_before_exit(app: &mut WordApp) {
     app.finish_recovery();
+    match app.session.checkpoint_recovery(std::time::Duration::from_secs(5)) {
+        Ok(()) => log::info!("final desktop recovery checkpoint completed"),
+        Err(error) => log::error!("final desktop recovery checkpoint failed: {error}"),
+    }
 }
 
 /// Quit the way Command-Q does, on the next turn of the main queue.
