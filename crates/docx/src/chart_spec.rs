@@ -18,6 +18,7 @@ const NS_A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const NS_R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 /// Content type of a chart part.
 pub(crate) const CHART_CT: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+#[allow(dead_code)] // Chart workbook package generation is used by the public editable-chart API.
 pub(crate) const WORKBOOK_CT: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 /// `a:graphicData` URI of a chart.
 pub(crate) const CHART_URI: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
@@ -33,7 +34,7 @@ pub fn chart_xml(spec: &ChartSpec) -> String {
 
 /// Build a chart part and a self-contained workbook for a newly inserted chart. The output is
 /// validated through the same mapper used by Chart Design before it is accepted for writing.
-pub(crate) fn chart_package_parts(spec: &ChartSpec, workbook_rel_id: &str) -> Result<(String, Vec<u8>), crate::DocxError> {
+pub(crate) fn chart_package_parts(spec: &ChartSpec, workbook_rel_id: &str, workbook_part: &str) -> Result<(String, Vec<u8>), crate::DocxError> {
     let spec = spec.clone().sanitized();
     validate_editable_spec(&spec)?;
     let chart = chart_xml_mode(&spec, Some(workbook_rel_id));
@@ -41,10 +42,10 @@ pub(crate) fn chart_package_parts(spec: &ChartSpec, workbook_rel_id: &str) -> Re
     let rel = Rel {
         id: workbook_rel_id.to_string(),
         kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package".into(),
-        target: "word/embeddings/workbook1.xlsx".into(),
+        target: workbook_part.into(),
         external: false,
     };
-    match crate::chart_mapping::map_chart(chart.as_bytes(), &[rel], "word/embeddings/workbook1.xlsx", &workbook) {
+    match crate::chart_mapping::map_chart(chart.as_bytes(), &[rel], workbook_part, &workbook) {
         crate::chart_mapping::Classification::Mappable(_) => Ok((chart, workbook)),
         crate::chart_mapping::Classification::Inconsistent(reason)
             if spec.series.iter().any(|series| series.values.iter().any(Option::is_none)) && reason.contains("references a missing") =>
@@ -718,7 +719,8 @@ mod tests {
             if kind.is_round() {
                 spec.series.truncate(1);
             }
-            let (chart, workbook) = chart_package_parts(&spec, "rId1").expect("supported sample chart should produce a valid package pair");
+            let (chart, workbook) = chart_package_parts(&spec, "rId1", "word/embeddings/workbook1.xlsx")
+                .expect("supported sample chart should produce a valid package pair");
             let rel = Rel {
                 id: "rId1".into(),
                 kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package".into(),
@@ -740,7 +742,7 @@ mod tests {
     #[test]
     fn generated_scatter_workbook_maps_multiple_independent_xy_series() {
         let spec = ChartSpec::sample(ChartType::Scatter);
-        let (chart, workbook) = chart_package_parts(&spec, "rId1").expect("sample scatter should be supported");
+        let (chart, workbook) = chart_package_parts(&spec, "rId1", "word/embeddings/workbook1.xlsx").expect("sample scatter should be supported");
         let rel = Rel {
             id: "rId1".into(),
             kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package".into(),
@@ -758,7 +760,8 @@ mod tests {
     fn sparse_chart_keeps_a_valid_workbook_but_remains_read_only() {
         let mut gaps = ChartSpec::sample(ChartType::Column);
         gaps.series[0].values[1] = None;
-        let (chart, workbook) = chart_package_parts(&gaps, "rId1").expect("a chart with a gap still gets a valid workbook");
+        let (chart, workbook) =
+            chart_package_parts(&gaps, "rId1", "word/embeddings/workbook1.xlsx").expect("a chart with a gap still gets a valid workbook");
         let rel = Rel {
             id: "rId1".into(),
             kind: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package".into(),
@@ -772,7 +775,7 @@ mod tests {
 
         let mut pie = ChartSpec::sample(ChartType::Pie);
         pie.series.push(pie.series[0].clone());
-        assert!(chart_package_parts(&pie, "rId1").is_err());
+        assert!(chart_package_parts(&pie, "rId1", "word/embeddings/workbook1.xlsx").is_err());
     }
 
     #[test]

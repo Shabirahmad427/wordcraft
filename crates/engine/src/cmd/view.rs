@@ -1,6 +1,7 @@
 //! View tab and status bar: views, zoom, show/hide, panes.
 
 use serde_json::{Value, json};
+use wordcraft_doc::{Zoom, ZoomFit};
 use wordcraft_layout::{NumeralMode, ViewMode};
 
 use super::sel_result;
@@ -46,6 +47,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params(r#"{"value"?: bool}"#)
             .pure(),
         CommandSpec::new("table.gridlines", "View Gridlines", "Table Layout › Table", |s, v| toggle(s, v, |x| &mut x.table_gridlines))
+            .params(r#"{"value"?: bool}"#)
+            .pure(),
+        // Keep the ribbon/key-tip command id in sync while preserving the older catalog id.
+        CommandSpec::new("table.viewGridlines", "View Gridlines", "Table Layout › Table", |s, v| toggle(s, v, |x| &mut x.table_gridlines))
             .params(r#"{"value"?: bool}"#)
             .pure(),
         CommandSpec::new("view.navigationPane", "Navigation Pane", "View › Show", |s, v| toggle(s, v, |x| &mut x.nav_pane)).pure(),
@@ -168,6 +173,32 @@ fn read_line_spacing(s: &mut Session, v: &Value) -> CmdResult {
     };
     s.view.read_line_spacing = spacing;
     Ok(json!({"spacing": spacing}))
+}
+
+/// The zoom a document is saved with (#995): the fit mode, else the percentage; `None` at 100%.
+pub(crate) fn saved_zoom(v: &crate::ViewState) -> Option<Zoom> {
+    let fit = match v.fit.as_str() {
+        "onePage" => Some(ZoomFit::OnePage),
+        "pageWidth" => Some(ZoomFit::PageWidth),
+        "textWidth" => Some(ZoomFit::TextWidth),
+        _ => None,
+    };
+    let percent = if v.zoom.is_finite() { (v.zoom * 100.0).round().clamp(10.0, 500.0) as u32 } else { 100 };
+    Some(Zoom { percent, fit }).filter(|z| z.percent != 100 || z.fit.is_some())
+}
+
+/// Show an opened document at the zoom it was saved with.
+pub(crate) fn restore_zoom(s: &mut Session, z: Zoom) {
+    let fit = match z.fit {
+        Some(ZoomFit::OnePage) => "onePage",
+        Some(ZoomFit::PageWidth) => "pageWidth",
+        Some(ZoomFit::TextWidth) => "textWidth",
+        None => "",
+    };
+    s.view.zoom = z.percent.clamp(10, 500) as f32 / 100.0;
+    s.view.fit = fit.into();
+    s.view.multi_page = false;
+    s.view.single_column = fit == "onePage" || fit == "pageWidth";
 }
 
 fn zoom(s: &mut Session, v: &Value) -> CmdResult {

@@ -124,6 +124,9 @@ mod tests {
         fn path(&self, name: &str) -> PathBuf {
             self.0.join(name)
         }
+        fn target(&self) -> PathBuf {
+            self.path("document.docx")
+        }
         fn names(&self) -> Vec<String> {
             let mut names = fs::read_dir(&self.0)
                 .expect("read scratch")
@@ -271,6 +274,21 @@ mod tests {
         assert_eq!(bytes.len(), 256 * 1024);
         assert!(winners.iter().any(|byte| bytes.iter().all(|saved| saved == byte)));
         assert_eq!(scratch.names(), ["document.docx"]);
+    }
+
+    /// Exports (`write_file`) replace the destination instead of truncating it in place: another
+    /// hard link to the old file keeps the old bytes, and no temporary file is left behind.
+    #[test]
+    fn write_file_replaces_the_destination_instead_of_truncating_it() {
+        let d = Scratch::new();
+        let path = d.target();
+        let alias = d.0.join("alias.docx");
+        fs::write(&path, b"Original bytes.").unwrap();
+        fs::hard_link(&path, &alias).unwrap();
+        crate::io::write_file(&path.to_string_lossy(), b"Exported bytes.").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"Exported bytes.");
+        assert_eq!(fs::read(&alias).unwrap(), b"Original bytes.");
+        assert_eq!(fs::read_dir(&d.0).unwrap().count(), 2);
     }
 
     #[cfg(unix)]

@@ -13,7 +13,8 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("wordcraft-cli-pipeline-{}-{}", std::process::id(), wordcraft_engine::recovery::unique_id()));
+        let path =
+            std::env::temp_dir().join(format!("wordcraft-cli-pipeline-{}-{}", std::process::id(), wordcraft_engine::recovery::legacy::unique_id()));
         std::fs::create_dir(&path).expect("create scratch directory");
         Self(path)
     }

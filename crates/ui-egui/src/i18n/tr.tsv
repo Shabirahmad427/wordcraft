@@ -84,6 +84,9 @@
 	Book Title	Kitap Başlığı
 	Bookmark	Yer İşareti
 	Bookmark name:	Yer işareti adı:
+	Delete Bookmark	Yer İşaretini Sil
+	Hidden bookmarks	Gizli yer işaretleri
+	Sort by:	Sıralama ölçütü:
 	Border Painter	Kenarlık Fırçası
 	Border\nPainter	Kenarlık\nFırçası
 	Borders	Kenarlıklar
@@ -326,6 +329,7 @@
 	Immersive	Odaklı
 	Immersive Reader	Odaklı Okuyucu
 	Immersive\nReader	Odaklı\nOkuyucu
+	In the margin	Kenarda
 	Increase Font Size	Yazı Tipi Boyutunu Büyüt
 	Increase Indent	Girintiyi Artır
 	Indent	Girinti
@@ -381,6 +385,8 @@
 	Labels	Etiketler
 	Landscape	Yatay
 	Language	Dil
+	{language} (no dictionary)	{language} (sözlük yok)
+	No spelling dictionary for {language} is installed, so it isn't checked. WordCraft looks for the Hunspell dictionary {name} in the WORDCRAFT_DICTIONARIES folder and in the usual system locations.	{language} için yüklü bir yazım sözlüğü yok, bu yüzden denetlenmiyor. WordCraft, {name} Hunspell sözlüğünü WORDCRAFT_DICTIONARIES klasöründe ve olağan sistem konumlarında arar.
 	Lasso	Kement
 	Last Column	Son Sütun
 	Last commit	Son commit
@@ -482,6 +488,7 @@
 	OK	Tamam
 	One	Bir
 	One Page	Bir Sayfa
+	Only for the selected text	Yalnızca seçili metin için
 	Open	Aç
 	OpenDocument Text (*.odt)	OpenDocument Metni (*.odt)
 	Optional Hyphen	İsteğe Bağlı Kısa Çizgi
@@ -1800,105 +1807,27 @@ preview	Title	Örnek
 	Left Only	Yalnızca Sol
 	Right Only	Yalnızca Sağ
 	Largest Only	Yalnızca En Geniş
-	Compare Recovery Versions	Kurtarma sürümlerini karşılaştır
-	Discard Recovery Version	Kurtarma sürümünü sil
-	Edit Chart Data	Grafik verilerini düzenle
-	Export Bibliography Sources	Kaynakça kaynaklarını dışa aktar
-	Import Bibliography Sources	Kaynakça kaynaklarını içe aktar
-	Import Mendeley Library	Mendeley kitaplığını içe aktar
-	Inspect Chart Data	Grafik verilerini incele
-	Library	Kitaplık
-	Mendeley	Mendeley
-	Restore Recovery Version	Kurtarma sürümünü geri yükle
-	Save Original Package	Özgün paketi kaydet
-	Update Citations and Bibliography	Atıfları ve kaynakçayı güncelle
-	All pages	Tüm sayfalar
-	Apply	Uygula
-	Cancel print job	Yazdırma işini iptal et
-	Chart Design	Grafik Tasarımı
-	Collate	Harmanla
-	Content exceeds page area on {count} page(s).	İçerik {count} sayfada sayfa alanını aşıyor.
-	Copies	Kopya sayısı
-	Copies must be between 1 and 999.	Kopya sayısı 1 ile 999 arasında olmalıdır.
-	Duplex	Çift taraflı
-	Enter a valid number	Geçerli bir sayı girin
-	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	İlk sorun: {element}, {page}. sayfada {axis} sınırını aşıyor. İçerik korunuyor. Gitmek için tıklayın.
-	Fit to page	Sayfaya sığdır
-	No printers are available.	Kullanılabilir yazıcı yok.
-	One-sided	Tek taraflı
-	Page overflow	Sayfa taşması
-	Page {page} has content that may be clipped.	{page}. sayfadaki içerik kesilebilir.
-	Paper size	Kağıt boyutu
-	Print dialog opened.	Yazdırma iletişim kutusu açıldı.
-	Print job canceled.	Yazdırma işi iptal edildi.
-	Print preview	Baskı önizleme
-	Printer	Yazıcı
-	Printer default	Yazıcı varsayılanı
-	Select printer	Yazıcı seç
-	Series	Seri
-	Series name	Seri adı
-	The system print dialog is unavailable. You can open a PDF copy to print from another viewer.	Sistem yazdırma iletişim kutusu kullanılamıyor. PDF kopyasını başka bir görüntüleyicide açabilirsiniz.
-	This chart is read-only	Bu grafik salt okunur
-	Two-sided, long edge	Çift taraflı, uzun kenardan çevir
-	Two-sided, short edge	Çift taraflı, kısa kenardan çevir
-	Value	Değer
-	{selected} of {pages} pages	{pages} sayfadan {selected} tanesi
-	Accessibility Pane	Erişilebilirlik bölmesi
-	Add Chart Element	Grafik öğesi ekle
-	Add Pen	Kalem ekle
-	Align Text	Metni hizala
-	Alt Text Pane	Alternatif metin bölmesi
-	Break Link	Bağlantıyı kes
-	Building Block Gallery Content Control	Yapı taşları galerisi içerik denetimi
-	Canvas Member	Tuval öğesi
-	Change Chart Type	Grafik türünü değiştir
-	Chart Layouts	Grafik düzenleri
-	Chart Title	Grafik başlığı
-	Check Box Content Control	Onay kutusu içerik denetimi
-	Choose List Item	Liste öğesini seç
-	Combo Box Content Control	Birleşik giriş kutusu içerik denetimi
-	Connect Shapes	Şekilleri bağla
-	Content Control at Selection	Seçimdeki içerik denetimi
-	Controls	Denetimler
-	Convert Notes	Notları dönüştür
-	Convert to Shapes	Şekillere dönüştür
-	Create Link	Bağlantı oluştur
-	Data Labels	Veri etiketleri
-	Date Picker Content Control	Tarih seçici içerik denetimi
-	Delete Selected Ink	Seçili mürekkep çizimini sil
-	Design Mode	Tasarım modu
-	Developer	Geliştirici
-	Document Grid	Belge kılavuzu
-	Drawing Canvas	Çizim tuvali
-	Drop-Down List Content Control	Açılır liste içerik denetimi
-	Expand	Genişlet
-	Fit	Sığdır
-	Icon Color	Simge rengi
-	Ink Replay	Mürekkep çizimini yeniden oynat
-	Ink to Shape	Mürekkebi şekle dönüştür
-	Lasso Select	Kement seçimi
-	Legend	Gösterge
-	Manual Hyphenation	El ile heceleme
-	Move Selected Ink	Seçili mürekkep çizimini taşı
-	Picture Content Control	Resim içerik denetimi
-	Plain Text Content Control	Düz metin içerik denetimi
-	Recolor Selected Ink	Seçili mürekkebin rengini değiştir
-	Remove Content Control	İçerik denetimini kaldır
-	Remove Pen	Kalemi kaldır
-	Repeating Section Content Control	Yinelenen bölüm içerik denetimi
-	Rich Text Content Control	Zengin metin içerik denetimi
-	Right-to-Left Section	Sağdan sola bölüm
-	Right-to-Left Table	Sağdan sola tablo
-	Scale Drawing	Çizimi ölçekle
-	Set Date	Tarihi ayarla
-	Text Fill	Metin dolgusu
-	Text Outline	Metin anahattı
-	Toggle Check Box	Onay kutusunu değiştir
-	Transform	Dönüştür
-	Type	Tür
-	WordArt Styles	WordArt stilleri
-
-# Upstream interface terms not yet translated in the fork catalog.
+	Resize Table by Dragging	Tabloyu Sürükleyerek Yeniden Boyutlandır
+	Add Font…	Yazı Tipi Ekle…
+	Added Fonts	Eklenen Yazı Tipleri
+	Remove Added Font	Eklenen Yazı Tipini Kaldır
+	Print Markup	İşaretlemeyi Yazdır
+	Comments beside each page and tracked changes in PDFs, prints and images; a comment list at the end of web pages, Markdown and text.	PDF'lerde, baskılarda ve görüntülerde her sayfanın yanında açıklamalar ve izlenen değişiklikler; web sayfalarının, Markdown ve metnin sonunda açıklama listesi.
+	Recent Colors	Son Kullanılan Renkler
+	More Colors…	Diğer Renkler…
+	Standard	Standart
+	Current	Geçerli
+	Colors:	Renkler:
+	Color model:	Renk modeli:
+	Red:	Kırmızı:
+	Green:	Yeşil:
+	Blue:	Mavi:
+	Hue:	Ton:
+	Sat:	Doygunluk:
+	Lum:	Parlaklık:
+	Hex:	Onaltılık:
+	Accessibility Pane	Erişilebilirlik Bölmesi
+	Alt Text Pane	Alternatif Metin Bölmesi
 	Alt\nText	Alternatif\nMetin
 	View Alt Text…	Alternatif Metni Görüntüle…
 	Mark as decorative	Dekoratif olarak işaretle
@@ -1911,6 +1840,7 @@ preview	Title	Örnek
 	Decorative objects only add visual interest: screen readers skip them.	Dekoratif nesneler yalnızca görsel çekicilik katar: ekran okuyucular bunları atlar.
 	Describe what this table shows, for people who can't see it.	Bu tablonun neyi gösterdiğini, göremeyenler için açıklayın.
 	Select a picture, shape, chart or table to describe it.	Açıklamak için bir resim, şekil, grafik veya tablo seçin.
+	Document Grid	Belge Kılavuzu
 	No grid	Kılavuz yok
 	Lines only	Yalnızca satırlar
 	Lines and characters	Satırlar ve karakterler
@@ -1919,6 +1849,23 @@ preview	Title	Örnek
 	Lines per page:	Sayfa başına satır:
 	Moved from	Taşındı (kaynak)
 	Moved to	Taşındı (hedef)
+	Developer	Geliştirici
+	Controls	Denetimler
+	Rich Text Content Control	Zengin Metin İçerik Denetimi
+	Plain Text Content Control	Düz Metin İçerik Denetimi
+	Picture Content Control	Resim İçerik Denetimi
+	Building Block Gallery Content Control	Yapı Bloğu Galerisi İçerik Denetimi
+	Check Box Content Control	Onay Kutusu İçerik Denetimi
+	Combo Box Content Control	Açılan Kutu İçerik Denetimi
+	Drop-Down List Content Control	Açılır Liste İçerik Denetimi
+	Date Picker Content Control	Tarih Seçici İçerik Denetimi
+	Repeating Section Content Control	Yinelenen Bölüm İçerik Denetimi
+	Design Mode	Tasarım Modu
+	Content Control at Selection	Seçimdeki İçerik Denetimi
+	Toggle Check Box	Onay Kutusunu Değiştir
+	Choose List Item	Liste Öğesi Seç
+	Set Date	Tarihi Ayarla
+	Remove Content Control	İçerik Denetimini Kaldır
 	Content Control Properties	İçerik Denetimi Özellikleri
 	Tag	Etiket
 	Placeholder text	Yer tutucu metin
@@ -1931,8 +1878,11 @@ preview	Title	Örnek
 	Unchecked symbol	Seçili olmayan simge
 	List entries	Liste girdileri
 	Display text	Görünen metin
+	Value	Değer
 	Today	Bugün
 	Put the caret in a content control first.	Önce imleci bir içerik denetiminin içine koyun.
+	Right-to-Left Table	Sağdan Sola Tablo
+	Right-to-Left Section	Sağdan Sola Bölüm
 	Table direction:	Tablo yönü:
 	Section direction:	Bölüm yönü:
 	A, B, C, …	A, B, C, …
@@ -2029,11 +1979,25 @@ preview	Title	Örnek
 	a, b, c, …	a, b, c, …
 	i, ii, iii, …	i, ii, iii, …
 	{n} entries marked.	{n} girdi işaretlendi.
+	Lasso Select	Kement Seçimi
+	Move Selected Ink	Seçili Mürekkebi Taşı
+	Delete Selected Ink	Seçili Mürekkebi Sil
+	Recolor Selected Ink	Seçili Mürekkebi Yeniden Renklendir
+	Add Pen	Kalem Ekle
+	Remove Pen	Kalemi Kaldır
+	Ink to Shape	Mürekkepten Şekle
+	Convert to Shapes	Şekillere Dönüştür
+	Ink Replay	Mürekkep Yeniden Oynatma
 	Add\nPen	Kalem\nEkle
 	Rewind	Geri Sar
 	Forward	İleri
 	Stroke {n} of {total}	Vuruş {n} / {total}
+	Drawing Canvas	Çizim Tuvali
 	New Drawing Canvas	Yeni Çizim Tuvali
+	Fit	Sığdır
+	Expand	Genişlet
+	Scale Drawing	Çizimi Ölçeklendir
+	Canvas Member	Tuval Öğesi
 	Choose the sheet that holds the recipients.	Alıcıları içeren sayfayı seçin.
 	First row of data contains column headers	Verinin ilk satırı sütun başlıklarını içerir
 	Communication	İletişim
@@ -2043,6 +2007,7 @@ preview	Title	Örnek
 	Weather	Hava Durumu
 	Technology	Teknoloji
 	Transport	Ulaşım
+	Icon Color	Simge Rengi
 	Search icons	Simgelerde ara
 	No icons match your search.	Aramanızla eşleşen simge yok.
 	Recolor a one-color picture, such as an icon	Simge gibi tek renkli bir resmi yeniden renklendir
@@ -2146,7 +2111,15 @@ preview	Title	Örnek
 	White space	Boşluk
 	With:	Yeni:
 	Word level	Sözcük düzeyi
+	Change Chart Type	Grafik Türünü Değiştir
+	Chart Design	Grafik Tasarımı
+	Type	Tür
 	Edit Data	Verileri Düzenle
+	Chart Title	Grafik Başlığı
+	Chart Layouts	Grafik Düzenleri
+	Add Chart Element	Grafik Öğesi Ekle
+	Legend	Gösterge
+	Data Labels	Veri Etiketleri
 	Above Chart	Grafiğin Üstünde
 	Insert Chart	Grafik Ekle
 	Clustered Column	Kümelenmiş Sütun
@@ -2162,12 +2135,16 @@ preview	Title	Örnek
 	Series {n}	Seri {n}
 	Type the categories down the side and a column of values per series.	Kategorileri yan tarafa, her seri için bir değer sütunu yazın.
 	Categories	Kategoriler
+	Series name	Seri adı
 	Remove series	Seriyi kaldır
 	Remove row	Satırı kaldır
 	Add Row	Satır Ekle
 	Add Series	Seri Ekle
 	Edit\nData	Verileri\nDüzenle
 	Change\nChart Type	Grafik Türünü\nDeğiştir
+	Align Text	Metni Hizala
+	Create Link	Bağlantı Oluştur
+	Break Link	Bağlantıyı Kes
 	Rotate all text 90°	Tüm metni 90° döndür
 	Rotate all text 270°	Tüm metni 270° döndür
 	Stacked	Yığılmış
@@ -2185,6 +2162,8 @@ preview	Title	Örnek
 	Swap footnotes and endnotes	Dipnotları ve son notları değiştir
 	Custom mark:	Özel işaret:
 	Continuous numbering	Sürekli numaralandırma
+	Apply	Uygula
+	Convert Notes	Notları Dönüştür
 	Reading	Okuma
 	Reading Column Width	Okuma Sütunu Genişliği
 	Reading Line Spacing	Okuma Satır Aralığı
@@ -2206,12 +2185,14 @@ preview	Title	Örnek
 	Browse in WordCraft…	WordCraft'ta Gözat…
 	Open a file with WordCraft's own browser when the system file dialog doesn't appear.	Sistemin dosya iletişim kutusu açılmadığında dosyayı WordCraft'ın kendi dosya tarayıcısıyla açın.
 	Hide White Space	Boşluğu gizle
+	All pages	Tüm sayfalar
 	Current page	Geçerli sayfa
 	Selected pages	Seçili sayfalar
 	Custom range	Özel aralık
 	All pages in the range	Aralıktaki tüm sayfalar
 	Odd pages only	Yalnızca tek sayfalar
 	Even pages only	Yalnızca çift sayfalar
+	Copies	Kopya
 	Collate copies	Kopyaları harmanla
 	Pages like 1-3, 5	Sayfalar, örn. 1-3, 5
 	{count} of {total} pages will print	{total} sayfadan {count} sayfa yazdırılacak
@@ -2293,6 +2274,7 @@ preview	Title	Örnek
 	Add\nShape	Şekil\nEkle
 	Change\nColors	Renkleri\nDeğiştir
 	Reset\nGraphic	Grafiği\nSıfırla
+# Outline view (#493).
 	Promote to Heading 1	Başlık 1'e yükselt
 	Demote to Body Text	Gövde metnine düşür
 	Move Up	Yukarı taşı
@@ -2319,17 +2301,25 @@ preview	Title	Örnek
 	Outlining	Anahat
 	Outline Tools	Anahat araçları
 	Close Outline\nView	Anahat görünümünü\nkapat
+# Wrap Text context menu (#513).
 	Move with Text	Metinle birlikte taşı
 	Fix Position on Page	Sayfadaki konumu sabitle
+# Paragraph dialog options (#512).
 	Formatting exceptions	Biçimlendirme özel durumları
 	Inside:	İç:
 	Mirror indents	Ayna girintiler
 	Outside:	Dış:
+# WordArt and connectors (#416).
+	WordArt Styles	WordArt Stilleri
+	Text Fill	Metin Dolgusu
+	Text Outline	Metin Anahattı
+	Transform	Dönüştür
 	No Fill	Dolgu Yok
 	No Outline	Anahat Yok
 	Reflection	Yansıma
 	No Reflection	Yansıma Yok
 	No Transform	Dönüşüm Yok
+	Connect Shapes	Şekilleri Bağla
 	Straight Connector	Düz Bağlayıcı
 	Straight Arrow Connector	Düz Oklu Bağlayıcı
 	Elbow Connector	Dirsekli Bağlayıcı
@@ -2388,6 +2378,7 @@ preview	Title	Örnek
 	Korean	Korece
 	Limit consecutive hyphens to:	Ardışık tireleri şununla sınırla:
 	Line Numbering Options…	Satır Numaralandırma Seçenekleri…
+	Manual Hyphenation	El ile Heceleme
 	Manual hyphenation is complete.	El ile heceleme tamamlandı.
 	Manual…	El ile…
 	Mark selected text as:	Seçili metni şu olarak işaretle:
@@ -2414,6 +2405,7 @@ preview	Title	Örnek
 	Turkish	Türkçe
 	Ukrainian	Ukraynaca
 	{language} is now the document's default language.	{language} artık belgenin varsayılan dili.
+# File > Options panes (#485).
 	As you type	Yazarken
 	AutoSave writes your changes to the file a moment after you stop typing.	Otomatik kaydetme, yazmayı bıraktıktan kısa süre sonra değişikliklerinizi dosyaya yazar.
 	Centimeters	Santimetre
@@ -2437,6 +2429,8 @@ preview	Title	Örnek
 	No words yet. Add to Dictionary on a misspelled word puts it here.	Henüz sözcük yok. Yanlış yazılmış bir sözcükte «Sözlüğe ekle» onu buraya koyar.
 	Overtype	Üzerine yaz
 	Overtype (typing replaces the characters after the caret)	Üzerine yazma (yazılan metin imleçten sonraki karakterlerin yerine geçer)
+	Show alignment guides when moving pictures and shapes	Resimleri ve şekilleri taşırken hizalama kılavuzlarını göster
+	Moved objects snap to the page's edges and centre, the margins and other objects. Hold Alt to move freely.	Taşınan nesneler sayfanın kenarlarına ve ortasına, kenar boşluklarına ve diğer nesnelere tutunur. Serbestçe taşımak için Alt tuşunu basılı tutun.
 	Page display	Sayfa görünümü
 	Paragraph marks	Paragraf işaretleri
 	Personalize	Kişiselleştir
@@ -2474,6 +2468,39 @@ preview	Title	Örnek
 	AutoFit Column by Double-Clicking	Sütunu Çift Tıklayarak Otomatik Sığdır
 	Region:	Bölge:
 	Automatic ({region})	Otomatik ({region})
+	Text of the nearest paragraph with a given style (running headers)	Belirli bir stile sahip en yakın paragrafın metni (değişken üstbilgiler)
+	Style name:	Stil adı:
+# Mail merge: filter and sort recipients (#778)
+	Filter Recipients	Alıcıları filtrele
+	Sort Recipients	Alıcıları sırala
+	Filter and Sort	Filtrele ve sırala
+	And	Ve
+	Or	Veya
+	Comparison	Karşılaştırma
+	Compare to	Karşılaştırılacak değer
+	Add Condition	Koşul ekle
+	Remove condition	Koşulu kaldır
+	Sort by	Sıralama ölçütü
+	Then by	Sonra
+	Ascending	Artan
+	Descending	Azalan
+	Equal to	Eşittir
+	Not equal to	Eşit değildir
+	Less than	Küçüktür
+	Greater than	Büyüktür
+	Less than or equal	Küçük veya eşittir
+	Greater than or equal	Büyük veya eşittir
+	Is blank	Boştur
+	Is not blank	Boş değildir
+	Contains	İçerir
+	Does not contain	İçermez
+	{count} of {total} recipients will be merged.	Birleştirilecek alıcılar: {count} / {total}.
+	Take the last match on the page	Sayfadaki son eşleşmeyi al
+	Show its list number	Liste numarasını göster
+	Show its number relative to this field	Numarasını bu alana göre göster
+	Show its number with all higher levels	Numarasını tüm üst düzeylerle göster
+	Number only, without the label's words	Yalnızca numara, etiketin sözcükleri olmadan
+	Add whether it is above or below	Yukarıda mı aşağıda mı olduğunu ekle
 	Start-up	Başlangıç
 	Show the Start screen when WordCraft starts	WordCraft açılırken Başlangıç ekranını göster
 	On: WordCraft opens on File › Home, with a blank document, the templates and your recent documents. Off: it opens a blank document.	Açık: WordCraft, Dosya › Giriş sayfasında boş belge, şablonlar ve son belgelerinizle açılır. Kapalı: boş bir belge açar.
@@ -2484,6 +2511,13 @@ preview	Title	Örnek
 	Level 7	Düzey 7
 	Level 8	Düzey 8
 	Level 9	Düzey 9
+	Copy to	Şuraya kopyala
+
+# Document naming and account controls.
+	Rename Document	Belgeyi yeniden adlandır
+	Document name	Belge adı
+	Rename	Yeniden adlandır
+	Account	Hesap
 	Privacy Options	Gizlilik Seçenekleri
 	Trust Center	Güven Merkezi
 	Privacy for this document	Bu belgenin gizliliği
@@ -2491,6 +2525,8 @@ preview	Title	Örnek
 	Leave out the date and time of comments and tracked changes when saving	Kaydederken açıklamaların ve izlenen değişikliklerin tarih ve saatini dahil etme
 	The document you are editing keeps the names and dates; only the saved file leaves them out.	Düzenlediğiniz belge adları ve tarihleri korur; yalnızca kaydedilen dosya bunları içermez.
 	Privacy Settings	Geçerli gizlilik ayarları
+	Waiting for the save to finish…	Kaydetme işleminin bitmesi bekleniyor…
+	Saving {name} was cancelled, so it is still open and nothing was lost.	{name} kaydetme işlemi iptal edildi; belge hâlâ açık ve hiçbir şey kaybolmadı.
 	Paper	Kağıt
 	Paper size:	Kağıt boyutu:
 	Custom size	Özel boyut
@@ -2523,11 +2559,35 @@ preview	Title	Örnek
 	Suggested	Önerilenler
 	Set Proofing Language…	Yazım denetimi dilini ayarla…
 	Language Preferences…	Dil tercihleri…
-	Add Font…	Yazı tipi ekle…
-	Entire item	Öğenin tamamı
-	Heading	Başlık
-	Insert as:	Şu şekilde ekle:
-	Insert reference to:	Şuna başvuru ekle:
-	More Colors…	Diğer Renkler…
+
+# Cross-reference dialog (#1003)
+	Entire item	Tüm öğe
+	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	İlk sorun: {element}, {page}. sayfada {axis} sınırını aşıyor. İçerik korundu. Gitmek için tıklayın.
+	Insert as:	Ekleme biçimi:
+	Page overflow	Sayfa taşması
 	Reference type	Başvuru türü
 	Save a copy in another format.	Başka bir biçimde kopya kaydedin.
+	For which item:	Hangi öğe için:
+	Heading	Başlık
+	Heading text	Başlık metni
+	Insert reference to:	Başvuru ekle:
+	Reference type:	Başvuru türü:
+
+# Dictionaries folder (#1063)
+	Dictionaries	Sözlükler
+	Dictionaries folder:	Sözlük klasörü:
+	Not set: the system's usual places	Ayarlanmadı: sistemin olağan konumları
+	Hunspell .aff and .dic files here (pl_PL, pt_BR, it_IT, hr_HR, tr_TR) are used before the system's.	Bu klasördeki Hunspell .aff ve .dic dosyaları (pl_PL, pt_BR, it_IT, hr_HR, tr_TR) sistemdekilerden önce kullanılır.
+	{language}: {file}	{language}: {file}
+	{language}: no dictionary found	{language}: sözlük bulunamadı
+
+# Backstage › Recover (#586)
+	Recover	Kurtar
+
+# Page Setup › Mirror margins (#1239)
+	Mirror margins	Yansıtılmış kenar boşlukları
+
+# Insert Hyperlink › Place in This Document (#1370)
+	Existing File or Web Page	Varolan Dosya veya Web Sayfası
+	Link to:	Bağlantı:
+	Place in This Document	Bu Belgede Bir Yer

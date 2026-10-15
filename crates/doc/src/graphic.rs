@@ -24,7 +24,7 @@ pub struct Graphic {
     pub h: f32,
     /// Where the graphic was read from, so saving writes the original drawing itself back (not
     /// only these items). `None` for graphics made some other way.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<std::sync::Arc<Embedded>>,
     /// A SmartArt graphic WordCraft can edit (one it made, or one read back exactly as it wrote
     /// it): saving writes the diagram parts from it, and the items are drawn from it. See

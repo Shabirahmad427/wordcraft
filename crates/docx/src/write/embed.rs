@@ -13,7 +13,9 @@ use wordcraft_doc::graphic::Embedded;
 use wordcraft_doc::para::Float;
 
 use super::PartRels;
-use crate::package::{EMBEDDED_PARTS, EmbeddedManifest, FONT_TABLE_PART, MAX_EMBEDDED_PARTS, VBA_PROJECT_PART, VBA_RELATED, relative, rt};
+use crate::package::{
+    EMBEDDED_PARTS, EmbeddedManifest, FONT_TABLE_PART, MAX_EMBEDDED_PARTS, MAX_EMBEDDED_RELS, VBA_PROJECT_PART, VBA_RELATED, relative, rt,
+};
 use crate::units::{MAX_LEN_PT, emu, int};
 use crate::xml::{self, El, MAX_DEPTH};
 
@@ -58,6 +60,8 @@ impl<'d> EmbedWriter<'d> {
             "word/endnotes.xml",
             "word/comments.xml",
             "word/commentsextended.xml",
+            "word/commentsids.xml",
+            "word/commentsextensible.xml",
             "[content_types].xml",
         ]
         .iter()
@@ -106,7 +110,7 @@ impl<'d> EmbedWriter<'d> {
     /// Names this writer may give its own parts later (headers, footers, package parts).
     fn reserved(lower: &str) -> bool {
         lower.ends_with(".rels")
-            || lower.starts_with("docprops/")
+            || (lower.starts_with("docprops/") && !lower.starts_with("docprops/thumbnail."))
             || lower.starts_with("_rels/")
             || ((lower.starts_with("word/header") || lower.starts_with("word/footer")) && lower.ends_with(".xml"))
     }
@@ -170,6 +174,26 @@ impl<'d> EmbedWriter<'d> {
     /// Can part `name` be written (bytes and manifest entry both kept)?
     fn available(&self, name: &str) -> bool {
         self.manifest.parts.contains_key(name) && self.passthrough.contains_key(name)
+    }
+
+    /// Reattach the parts kept by `keep_unmodelled` (`UNMODELLED_ROOTS`) to their owner: the
+    /// package (`P`) or the main document (`D`).
+    pub fn unmodelled_rels(&mut self, owner: &str, rels: &mut PartRels) {
+        let Some(roots) = self.passthrough.get(crate::package::UNMODELLED_ROOTS).cloned() else { return };
+        let mut memo = std::mem::take(&mut self.first);
+        let mut written = Vec::new();
+        for line in String::from_utf8_lossy(&roots).lines().take(MAX_EMBEDDED_RELS * 2) {
+            let fields: Vec<&str> = line.split('\t').collect();
+            let [source, kind, target] = fields.as_slice() else { continue };
+            if *source != owner {
+                continue;
+            }
+            if let Some(name) = self.copy_tree(target, &mut memo, &mut written) {
+                let source_part = if owner == "P" { "" } else { STORY_PART };
+                rels.add(kind, &relative(source_part, &name), false);
+            }
+        }
+        self.first = memo;
     }
 
     /// What copying the parts reached from `roots` costs against the copy budget.
@@ -354,9 +378,9 @@ impl super::Writer<'_> {
         let mut chart_rels = PartRels::default();
         let workbook_rel =
             chart_rels.add("http://schemas.openxmlformats.org/officeDocument/2006/relationships/package", &relative(&name, &workbook_name), false);
-        let (chart_xml, workbook) = crate::chart_spec::chart_package_parts(spec, &workbook_rel)?;
-        self.embeds.parts.push((name.clone(), chart_xml.into_bytes(), crate::chart_spec::CHART_CT.to_string(), chart_rels));
+        let (chart, workbook) = crate::chart_spec::chart_package_parts(spec, &workbook_rel, &workbook_name)?;
         self.embeds.parts.push((workbook_name, workbook, crate::chart_spec::WORKBOOK_CT.to_string(), PartRels::default()));
+        self.embeds.parts.push((name.clone(), chart.into_bytes(), crate::chart_spec::CHART_CT.to_string(), chart_rels));
         let id = rels.add(crate::package::rt::CHART, &relative(STORY_PART, &name), false);
         let mut w = xml::W::default();
         w.open("a:graphic", &[("xmlns:a", "http://schemas.openxmlformats.org/drawingml/2006/main")]);

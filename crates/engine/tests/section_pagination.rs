@@ -8,16 +8,15 @@ use wordcraft_engine::{
         Document, Paragraph, PartKind, Path, Pos, StoryRef, Table,
         math::{Math, parse_linear},
         para::{InlineObject, NoteKind},
-        props::VAlign,
-        section::{Columns, SectionProps, SectionStart},
+        section::{Columns, PageVAlign, SectionProps, SectionStart},
     },
-    recovery::{Snapshot, Store, unique_id},
+    recovery::legacy::{Snapshot, Store, unique_id},
 };
 use wordcraft_layout::{DocLayout, Placed};
 
 fn academic_document() -> (Document, u32) {
     let mut doc = Document::from_text("Academic introduction\nResults and measurements");
-    let old = SectionProps { valign: VAlign::Center, ..Default::default() };
+    let old = SectionProps { valign: PageVAlign::Center, ..Default::default() };
     doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap().section = Some(Box::new(old));
     doc.last_section = SectionProps {
         start: SectionStart::OddPage,

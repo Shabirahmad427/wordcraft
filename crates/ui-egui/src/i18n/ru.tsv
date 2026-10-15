@@ -85,6 +85,9 @@
 	Book Title	Название книги
 	Bookmark	Закладка
 	Bookmark name:	Имя закладки:
+	Delete Bookmark	Удалить закладку
+	Hidden bookmarks	Скрытые закладки
+	Sort by:	Сортировать по:
 	Border Painter	Кисть границ
 	Border\nPainter	Кисть\nграниц
 	Borders	Границы
@@ -189,6 +192,8 @@
 	Delete Style	Удалить стиль
 	Delete Table	Удалить таблицу
 	Design	Дизайн
+	In the margin	На полях
+	Only for the selected text	Только для выделенного текста
 	No document is open. Create a document or open one first.	Нет открытого документа. Сначала создайте или откройте документ.
 	Search	Поиск
 	Title Bar	Строка заголовка
@@ -382,6 +387,8 @@
 	Labels	Наклейки
 	Landscape	Альбомная
 	Language	Язык
+	{language} (no dictionary)	{language} (нет словаря)
+	No spelling dictionary for {language} is installed, so it isn't checked. WordCraft looks for the Hunspell dictionary {name} in the WORDCRAFT_DICTIONARIES folder and in the usual system locations.	Орфографический словарь для языка «{language}» не установлен, поэтому текст не проверяется. WordCraft ищет словарь Hunspell {name} в папке WORDCRAFT_DICTIONARIES и в обычных системных расположениях.
 	Lasso	Лассо
 	Last Column	Последний столбец
 	Last commit	Последний коммит
@@ -1798,105 +1805,27 @@ preview	Title	Пример
 	Left Only	Только слева
 	Right Only	Только справа
 	Largest Only	Только по большей стороне
-	Compare Recovery Versions	Сравнить версии восстановления
-	Discard Recovery Version	Удалить версию восстановления
-	Edit Chart Data	Изменить данные диаграммы
-	Export Bibliography Sources	Экспортировать источники библиографии
-	Import Bibliography Sources	Импортировать источники библиографии
-	Import Mendeley Library	Импортировать библиотеку Mendeley
-	Inspect Chart Data	Просмотреть данные диаграммы
-	Library	Библиотека
-	Mendeley	Mendeley
-	Restore Recovery Version	Восстановить версию документа
-	Save Original Package	Сохранить исходный пакет
-	Update Citations and Bibliography	Обновить цитаты и библиографию
-	All pages	Все страницы
-	Apply	Применить
-	Cancel print job	Отменить задание печати
-	Chart Design	Конструктор диаграмм
-	Collate	Разобрать по комплектам
-	Content exceeds page area on {count} page(s).	Содержимое выходит за пределы страницы на {count} стр.
-	Copies	Копии
-	Copies must be between 1 and 999.	Количество копий должно быть от 1 до 999.
-	Duplex	Двусторонняя печать
-	Enter a valid number	Введите допустимое число
-	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	Первая проблема: {element} выходит за границу {axis} на странице {page}. Содержимое сохранено. Нажмите, чтобы перейти.
-	Fit to page	Вписать в страницу
-	No printers are available.	Нет доступных принтеров.
-	One-sided	Односторонняя печать
-	Page overflow	Переполнение страницы
-	Page {page} has content that may be clipped.	На странице {page} может быть обрезано содержимое.
-	Paper size	Размер бумаги
-	Print dialog opened.	Диалог печати открыт.
-	Print job canceled.	Задание печати отменено.
-	Print preview	Предварительный просмотр печати
-	Printer	Принтер
-	Printer default	По умолчанию для принтера
-	Select printer	Выбрать принтер
-	Series	Ряд данных
-	Series name	Имя ряда
-	The system print dialog is unavailable. You can open a PDF copy to print from another viewer.	Системный диалог печати недоступен. Можно открыть копию PDF в другой программе.
-	This chart is read-only	Эта диаграмма доступна только для просмотра
-	Two-sided, long edge	Двусторонняя, переворот по длинному краю
-	Two-sided, short edge	Двусторонняя, переворот по короткому краю
-	Value	Значение
-	{selected} of {pages} pages	Страниц: выбрано {selected} из {pages}
-	Accessibility Pane	Панель специальных возможностей
-	Add Chart Element	Добавить элемент диаграммы
-	Add Pen	Добавить перо
-	Align Text	Выравнивание текста
-	Alt Text Pane	Панель замещающего текста
-	Break Link	Разорвать связь
-	Building Block Gallery Content Control	Элемент управления коллекцией экспресс-блоков
-	Canvas Member	Элемент холста
-	Change Chart Type	Изменить тип диаграммы
-	Chart Layouts	Макеты диаграммы
-	Chart Title	Название диаграммы
-	Check Box Content Control	Элемент управления с флажком
-	Choose List Item	Выбрать элемент списка
-	Combo Box Content Control	Поле со списком
-	Connect Shapes	Соединить фигуры
-	Content Control at Selection	Элемент управления в выделении
-	Controls	Элементы управления
-	Convert Notes	Преобразовать сноски и концевые сноски
-	Convert to Shapes	Преобразовать в фигуры
-	Create Link	Создать связь
-	Data Labels	Подписи данных
-	Date Picker Content Control	Элемент управления выбором даты
-	Delete Selected Ink	Удалить выбранный рукописный объект
-	Design Mode	Режим конструктора
-	Developer	Разработчик
-	Document Grid	Сетка документа
-	Drawing Canvas	Холст для рисования
-	Drop-Down List Content Control	Элемент управления раскрывающимся списком
-	Expand	Развернуть
-	Fit	Вписать
-	Icon Color	Цвет значка
-	Ink Replay	Повтор рукописного ввода
-	Ink to Shape	Преобразовать рукописный ввод в фигуру
-	Lasso Select	Выделение лассо
-	Legend	Легенда
-	Manual Hyphenation	Расстановка переносов вручную
-	Move Selected Ink	Переместить выбранный рукописный объект
-	Picture Content Control	Элемент управления рисунком
-	Plain Text Content Control	Элемент управления обычным текстом
-	Recolor Selected Ink	Изменить цвет выбранного рукописного объекта
-	Remove Content Control	Удалить элемент управления содержимым
-	Remove Pen	Удалить перо
-	Repeating Section Content Control	Элемент управления повторяющимся разделом
-	Rich Text Content Control	Элемент управления форматированным текстом
-	Right-to-Left Section	Раздел справа налево
-	Right-to-Left Table	Таблица справа налево
-	Scale Drawing	Масштабировать рисунок
-	Set Date	Установить дату
-	Text Fill	Заливка текста
-	Text Outline	Контур текста
-	Toggle Check Box	Переключить флажок
-	Transform	Преобразование
-	Type	Тип
-	WordArt Styles	Стили декоративного текста
-
-# Upstream interface terms not yet translated in the fork catalog.
+	Resize Table by Dragging	Изменение размера таблицы перетаскиванием
+	Add Font…	Добавить шрифт…
+	Added Fonts	Добавленные шрифты
+	Remove Added Font	Удалить добавленный шрифт
+	Print Markup	Печатать исправления и примечания
+	Comments beside each page and tracked changes in PDFs, prints and images; a comment list at the end of web pages, Markdown and text.	Примечания рядом с каждой страницей и отслеживаемые изменения в PDF, при печати и в изображениях; список примечаний в конце веб-страниц, Markdown и текста.
+	Recent Colors	Последние цвета
+	More Colors…	Другие цвета…
+	Standard	Обычные
+	Current	Текущий
+	Colors:	Цвета:
+	Color model:	Цветовая модель:
+	Red:	Красный:
+	Green:	Зеленый:
+	Blue:	Синий:
+	Hue:	Оттенок:
+	Sat:	Насыщенность:
+	Lum:	Яркость:
+	Hex:	Hex:
+	Accessibility Pane	Область специальных возможностей
+	Alt Text Pane	Область замещающего текста
 	Alt\nText	Замещающий\nтекст
 	View Alt Text…	Показать замещающий текст…
 	Mark as decorative	Пометить как декоративный
@@ -1909,6 +1838,7 @@ preview	Title	Пример
 	Decorative objects only add visual interest: screen readers skip them.	Декоративные объекты лишь украшают документ: программы чтения с экрана их пропускают.
 	Describe what this table shows, for people who can't see it.	Опишите, что показывает эта таблица, для людей, которые её не видят.
 	Select a picture, shape, chart or table to describe it.	Выберите рисунок, фигуру, диаграмму или таблицу, чтобы описать её.
+	Document Grid	Сетка документа
 	No grid	Без сетки
 	Lines only	Только строки
 	Lines and characters	Строки и символы
@@ -1917,6 +1847,23 @@ preview	Title	Пример
 	Lines per page:	Строк на странице:
 	Moved from	Перемещено из
 	Moved to	Перемещено в
+	Developer	Разработчик
+	Controls	Элементы управления
+	Rich Text Content Control	Элемент управления содержимым: форматированный текст
+	Plain Text Content Control	Элемент управления содержимым: обычный текст
+	Picture Content Control	Элемент управления содержимым: рисунок
+	Building Block Gallery Content Control	Элемент управления содержимым: коллекция стандартных блоков
+	Check Box Content Control	Элемент управления содержимым: флажок
+	Combo Box Content Control	Элемент управления содержимым: поле со списком
+	Drop-Down List Content Control	Элемент управления содержимым: раскрывающийся список
+	Date Picker Content Control	Элемент управления содержимым: выбор даты
+	Repeating Section Content Control	Элемент управления содержимым: повторяющийся раздел
+	Design Mode	Режим конструктора
+	Content Control at Selection	Элемент управления содержимым в выделении
+	Toggle Check Box	Переключить флажок
+	Choose List Item	Выбрать элемент списка
+	Set Date	Задать дату
+	Remove Content Control	Удалить элемент управления содержимым
 	Content Control Properties	Свойства элемента управления содержимым
 	Tag	Тег
 	Placeholder text	Текст-заполнитель
@@ -1929,8 +1876,11 @@ preview	Title	Пример
 	Unchecked symbol	Символ снятого флажка
 	List entries	Элементы списка
 	Display text	Отображаемый текст
+	Value	Значение
 	Today	Сегодня
 	Put the caret in a content control first.	Сначала поместите курсор в элемент управления содержимым.
+	Right-to-Left Table	Таблица справа налево
+	Right-to-Left Section	Раздел справа налево
 	Table direction:	Направление таблицы:
 	Section direction:	Направление раздела:
 	A, B, C, …	A, B, C, …
@@ -2027,11 +1977,25 @@ preview	Title	Пример
 	a, b, c, …	a, b, c, …
 	i, ii, iii, …	i, ii, iii, …
 	{n} entries marked.	Помечено записей: {n}.
+	Lasso Select	Лассо
+	Move Selected Ink	Переместить выделенные штрихи
+	Delete Selected Ink	Удалить выделенные штрихи
+	Recolor Selected Ink	Перекрасить выделенные штрихи
+	Add Pen	Добавить перо
+	Remove Pen	Удалить перо
+	Ink to Shape	Рукописный ввод в фигуры
+	Convert to Shapes	Преобразовать в фигуры
+	Ink Replay	Воспроизведение рукописного ввода
 	Add\nPen	Добавить\nперо
 	Rewind	Назад
 	Forward	Вперёд
 	Stroke {n} of {total}	Штрих {n} из {total}
+	Drawing Canvas	Полотно для рисования
 	New Drawing Canvas	Новое полотно для рисования
+	Fit	По размеру
+	Expand	Расширить
+	Scale Drawing	Масштабировать рисунок
+	Canvas Member	Элемент полотна
 	Choose the sheet that holds the recipients.	Выберите лист с получателями.
 	First row of data contains column headers	Первая строка данных содержит заголовки столбцов
 	Communication	Связь
@@ -2041,6 +2005,7 @@ preview	Title	Пример
 	Weather	Погода
 	Technology	Технологии
 	Transport	Транспорт
+	Icon Color	Цвет значка
 	Search icons	Поиск значков
 	No icons match your search.	Нет значков, соответствующих поиску.
 	Recolor a one-color picture, such as an icon	Перекрасить одноцветный рисунок, например значок
@@ -2144,7 +2109,15 @@ preview	Title	Пример
 	White space	Пробелы
 	With:	На:
 	Word level	На уровне слов
+	Change Chart Type	Изменить тип диаграммы
+	Chart Design	Конструктор диаграмм
+	Type	Тип
 	Edit Data	Изменить данные
+	Chart Title	Название диаграммы
+	Chart Layouts	Макеты диаграмм
+	Add Chart Element	Добавить элемент диаграммы
+	Legend	Легенда
+	Data Labels	Подписи данных
 	Above Chart	Над диаграммой
 	Insert Chart	Вставка диаграммы
 	Clustered Column	Гистограмма с группировкой
@@ -2160,12 +2133,16 @@ preview	Title	Пример
 	Series {n}	Ряд {n}
 	Type the categories down the side and a column of values per series.	Введите категории по вертикали и столбец значений для каждого ряда.
 	Categories	Категории
+	Series name	Имя ряда
 	Remove series	Удалить ряд
 	Remove row	Удалить строку
 	Add Row	Добавить строку
 	Add Series	Добавить ряд
 	Edit\nData	Изменить\nданные
 	Change\nChart Type	Изменить\nтип диаграммы
+	Align Text	Выравнивание текста
+	Create Link	Создать связь
+	Break Link	Разорвать связь
 	Rotate all text 90°	Повернуть весь текст на 90°
 	Rotate all text 270°	Повернуть весь текст на 270°
 	Stacked	Столбиком
@@ -2183,6 +2160,8 @@ preview	Title	Пример
 	Swap footnotes and endnotes	Поменять сноски и концевые сноски
 	Custom mark:	Особый знак:
 	Continuous numbering	Сквозная нумерация
+	Apply	Применить
+	Convert Notes	Преобразовать сноски
 	Reading	Чтение
 	Reading Column Width	Ширина столбца в режиме чтения
 	Reading Line Spacing	Межстрочный интервал в режиме чтения
@@ -2207,12 +2186,14 @@ preview	Title	Пример
 	Browse in WordCraft…	Обзор в WordCraft…
 	Open a file with WordCraft's own browser when the system file dialog doesn't appear.	Открыть файл во встроенном обозревателе WordCraft, если системное диалоговое окно выбора файлов не появляется.
 	Hide White Space	Скрыть пустое место между страницами
+	All pages	Все страницы
 	Current page	Текущая страница
 	Selected pages	Выбранные страницы
 	Custom range	Свой диапазон
 	All pages in the range	Все страницы диапазона
 	Odd pages only	Только нечётные страницы
 	Even pages only	Только чётные страницы
+	Copies	Копии
 	Collate copies	Разобрать по копиям
 	Pages like 1-3, 5	Страницы, например 1-3, 5
 	{count} of {total} pages will print	Будет напечатано страниц: {count} из {total}
@@ -2294,6 +2275,7 @@ preview	Title	Пример
 	Add\nShape	Добавить\nфигуру
 	Change\nColors	Изменить\nцвета
 	Reset\nGraphic	Сбросить\nграфику
+# Outline view (#493).
 	Promote to Heading 1	Повысить до заголовка 1
 	Demote to Body Text	Понизить до обычного текста
 	Move Up	Переместить вверх
@@ -2320,17 +2302,25 @@ preview	Title	Пример
 	Outlining	Структура
 	Outline Tools	Работа со структурой
 	Close Outline\nView	Закрыть режим\nструктуры
+# Wrap Text context menu (#513).
 	Move with Text	Перемещать вместе с текстом
 	Fix Position on Page	Зафиксировать положение на странице
+# Paragraph dialog options (#512).
 	Formatting exceptions	Исключения форматирования
 	Inside:	Внутри:
 	Mirror indents	Зеркальные отступы
 	Outside:	Снаружи:
+# WordArt and connectors (#416).
+	WordArt Styles	Стили WordArt
+	Text Fill	Заливка текста
+	Text Outline	Контур текста
+	Transform	Трансформация
 	No Fill	Нет заливки
 	No Outline	Нет контура
 	Reflection	Отражение
 	No Reflection	Без отражения
 	No Transform	Без трансформации
+	Connect Shapes	Соединить фигуры
 	Straight Connector	Прямая соединительная линия
 	Straight Arrow Connector	Прямая соединительная линия со стрелкой
 	Elbow Connector	Уголковая соединительная линия
@@ -2389,6 +2379,7 @@ preview	Title	Пример
 	Korean	Корейский
 	Limit consecutive hyphens to:	Максимум последовательных переносов:
 	Line Numbering Options…	Параметры нумерации строк…
+	Manual Hyphenation	Расстановка переносов вручную
 	Manual hyphenation is complete.	Расстановка переносов вручную завершена.
 	Manual…	Вручную…
 	Mark selected text as:	Пометить выделенный текст как:
@@ -2415,6 +2406,7 @@ preview	Title	Пример
 	Turkish	Турецкий
 	Ukrainian	Украинский
 	{language} is now the document's default language.	{language} теперь язык документа по умолчанию.
+# File > Options panes (#485).
 	As you type	По мере ввода
 	AutoSave writes your changes to the file a moment after you stop typing.	Автосохранение записывает изменения в файл вскоре после того, как вы перестанете печатать.
 	Centimeters	Сантиметры
@@ -2438,6 +2430,8 @@ preview	Title	Пример
 	No words yet. Add to Dictionary on a misspelled word puts it here.	Слов пока нет. Команда «Добавить в словарь» для слова с ошибкой помещает его сюда.
 	Overtype	Замена
 	Overtype (typing replaces the characters after the caret)	Замена (вводимый текст заменяет символы после курсора)
+	Show alignment guides when moving pictures and shapes	Показывать направляющие выравнивания при перемещении рисунков и фигур
+	Moved objects snap to the page's edges and centre, the margins and other objects. Hold Alt to move freely.	Перемещаемые объекты притягиваются к краям и центру страницы, к полям и к другим объектам. Удерживайте Alt, чтобы перемещать свободно.
 	Page display	Отображение страницы
 	Paragraph marks	Знаки абзаца
 	Personalize	Персонализация
@@ -2475,6 +2469,39 @@ preview	Title	Пример
 	AutoFit Column by Double-Clicking	Автоподбор ширины столбца двойным щелчком
 	Region:	Регион:
 	Automatic ({region})	Автоматически ({region})
+	Text of the nearest paragraph with a given style (running headers)	Текст ближайшего абзаца с заданным стилем (живые колонтитулы)
+	Style name:	Имя стиля:
+# Mail merge: filter and sort recipients (#778)
+	Filter Recipients	Фильтр получателей
+	Sort Recipients	Сортировка получателей
+	Filter and Sort	Фильтр и сортировка
+	And	И
+	Or	Или
+	Comparison	Сравнение
+	Compare to	Значение
+	Add Condition	Добавить условие
+	Remove condition	Удалить условие
+	Sort by	Сортировать по
+	Then by	Затем по
+	Ascending	По возрастанию
+	Descending	По убыванию
+	Equal to	Равно
+	Not equal to	Не равно
+	Less than	Меньше
+	Greater than	Больше
+	Less than or equal	Меньше или равно
+	Greater than or equal	Больше или равно
+	Is blank	Пусто
+	Is not blank	Не пусто
+	Contains	Содержит
+	Does not contain	Не содержит
+	{count} of {total} recipients will be merged.	Получателей для слияния: {count} из {total}.
+	Take the last match on the page	Брать последнее совпадение на странице
+	Show its list number	Показывать его номер в списке
+	Show its number relative to this field	Показывать его номер относительно этого поля
+	Show its number with all higher levels	Показывать его номер со всеми верхними уровнями
+	Number only, without the label's words	Только номер, без слов метки
+	Add whether it is above or below	Добавлять, выше он или ниже
 	Start-up	Запуск
 	Show the Start screen when WordCraft starts	Показывать начальный экран при запуске WordCraft
 	On: WordCraft opens on File › Home, with a blank document, the templates and your recent documents. Off: it opens a blank document.	Вкл.: WordCraft открывается на странице Файл › Главная с пустым документом, шаблонами и недавними документами. Выкл.: открывается пустой документ.
@@ -2485,6 +2512,13 @@ preview	Title	Пример
 	Level 7	Уровень 7
 	Level 8	Уровень 8
 	Level 9	Уровень 9
+	Copy to	Копировать в
+
+# Document naming and account controls.
+	Rename Document	Переименовать документ
+	Document name	Имя документа
+	Rename	Переименовать
+	Account	Учётная запись
 	Privacy Options	Параметры конфиденциальности
 	Trust Center	Центр управления безопасностью
 	Privacy for this document	Конфиденциальность этого документа
@@ -2492,6 +2526,8 @@ preview	Title	Пример
 	Leave out the date and time of comments and tracked changes when saving	Не сохранять дату и время примечаний и отслеживаемых изменений
 	The document you are editing keeps the names and dates; only the saved file leaves them out.	Редактируемый документ сохраняет имена и даты; их не будет только в сохранённом файле.
 	Privacy Settings	Текущие параметры конфиденциальности
+	Waiting for the save to finish…	Ожидание завершения сохранения…
+	Saving {name} was cancelled, so it is still open and nothing was lost.	Сохранение {name} отменено. Документ по-прежнему открыт, ничего не потеряно.
 	Paper	Бумага
 	Paper size:	Размер бумаги:
 	Custom size	Другой размер
@@ -2524,11 +2560,36 @@ preview	Title	Пример
 	Suggested	Предлагаемые
 	Set Proofing Language…	Выбрать язык проверки правописания…
 	Language Preferences…	Языковые параметры…
-	Add Font…	Добавить шрифт…
-	Entire item	Весь объект
-	Heading	Заголовок
+
+# Cross-reference dialog (#1003)
+	Entire item	Весь элемент
+	First issue: {element} exceeds its {axis} boundary on page {page}. Content is preserved. Click to go there.	Первое замечание: элемент «{element}» выходит за границу {axis} на странице {page}. Содержимое сохранено. Нажмите, чтобы перейти.
 	Insert as:	Вставить как:
-	Insert reference to:	Вставить ссылку на:
-	More Colors…	Другие цвета…
+	Page overflow	Переполнение страницы
 	Reference type	Тип ссылки
-	Save a copy in another format.	Сохраните копию в другом формате.
+	Save a copy in another format.	Сохранить копию в другом формате.
+	For which item:	Для какого элемента:
+	Heading	Заголовок
+	Heading text	Текст заголовка
+	Insert reference to:	Вставить ссылку на:
+	Reference type:	Тип ссылки:
+	Printer	Принтер
+
+# Dictionaries folder (#1063)
+	Dictionaries	Словари
+	Dictionaries folder:	Папка словарей:
+	Not set: the system's usual places	Не задана: стандартные расположения в системе
+	Hunspell .aff and .dic files here (pl_PL, pt_BR, it_IT, hr_HR, tr_TR) are used before the system's.	Файлы Hunspell .aff и .dic из этой папки (pl_PL, pt_BR, it_IT, hr_HR, tr_TR) используются раньше системных.
+	{language}: {file}	{language}: {file}
+	{language}: no dictionary found	{language}: словарь не найден
+
+# Backstage › Recover (#586)
+	Recover	Восстановить
+
+# Page Setup › Mirror margins (#1239)
+	Mirror margins	Зеркальные поля
+
+# Insert Hyperlink › Place in This Document (#1370)
+	Existing File or Web Page	Файл или веб-страница
+	Link to:	Связать с:
+	Place in This Document	Место в документе

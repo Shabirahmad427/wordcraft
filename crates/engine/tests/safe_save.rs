@@ -5,8 +5,11 @@ use wordcraft_engine::io;
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
-        let path =
-            std::env::temp_dir().join(format!("wordcraft-save-integration-{}-{}", std::process::id(), wordcraft_engine::recovery::unique_id()));
+        let path = std::env::temp_dir().join(format!(
+            "wordcraft-save-integration-{}-{}",
+            std::process::id(),
+            wordcraft_engine::recovery::legacy::unique_id()
+        ));
         std::fs::create_dir(&path).expect("scratch directory");
         Self(path)
     }

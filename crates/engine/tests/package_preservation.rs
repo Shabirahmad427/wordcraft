@@ -6,7 +6,7 @@ use serde_json::json;
 use wordcraft_engine::{
     Session,
     doc::{Document, StoryRef},
-    recovery::{Snapshot, Store, unique_id},
+    recovery::legacy::{Snapshot, Store, unique_id},
 };
 #[test]
 fn guarded_text_save_undo_and_recovery_preserve_inert_parts_and_bindings() {

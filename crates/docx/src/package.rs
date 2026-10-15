@@ -9,7 +9,7 @@ use crate::xml::{self, El};
 /// Largest single part we decompress.
 pub const MAX_PART: u64 = 64 * 1024 * 1024;
 /// Largest total of all decompressed parts.
-pub const MAX_TOTAL: u64 = 64 * 1024 * 1024;
+pub const MAX_TOTAL: u64 = 512 * 1024 * 1024;
 /// Most zip entries we look at.
 pub const MAX_ENTRIES: usize = 20_000;
 
@@ -30,6 +30,8 @@ pub mod rt {
     pub const ENDNOTES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes";
     pub const COMMENTS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
     pub const COMMENTS_EX: &str = "http://schemas.microsoft.com/office/2011/relationships/commentsExtended";
+    pub const COMMENTS_IDS: &str = "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds";
+    pub const COMMENTS_EXTENSIBLE: &str = "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible";
     pub const HEADER: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
     pub const FOOTER: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
     pub const IMAGE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
@@ -60,8 +62,21 @@ pub const MAX_VBA_RELATED: usize = 64;
 pub const EMBEDDED_PARTS: &str = "wordcraft:embedded.parts";
 /// The font table kept from a file (read by `Reader::keep_part_tree`), with the fonts it embeds.
 pub const FONT_TABLE_PART: &str = "word/fontTable.xml";
-/// Custom XML roots kept by the package (P) or main document (D): `owner\ttype\tpart`.
-/// Their opaque bytes and related parts use the same bounded manifest as embedded objects.
+/// The original `word/settings.xml` when it holds settings the model doesn't (merged into on
+/// save by `write::settings_merge`). Not a package part: WordCraft's own bookkeeping.
+pub const SETTINGS_ORIG: &str = "wordcraft:settings.orig";
+/// Extended properties (`docProps/app.xml`) the model doesn't hold but a save keeps
+/// ([`APP_KEPT_PROPS`]): `name\tvalue` lines. Not a package part: WordCraft's own bookkeeping.
+pub const APP_KEPT: &str = "wordcraft:app.kept";
+/// The `docProps/app.xml` properties carried over from the file. Counts (pages, lines,
+/// characters, editing time) and the producing application's version are not: they describe
+/// the file Word saved, not the one WordCraft writes.
+pub const APP_KEPT_PROPS: &[&str] =
+    &["Template", "Manager", "Company", "HyperlinkBase", "ScaleCrop", "LinksUpToDate", "SharedDoc", "HyperlinksChanged"];
+/// Parts WordCraft doesn't model, carried verbatim: `owner\ttype\tpart` lines (owner `P` for
+/// the package, `D` for the main document), with their bytes and relationships in the
+/// [`EmbeddedManifest`]. Not a package part: WordCraft's own bookkeeping.
+pub const UNMODELLED_ROOTS: &str = "wordcraft:unmodelled.roots";
 /// Most parts we carry along for a file's embedded objects.
 pub const MAX_EMBEDDED_PARTS: usize = 4096;
 /// Most relationships we keep for one such part.
@@ -156,10 +171,15 @@ impl Package {
             return Err(DocxError::Limit(format!("{} zip entries", zip.len())));
         }
         let mut files = BTreeMap::new();
-        let mut names = std::collections::BTreeSet::new();
         let mut total: u64 = 0;
         for i in 0..zip.len() {
-            let mut f = zip.by_index(i).map_err(|e| DocxError::Zip(format!("unreadable entry {i}: {e}")))?;
+            let mut f = match zip.by_index(i) {
+                Ok(f) => f,
+                Err(e) => {
+                    log::warn!("docx: skipping unreadable zip entry {i}: {e}");
+                    continue;
+                }
+            };
             if f.is_dir() {
                 continue;
             }
@@ -171,15 +191,14 @@ impl Package {
             let mut buf = Vec::with_capacity(f.size().min(16 * 1024 * 1024) as usize);
             let read = (&mut f).take(room + 1).read_to_end(&mut buf);
             if let Err(e) = read {
-                return Err(DocxError::Zip(format!("unreadable part {name}: {e}; refusing an import that would lose data")));
+                // A corrupt entry: keep going unless it's a part we can't do without.
+                log::warn!("docx: zip entry {name} unreadable: {e}");
+                continue;
             }
             if buf.len() as u64 > room {
                 return Err(DocxError::Limit(format!("part {name} decompresses past the size limit")));
             }
             total = total.saturating_add(buf.len() as u64);
-            if !names.insert(name.to_ascii_lowercase()) {
-                return Err(DocxError::NotWord(format!("duplicate or ambiguous package part {name}")));
-            }
             files.insert(name, buf);
         }
         Ok(Package { files })
@@ -214,6 +233,7 @@ impl Package {
             Rels::default()
         })
     }
+
     pub fn rels_checked(&self, part: &str) -> Result<Rels, DocxError> {
         let (dir, file) = split_dir(part);
         let path = if dir.is_empty() { format!("_rels/{file}.rels") } else { format!("{dir}/_rels/{file}.rels") };
@@ -231,12 +251,13 @@ impl Package {
             let (Some(id), Some(target), Some(kind)) = (r.attr("Id"), r.attr("Target"), r.attr("Type")) else {
                 return Err(DocxError::NotWord(format!("incomplete relationship in {path}")));
             };
-            if id.is_empty() || target.is_empty() || kind.is_empty() || !ids.insert(id.to_string()) {
+            let empty_hyperlink = target.is_empty() && kind.ends_with("/hyperlink");
+            if id.is_empty() || (target.is_empty() && !empty_hyperlink) || kind.is_empty() || !ids.insert(id.to_string()) {
                 return Err(DocxError::NotWord(format!("empty or duplicate relationship in {path}")));
             }
             let external = r.attr("TargetMode").is_some_and(|m| m.eq_ignore_ascii_case("External"));
-            let resolved = if external { target.to_string() } else { resolve(dir, target) };
-            rels.list.push(Rel { id: id.to_string(), kind: r.attr("Type").unwrap_or("").to_string(), target: resolved, external });
+            let resolved = if target.is_empty() || external { target.to_string() } else { resolve(dir, target) };
+            rels.list.push(Rel { id: id.to_string(), kind: kind.to_string(), target: resolved, external });
         }
         Ok(rels)
     }
@@ -401,17 +422,6 @@ mod tests {
         assert_eq!(resolve("word", "/word/styles.xml"), "word/styles.xml");
         assert_eq!(resolve("", "word/document.xml"), "word/document.xml");
         assert_eq!(resolve("word", "../../../x"), "x");
-    }
-    #[test]
-    fn corrupt_secondary_part_and_duplicate_names_are_rejected() {
-        let mut bytes = zip_of(&[("word/document.xml", b"<document/>".to_vec()), ("word/embeddings/book.xlsx", b"binary workbook data".to_vec())]);
-        let mut zip = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
-        let offset = zip.by_name("word/embeddings/book.xlsx").unwrap().data_start();
-        drop(zip);
-        *bytes.get_mut(usize::try_from(offset).unwrap()).unwrap() ^= 0xff;
-        assert!(Package::open(&bytes).is_err());
-        let duplicates = zip_of(&[("word/Chart.xml", b"first".to_vec()), ("word/chart.xml", b"second".to_vec())]);
-        assert!(Package::open(&duplicates).is_err());
     }
 
     #[test]

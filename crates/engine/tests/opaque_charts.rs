@@ -4,7 +4,7 @@ mod fixtures;
 use fixtures::{archive, fixture, unpack};
 use serde_json::json;
 use std::collections::BTreeMap;
-use wordcraft_engine::recovery::{Snapshot, Store, unique_id};
+use wordcraft_engine::recovery::legacy::{Snapshot, Store, unique_id};
 use wordcraft_engine::{
     Session,
     doc::{Document, InlineObject, StoryRef},

@@ -75,6 +75,14 @@ pub(crate) fn read(
     let mut targets = Vec::new();
     for (package, relationships) in [(true, package_rels), (false, rels)] {
         for rel in relationships.list.iter().filter(|r| r.kind.rsplit('/').next() == Some("customXml")) {
+            // Bibliography data has a model-backed writer. Keeping its original package-level
+            // root alongside the writer's document-level relationship duplicates the root on
+            // every DOCX generation, so let the bibliography writer own these canonical parts.
+            if !doc.sources.is_empty()
+                && ["customXml/item1.xml", "customXml/itemProps1.xml"].iter().any(|path| path.eq_ignore_ascii_case(&rel.target))
+            {
+                continue;
+            }
             // Embedded-object preservation already owns this dependency graph. Capturing it a
             // second time as a document custom-XML root would emit the same ZIP parts twice.
             if embedded_parts.iter().any(|part| part.eq_ignore_ascii_case(&rel.target)) {
@@ -207,10 +215,15 @@ pub(crate) fn write(
     let mut seen = BTreeSet::new();
     let mut total = 0usize;
     for part in &manifest.parts {
+        let generated_bibliography_part = !doc.sources.is_empty()
+            && ["customXml/item1.xml", "customXml/itemProps1.xml", "customXml/_rels/item1.xml.rels"]
+                .iter()
+                .any(|path| path.eq_ignore_ascii_case(&part.name));
+        let generated_collision = entries.iter().any(|(name, _)| name.eq_ignore_ascii_case(&part.name));
         if !valid_path(&part.name)
             || reserved(&part.name)
             || !seen.insert(part.name.to_ascii_lowercase())
-            || entries.iter().any(|(name, _)| name.eq_ignore_ascii_case(&part.name))
+            || (generated_collision && !generated_bibliography_part)
         {
             return Err(invalid("preserved part name is invalid, duplicate or collides with generated content"));
         }
@@ -230,6 +243,12 @@ pub(crate) fn write(
     }
     for part in manifest.parts {
         let bytes = doc.passthrough.get(&part.name).ok_or_else(|| DocxError::MissingPart(part.name.clone()))?;
+        if entries.iter().any(|(name, _)| name.eq_ignore_ascii_case(&part.name)) {
+            // Bibliography parts have a model-backed writer. A guarded document's source
+            // overlay restores the original package bytes after the generated projection passes
+            // validation; for an unguarded document the current model remains authoritative.
+            continue;
+        }
         types.push((format!("/{}", part.name), part.content_type));
         entries.push((part.name, bytes.to_vec()));
     }

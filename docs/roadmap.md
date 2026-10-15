@@ -35,7 +35,8 @@ The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current
 3. **Preserve what we can't render** (gap #2, 10–15 h): charts, SmartArt, OLE, ink, group shapes
    survive a round trip and show their fallback pictures.
 4. **Stability sweep** (gap #3, 20–30 h): the open crash, hang and write-failure issues, plus an
-   autosave/recovery soak test.
+   autosave/recovery soak test. Local desktop recovery is implemented; cross-platform field
+   validation and longer soak testing remain. See [recovery.md](recovery.md).
 5. **Pagination fidelity** (gap #4, 30–50 h): column balancing, footnote continuation, compat
    options, a local page-by-page comparison harness; an owner decision on an Aptos-metric font.
 6. **Formatting revisions and content controls** (gap #5, 12–18 h), **native printing** (gap #6,
@@ -98,6 +99,13 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 | 2026-10-12 | minor | Phase 7I synthetic DOCX/PDF corpus and native matrix gate; header-float clipping diagnostic fixed without changing pagination |
 | 2026-10-12 | minor | Added five-gap cross-platform audit; DOCX export safety improved in shared Rust, while native and Word 365 comparisons remain pending |
 | 2026-10-12 | minor | M1: reproducible package fingerprint/allowlist benchmark added; Word 365 corpus and visual comparison remain pending |
+| 2026-10-12 | minor | M15: Portuguese proofing (pt-BR spelling from the installed VERO dictionary, suggestions, grammar, hyphenation; Review › Language gains Português (Brasil)) |
+| 2026-10-11 | trivial | M15: Polish interface and Polish proofing landed |
+| 2026-10-11 | trivial | M3: icons landed (#309) |
+| 2026-10-11 | trivial | M11: contour (Tight/Through) wrap done (#354) |
+| 2026-10-11 | minor | Native drawing-level ink and its picture fallback survive DOCX edits and repeated saves; rendering and editing InkML remain missing |
+| 2026-10-12 | minor | Stability sweep: local desktop recovery implemented with original-file protection and focused lifecycle tests. Cross-platform field validation and longer soak testing remain. |
+| 2026-10-11 | trivial | M6: the eight missing bibliography styles landed (#383) |
 | 2026-10-11 | trivial | M7: formatting revisions landed (#41) |
 | 2026-10-11 | trivial | Omitted `w:pPrDefault` stays omitted across saves; explicit empty/default properties and later spacing edits remain writable. Synthetic preservation checks only; readiness estimates unchanged |
 | 2026-10-10 | trivial | M5: Draw Table and Eraser landed (#303) |

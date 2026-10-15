@@ -16,7 +16,7 @@ pub struct DialogState {
 }
 impl DialogState {
     pub fn refresh(&mut self, app: &mut WordApp) {
-        match app.execute("file.recover", json!({})) {
+        match app.execute("recovery.archiveList", json!({})) {
             Ok(Value::Array(entries)) => {
                 self.entries = entries;
                 self.error.clear();
@@ -165,7 +165,7 @@ mod native {
         thread::JoinHandle,
         time::{Duration, Instant},
     };
-    use wordcraft_engine::recovery::{Snapshot, Store, unique_id};
+    use wordcraft_engine::recovery::legacy::{Snapshot, Store, unique_id};
 
     struct Job {
         snapshot: Snapshot,
@@ -438,7 +438,7 @@ mod native {
             h.get_by_label("Cancel").click();
             h.run_steps(2);
             assert!(h.state().session.doc.plain_text(StoryRef::Body).contains("Current unsaved"));
-            h.state_mut().run("file.recover", json!({})).unwrap();
+            h.state_mut().run("recovery.archiveList", json!({})).unwrap();
             if let Some(crate::dialogs::Dialog::Recovery { state }) = &mut h.state_mut().dialog {
                 state.selected = id;
             }

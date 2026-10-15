@@ -646,7 +646,7 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
 }
 
 fn assert_recovery_snapshot(profile: &Profile, expected_text: &str) {
-    let store = wordcraft_engine::recovery::Store::new(profile.settings().join("recovery")).expect("open isolated recovery store");
+    let store = wordcraft_engine::recovery::legacy::Store::new(profile.settings().join("recovery")).expect("open isolated recovery store");
     let entries = store.list().expect("read isolated recovery entries");
     assert!(!entries.is_empty(), "native shutdown did not preserve the dirty document in recovery");
     assert!(

@@ -23,12 +23,12 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 #[cfg(not(target_arch = "wasm32"))]
-fn store(s: &Session, v: &Value) -> Result<crate::recovery::Store, CmdError> {
+fn store(s: &Session, v: &Value) -> Result<crate::recovery::legacy::Store, CmdError> {
     let dir = p::str(v, "directory")
         .map(std::path::PathBuf::from)
         .or_else(|| s.recovery_dir.clone())
         .ok_or_else(|| CmdError::Params("recovery is not configured; supply `directory`".into()))?;
-    crate::recovery::Store::new(dir).map_err(CmdError::Failed)
+    crate::recovery::legacy::Store::new(dir).map_err(CmdError::Failed)
 }
 pub fn list(s: &mut Session, v: &Value) -> CmdResult {
     #[cfg(not(target_arch = "wasm32"))]
@@ -105,7 +105,7 @@ fn unavailable() -> CmdResult {
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
     use super::*;
-    use crate::recovery::{Snapshot, Store, unique_id};
+    use crate::recovery::legacy::{Snapshot, Store, unique_id};
     use wordcraft_doc::{Document, StoryRef};
     fn setup() -> (Session, Store, String) {
         let directory = std::env::temp_dir().join(format!("wordcraft-recovery-commands-{}", unique_id()));
@@ -122,7 +122,7 @@ mod tests {
         let before = serde_json::to_value(&session.doc).unwrap();
         let rev = session.rev();
         let undo = session.undo_labels();
-        let listing = session.run("file.recover", &json!({})).unwrap();
+        let listing = session.run("recovery.archiveList", &json!({})).unwrap();
         assert_eq!(listing[0]["id"], id);
         let compared = session.run("recovery.compare", &json!({"id": id})).unwrap();
         assert_eq!(compared["sameDocument"], false);
@@ -137,7 +137,7 @@ mod tests {
         assert!(session.path.is_none() && session.dirty);
         assert!(session.recovery_dir.is_some());
         session.run("recovery.discard", &json!({"id": id})).unwrap();
-        assert!(session.run("file.recover", &json!({})).unwrap().as_array().unwrap().is_empty());
+        assert!(session.run("recovery.archiveList", &json!({})).unwrap().as_array().unwrap().is_empty());
         std::fs::remove_dir_all(session.recovery_dir.unwrap()).unwrap();
     }
     #[test]
