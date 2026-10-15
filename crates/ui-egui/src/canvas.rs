@@ -84,6 +84,9 @@ pub struct CanvasState {
     pub(crate) widget_id: Option<egui::Id>,
     pub render_ms: f64,
     pub ime_preedit: String,
+    /// An input-method composition is still in progress. Key text is not committed document text
+    /// until the platform delivers `ImeEvent::Commit`.
+    pub ime_composing: bool,
     /// Document faces added to the interface fonts so the input method's composition (#565) and a
     /// file name in the window caption can be drawn.
     pub(crate) ime_faces: Vec<std::sync::Arc<wordcraft_fonts::FontFace>>,
@@ -212,6 +215,7 @@ impl Default for CanvasState {
             widget_id: None,
             render_ms: 0.0,
             ime_preedit: String::new(),
+            ime_composing: false,
             ime_faces: Vec::new(),
             want_focus: true,
             context_issue: None,
@@ -3767,6 +3771,77 @@ mod tests {
         double_click(&mut h, body);
         assert_eq!(h.state().session.sel.focus.story, StoryRef::Body);
         assert_eq!(h.state().session.doc.plain_text(footer), "Page foot");
+    }
+
+    /// #2246: leaving header edit mode must not remove existing content. Check both a document
+    /// already in memory and a synthetic DOCX that has been written and imported through the
+    /// engine's normal format dispatch path.
+    #[test]
+    fn leaving_existing_or_imported_header_edit_mode_preserves_header_and_footer() {
+        use egui::{Event, PointerButton};
+        for imported in [false, true] {
+            let mut source = wordcraft_engine::Session::new(wordcraft_doc::Document::from_text("Body text"));
+            source.run("insert.header", &json!({"text": "Existing imported header"})).unwrap();
+            source.run("insert.footer", &json!({"text": "Existing imported footer"})).unwrap();
+            let doc = if imported {
+                let bytes = wordcraft_engine::io::save_bytes("synthetic.docx", &source.doc).unwrap();
+                wordcraft_engine::io::open_bytes("synthetic.docx", &bytes).unwrap()
+            } else {
+                source.doc
+            };
+            let header = doc.last_section.headers.default.expect("header reference");
+            let footer = doc.last_section.footers.default.expect("footer reference");
+            let mut a = WordApp::new(wordcraft_engine::Session::new(doc), Default::default());
+            a.run("view.commentsPane", json!({"value": false})).unwrap();
+            let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 2200.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+                |ui, app: &mut WordApp| {
+                    let ctx = ui.ctx().clone();
+                    app.logic(&ctx);
+                    app.ui(ui);
+                },
+                a,
+            );
+            for _ in 0..6 {
+                h.step();
+            }
+            let page = h.state_mut().session.layout().pages[0].clone();
+            let x = page.body.x + 20.0;
+            let header_y = page.body.y / 2.0;
+            let body = page_to_screen(h.state_mut(), 0, x, page.body.y + 6.0).expect("body on screen");
+            let header_zone = page_to_screen(h.state_mut(), 0, x, header_y).expect("header zone on screen");
+            let double_click = |h: &mut egui_kittest::Harness<'_, WordApp>, at: Pos2| {
+                h.event(Event::PointerMoved(at));
+                for _ in 0..2 {
+                    h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: true, modifiers: Default::default() });
+                    h.step();
+                    h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: false, modifiers: Default::default() });
+                    h.step();
+                }
+                for _ in 0..40 {
+                    h.step();
+                }
+            };
+            double_click(&mut h, header_zone);
+            assert_eq!(h.state().session.sel.focus.story, StoryRef::Part(header), "the existing header entered edit mode");
+            double_click(&mut h, body);
+            assert_eq!(h.state().session.sel.focus.story, StoryRef::Body, "the body click left header edit mode");
+            assert_eq!(
+                h.state().session.doc.plain_text(StoryRef::Part(header)),
+                "Existing imported header",
+                "header survived mode exit (imported={imported})"
+            );
+            assert_eq!(
+                h.state().session.doc.plain_text(StoryRef::Part(footer)),
+                "Existing imported footer",
+                "footer survived mode exit (imported={imported})"
+            );
+            let saved = wordcraft_engine::io::save_bytes("synthetic.docx", &h.state().session.doc).unwrap();
+            let reopened = wordcraft_engine::io::open_bytes("synthetic.docx", &saved).unwrap();
+            let saved_header = reopened.last_section.headers.default.expect("header reference survived save");
+            let saved_footer = reopened.last_section.footers.default.expect("footer reference survived save");
+            assert_eq!(reopened.plain_text(StoryRef::Part(saved_header)), "Existing imported header");
+            assert_eq!(reopened.plain_text(StoryRef::Part(saved_footer)), "Existing imported footer");
+        }
     }
 
     /// #513: right-clicking a picture selects it and offers Wrap Text, as in Word; choosing
