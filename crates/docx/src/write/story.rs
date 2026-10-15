@@ -1021,6 +1021,7 @@ impl Writer<'_> {
             ShapeKind::Rectangle | ShapeKind::TextBox | ShapeKind::Freeform => "rect",
             ShapeKind::RoundedRectangle => "roundRect",
             ShapeKind::Ellipse => "ellipse",
+            ShapeKind::FlowchartOr => "flowChartOr",
             ShapeKind::Triangle => "triangle",
             ShapeKind::RightTriangle => "rtTriangle",
             ShapeKind::Diamond => "diamond",
@@ -1398,7 +1399,7 @@ fn sectpr_body(w: &mut W, s: &SectionProps) {
             let refs: Vec<(&str, &str)> = a.iter().map(|(k, v)| (*k, v.as_str())).collect();
             w.empty("w:lnNumType", &refs);
         }
-        if s.page_num_start.is_some() || s.page_num_format != wordcraft_doc::section::NumFormat::Decimal {
+        if s.page_num_set || s.page_num_start.is_some() || s.page_num_format != wordcraft_doc::section::NumFormat::Decimal {
             let mut a = vec![("w:fmt", s.page_num_format.ooxml().to_string())];
             if let Some(st) = s.page_num_start {
                 a.push(("w:start", st.to_string()));
@@ -1425,6 +1426,9 @@ fn sectpr_body(w: &mut W, s: &SectionProps) {
             let refs: Vec<(&str, &str)> = ca.iter().map(|(k, v)| (*k, v.as_str())).collect();
             w.empty("w:cols", &refs);
         }
+        if let Some(on) = s.form_prot {
+            w.empty("w:formProt", if on { &[] } else { &[("w:val", "0")] });
+        }
         match s.valign {
             wordcraft_doc::section::PageVAlign::Top => {}
             wordcraft_doc::section::PageVAlign::Center => w.val("w:vAlign", "center"),
@@ -1434,7 +1438,7 @@ fn sectpr_body(w: &mut W, s: &SectionProps) {
         if s.title_page {
             w.empty("w:titlePg", &[]);
         }
-        if s.text_direction.is_turned() {
+        if s.text_direction.is_turned() || s.text_direction_set {
             w.val("w:textDirection", s.text_direction.ooxml());
         }
         if s.rtl {

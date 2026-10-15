@@ -92,7 +92,6 @@ pub(crate) fn fill(app: &mut WordApp, id: &str, params: &mut Value) -> Option<Re
 }
 
 /// Put what Copy or Cut returned on the system clipboard using the shared native adapter.
-#[cfg(test)]
 pub(crate) fn put_result(app: &WordApp, ctx: &egui::Context, r: &Value) {
     publish(app, ctx, r);
 }
@@ -300,12 +299,12 @@ mod tests {
         let got_now = got.borrow().clone();
         assert_eq!(got_now.len(), 1);
         assert!(got_now[0].0.contains("<math") && got_now[0].1.contains("y=2x_s"), "{got_now:?}");
-        // Plain text selections also carry rich HTML for native clipboard services, without MathML.
+        // Text without an equation gets HTML too, so other programs keep its formatting (#1523).
         a.run("select.range", json!({"anchor": {"block": 0, "off": 0}, "focus": {"block": 0, "off": 5}})).unwrap();
         let r = a.run("edit.copy", json!({})).unwrap();
         put_result(&a, &ctx, &r);
-        let copied = got.borrow();
-        assert_eq!(copied.len(), 2);
-        assert!(copied[1].0.contains("Speed") && !copied[1].0.contains("<math"), "{copied:?}");
+        let got_now = got.borrow().clone();
+        assert_eq!(got_now.len(), 2);
+        assert!(got_now[1].0.contains("Speed") && !got_now[1].0.contains("<math") && got_now[1].1 == "Speed", "{got_now:?}");
     }
 }
