@@ -1,15 +1,9 @@
 # Desktop GUI validation
 
-Phase 7T.2 validation is in progress. Native packages now runs Linux, Apple Silicon macOS,
-and Windows by default on every push to main. Partial dispatches are labeled explicitly;
-a combined required summary rejects failed, cancelled or skipped platform jobs in full runs.
-Independent platform jobs do not cancel one another. MSI install/removal waits are bounded,
-installer failure logs are retained, and native test compilation is timed separately.
-The baseline remains 0.7.0: these checks exercise same-version replacement, not a version upgrade.
-Final three-platform execution evidence is pending; existing installations remain unchanged.
+Phase 7T.2 validation passed on commit `a2718489` in [the full native package run](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634643684): Linux DEB, Apple Silicon macOS DMG and Windows x64 MSI jobs all passed, with no skipped platform. Each ran package creation, fresh installation, same-version replacement, isolated preference/recovery preservation, native edit/save/PDF/quit, and package removal. The Windows ARM64 package/install/CLI check also passed, without GUI-runtime coverage. The separate [Printing](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634652720), [Document regressions](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634656901) and [Packaging lint](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634644071) workflows passed. The package jobs took 28m47s Linux, 32m24s macOS and 20m51s Windows. Cold 0.7.0 baseline builds took 9m15s Linux and 10m macOS; Windows restored its baseline MSI cache in 2s. Inspection found that Rust cache omitted workspace crates by default; cache keys now opt into workspace-crate caching. This cache change is being validated on the final commit. Intel Mac hardware, Windows ARM64 GUI runtime, signing/notarization claims, and updates to the existing workstations remain unverified/not performed.
 
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Phase 7T.2 requires the complete package matrix; final hosted results pending · **Target:** WordCraft desktop on Linux, macOS and Windows
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Full Linux/macOS/Windows package matrix passed on a2718489; workspace-crate cache update pending final validation · **Target:** WordCraft desktop on Linux, macOS and Windows
 
 This document separates a live desktop window, egui event-driven tests, offscreen rendering and
 hosted builds. A CI job that compiles or tests the GUI is not evidence that a person used a desktop
@@ -230,6 +224,7 @@ This protocol has not been run. No Word 365 compatibility result is claimed.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-14 | minor | Require all three package jobs on main, prevent cancellation, report combined status, bound MSI waits and separate compilation timing; final validation pending |
+| 2026-10-14 | minor | Recorded full three-platform 0.7.0 package replacement matrix and timings; enabled workspace crate caching for faster repeat builds |
 | 2026-10-14 | minor | Integrated upstream 0.7.0, passed all local CI gates and Apple Silicon native edit/quit smokes; hosted package upgrade matrix pending |
 | 2026-10-13 | minor | Located the raw-launch stall in AppKit's pre-resume event wait; verified LaunchServices native smokes, isolated profile safety, recovery shutdown and normal child status |
 | 2026-10-13 | minor | Recorded hosted native smoke failures on Linux and Windows and enabled dependency installation plus isolated Windows failure diagnostics |

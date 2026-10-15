@@ -55,7 +55,8 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: native-packages-linux
+          key: native-packages-linux-workspace-v1
+          cache-workspace-crates: true
       - name: Restore the 0.7.0 same-version DEB baseline
         id: baseline-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -228,7 +229,8 @@ jobs:
           targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: native-packages-macos
+          key: native-packages-macos-workspace-v1
+          cache-workspace-crates: true
       - name: Restore the 0.7.0 same-version DMG baseline
         id: baseline-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -404,7 +406,8 @@ jobs:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: native-packages-windows
+          key: native-packages-windows-workspace-v1
+          cache-workspace-crates: true
           cache-on-failure: true
       - uses: storytold/craft-common-actions/actions/install-wix@8f081ff5db115de44313c9db09415c359bf2ca01
         with:

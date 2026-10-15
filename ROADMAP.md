@@ -1,12 +1,6 @@
 # WordCraft roadmap
 
-Phase 7T.2 validation is in progress. Native packages now runs Linux, Apple Silicon macOS,
-and Windows by default on every push to main. Partial dispatches are labeled explicitly;
-a combined required summary rejects failed, cancelled or skipped platform jobs in full runs.
-Independent platform jobs do not cancel one another. MSI install/removal waits are bounded,
-installer failure logs are retained, and native test compilation is timed separately.
-The baseline remains 0.7.0: these checks exercise same-version replacement, not a version upgrade.
-Final three-platform execution evidence is pending; existing installations remain unchanged.
+Phase 7T.2 validation passed on commit `a2718489` in [the full native package run](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634643684): Linux DEB, Apple Silicon macOS DMG and Windows x64 MSI jobs all passed, with no skipped platform. Each ran package creation, fresh installation, same-version replacement, isolated preference/recovery preservation, native edit/save/PDF/quit, and package removal. The Windows ARM64 package/install/CLI check also passed, without GUI-runtime coverage. The separate [Printing](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634652720), [Document regressions](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634656901) and [Packaging lint](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634644071) workflows passed. The package jobs took 28m47s Linux, 32m24s macOS and 20m51s Windows. Cold 0.7.0 baseline builds took 9m15s Linux and 10m macOS; Windows restored its baseline MSI cache in 2s. Inspection found that Rust cache omitted workspace crates by default; cache keys now opt into workspace-crate caching. This cache change is being validated on the final commit. Intel Mac hardware, Windows ARM64 GUI runtime, signing/notarization claims, and updates to the existing workstations remain unverified/not performed.
 
 
 ## Phase 7T — Native installation and desktop integration (in progress)
@@ -143,7 +137,7 @@ Final three-platform execution evidence is pending; existing installations remai
 
 
 ## Word 365 interoperability benchmark (2026-10-12)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: ODT sections, #1379; previously trivial: progress log: table deletes, Change Case and Unlink Fields respect Track Changes and locked content controls, #1329; previously trivial: progress log: privacy options on save, #1062; previously trivial: progress log: equation pictures in theme colours on Windows, #1002; previously trivial: symbol fonts, #776; previously trivial: the save prompt answers from the keyboard, #861; previously trivial: table column and row markers on the rulers, #700; previously trivial: table borders and the resize handle drag on the page, #217; previously trivial: formatting revisions landed, #41; previously trivial: Draw tab ink, #307, and Draw Table and Eraser, #303, landed: catalog 402/434; previously minor: readiness table with hours per audience; full number back to the additive weighted sum, 60%; mainstream and essentials numbers added; alpha gate checked; previously major: full re-measure against Word for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** Full Linux/macOS/Windows package matrix passed on a2718489; workspace-crate cache update pending final validation · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 
 - Added `cargo xtask interop inspect` and `cargo xtask interop compare` for bounded DOCX package fingerprints and explicit per-case changed-part allowlists. The contract flags removed, added, or changed package parts outside the manifest; it reports hashes and package metadata without claiming semantic validity.
@@ -206,7 +200,7 @@ Final three-platform execution evidence is pending; existing installations remai
 - Upstream's open PRs were reviewed but not merged. Synthetic tests and local builds are not independent Microsoft Word/Excel compatibility verification.
 - Merge commit: `f01498726e1a2421f72a8a21ebff646573f74d42`. `cargo xtask ci`: all six gates passed; workspace tests: **1,266 passed, 0 failed, 1 ignored**. Linux GUI/CLI release builds and release-mode `x86_64-pc-windows-gnu` / `aarch64-apple-darwin` compile checks passed. See [the upstream audit](docs/upstream-audit-2026-10-11.md) for open PRs/issues and residual risk.
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** added safe chart series colors and line widths · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** Full Linux/macOS/Windows package matrix passed on a2718489; workspace-crate cache update pending final validation · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and
 agent control. This page is the summary; the assessment is

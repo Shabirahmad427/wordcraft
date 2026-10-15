@@ -1,12 +1,6 @@
 # Native installation and package validation
 
-Phase 7T.2 validation is in progress. Native packages now runs Linux, Apple Silicon macOS,
-and Windows by default on every push to main. Partial dispatches are labeled explicitly;
-a combined required summary rejects failed, cancelled or skipped platform jobs in full runs.
-Independent platform jobs do not cancel one another. MSI install/removal waits are bounded,
-installer failure logs are retained, and native test compilation is timed separately.
-The baseline remains 0.7.0: these checks exercise same-version replacement, not a version upgrade.
-Final three-platform execution evidence is pending; existing installations remain unchanged.
+Phase 7T.2 validation passed on commit `a2718489` in [the full native package run](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634643684): Linux DEB, Apple Silicon macOS DMG and Windows x64 MSI jobs all passed, with no skipped platform. Each ran package creation, fresh installation, same-version replacement, isolated preference/recovery preservation, native edit/save/PDF/quit, and package removal. The Windows ARM64 package/install/CLI check also passed, without GUI-runtime coverage. The separate [Printing](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634652720), [Document regressions](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634656901) and [Packaging lint](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634644071) workflows passed. The package jobs took 28m47s Linux, 32m24s macOS and 20m51s Windows. Cold 0.7.0 baseline builds took 9m15s Linux and 10m macOS; Windows restored its baseline MSI cache in 2s. Inspection found that Rust cache omitted workspace crates by default; cache keys now opt into workspace-crate caching. This cache change is being validated on the final commit. Intel Mac hardware, Windows ARM64 GUI runtime, signing/notarization claims, and updates to the existing workstations remain unverified/not performed.
 
 
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Status:** Phase 7T in progress; Windows 0.7.0 replacement passed, Linux/macOS same-version package checks pending · **Target:** Linux, macOS and Windows packages
@@ -179,6 +173,7 @@ devices, so its Wayland result covers startup/recovery/quit, not Wayland input.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-14 | minor | Require all three package jobs on main, prevent cancellation, report combined status, bound MSI waits and separate compilation timing; final validation pending |
+| 2026-10-14 | minor | Recorded full three-platform 0.7.0 package replacement matrix and timings; enabled workspace crate caching for faster repeat builds |
 | 2026-10-14 | minor | Windows-only run 38619307562 passed 0.7.0 same-version MSI replacement, recovery preservation, native edit/export/quit and uninstall; Linux/macOS package checks remain pending |
 | 2026-10-14 | minor | Rebased validation on 0.7.0 same-version package replacement; preserved-profile startup verifies theme/recovery then exits, while editing runs in a separate fresh profile |
 | 2026-10-14 | minor | Integrated upstream 0.7.0 and passed all six local gates plus isolated Apple Silicon GUI/recovery-shutdown smokes; hosted same-version package replacement pending |
