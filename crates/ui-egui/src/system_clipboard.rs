@@ -14,8 +14,15 @@ use crate::{WordApp, paste_picture};
 /// Publish a command's copied selection. Native hosts set rich HTML plus plain text as one
 /// clipboard operation; web and hosts without that service retain egui's plain-text path.
 pub(crate) fn publish(app: &WordApp, ctx: &egui::Context, result: &Value) {
-    let Some(text) = result.get("text").and_then(Value::as_str).filter(|text| !text.is_empty()) else { return };
+    // Drawing-only selections have no plain-text spelling. Still replace the system clipboard
+    // with their HTML representation (or clear it when the selection has no transferable form)
+    // instead of leaving the user's previous copy there.
+    let text = result.get("text").and_then(Value::as_str).unwrap_or("");
+    let html = result.get("html").and_then(Value::as_str).filter(|html| !html.is_empty());
     let rich = result.get("html").and_then(Value::as_str).and_then(|html| {
+        if html.is_empty() {
+            return None;
+        }
         app.services.clipboard_copy.as_ref().map(|copy| copy(text, html)).map(|r| {
             if let Err(e) = r {
                 log::warn!("rich clipboard copy: {e}");
@@ -25,11 +32,7 @@ pub(crate) fn publish(app: &WordApp, ctx: &egui::Context, result: &Value) {
             }
         })
     });
-    let legacy_rich = rich.is_none()
-        && result
-            .get("html")
-            .and_then(Value::as_str)
-            .is_some_and(|html| !html.is_empty() && app.services.set_clipboard_html.as_ref().is_some_and(|copy| copy(html, text)));
+    let legacy_rich = rich.is_none() && html.is_some_and(|html| app.services.set_clipboard_html.as_ref().is_some_and(|copy| copy(html, text)));
     if rich != Some(true) && !legacy_rich {
         ctx.copy_text(text.to_owned());
     }
@@ -176,6 +179,30 @@ mod tests {
         let app = app(services);
         publish(&app, &egui::Context::default(), &json!({"text": "rich Ω", "html": "<p><strong>rich Ω</strong></p>"}));
         assert_eq!(published.lock().unwrap().as_ref().unwrap(), &("rich Ω".into(), "<p><strong>rich Ω</strong></p>".into()));
+    }
+
+    #[test]
+    fn object_copy_publishes_html_even_without_plain_text() {
+        let published = std::sync::Arc::new(std::sync::Mutex::new(None::<(String, String)>));
+        let saved = published.clone();
+        let services = Services {
+            clipboard_copy: Some(Box::new(move |text, html| {
+                *saved.lock().map_err(|e| e.to_string())? = Some((text.to_owned(), html.to_owned()));
+                Ok(())
+            })),
+            ..Default::default()
+        };
+        let app = app(services);
+        publish(&app, &egui::Context::default(), &json!({"text": "", "html": "<p><img src=\"data:image/png;base64,AA==\"></p>"}));
+        assert_eq!(published.lock().unwrap().as_ref().unwrap(), &(String::new(), "<p><img src=\"data:image/png;base64,AA==\"></p>".into()));
+    }
+
+    #[test]
+    fn unsupported_empty_object_copy_clears_the_previous_text_clipboard() {
+        let app = app(Services::default());
+        let ctx = egui::Context::default();
+        publish(&app, &ctx, &json!({"text": ""}));
+        assert!(ctx.output(|out| out.commands.contains(&egui::OutputCommand::CopyText(String::new()))));
     }
 
     #[test]

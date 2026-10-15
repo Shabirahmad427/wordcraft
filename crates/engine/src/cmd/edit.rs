@@ -178,13 +178,100 @@ pub(super) fn store_clipboard_text(s: &mut Session, f: Fragment, text: String) -
 
 /// Return the selected fragment with its source styles, media and MathML, bounded for native transport.
 pub(crate) fn copy_result(s: &mut Session) -> Value {
-    s.clipboard_html = s
+    let mut html = s
         .clipboard
         .as_ref()
         .map(|f| wordcraft_formats::html::export_fragment(&s.doc, &f.blocks))
         .filter(|html| html.len() <= super::paste::MAX_PASTE_BYTES)
         .unwrap_or_default();
+    if !html.is_empty()
+        && let Some(bytes) = portable_clipboard_docx(s)
+    {
+        let encoded = super::insert::base64_encode(&bytes);
+        let tag = format!("<meta name=\"wordcraft-fragment\" content=\"{encoded}\">\n");
+        if encoded.len() <= super::paste::MAX_PASTE_BYTES
+            && let Some(head) = html.find("</head>")
+            && let Some(mut updated) = html.get(..head).map(str::to_owned)
+        {
+            updated.push_str(&tag);
+            if let Some(tail) = html.get(head..) {
+                updated.push_str(tail);
+                if updated.len() <= super::paste::MAX_PASTE_BYTES {
+                    html = updated;
+                }
+            }
+        }
+    }
+    s.clipboard_html = html;
     if s.clipboard_html.is_empty() { json!({"text": s.clipboard_text}) } else { json!({"text": s.clipboard_text, "html": s.clipboard_html}) }
+}
+
+/// A self-contained WordCraft fragment for the system clipboard. The surrounding HTML remains
+/// useful to other applications; this embedded DOCX preserves editable shapes, groups, text boxes
+/// and drawing resources when the clipboard is pasted into another WordCraft document.
+fn portable_clipboard_docx(s: &Session) -> Option<Vec<u8>> {
+    fn block_has_drawing(block: &wordcraft_doc::Block, depth: usize) -> bool {
+        if depth > 64 {
+            return false;
+        }
+        match block {
+            wordcraft_doc::Block::Para(p) => p.objects.iter().any(wordcraft_doc::InlineObject::is_drawing),
+            wordcraft_doc::Block::Table(t) => {
+                t.rows.iter().any(|row| row.cells.iter().any(|cell| cell.blocks.iter().any(|b| block_has_drawing(b, depth + 1))))
+            }
+        }
+    }
+    fn object_media(o: &wordcraft_doc::InlineObject, keys: &mut std::collections::BTreeSet<String>, depth: usize) {
+        if depth > 32 {
+            return;
+        }
+        match o {
+            wordcraft_doc::InlineObject::Image { media, .. } => {
+                keys.insert(media.clone());
+            }
+            wordcraft_doc::InlineObject::Group { children, .. } => {
+                for child in children {
+                    object_media(&child.obj, keys, depth + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn blocks_media(blocks: &[std::sync::Arc<wordcraft_doc::Block>], keys: &mut std::collections::BTreeSet<String>, depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for block in blocks {
+            match &**block {
+                wordcraft_doc::Block::Para(p) => p.objects.iter().for_each(|o| object_media(o, keys, 0)),
+                wordcraft_doc::Block::Table(t) => {
+                    for row in &t.rows {
+                        for cell in &row.cells {
+                            blocks_media(&cell.blocks, keys, depth + 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let fragment = s.clipboard.as_ref()?;
+    if !fragment.blocks.iter().any(|block| block_has_drawing(block, 0)) {
+        return None;
+    }
+    let mut doc = fragment.to_document();
+    doc.styles = s.doc.styles.clone();
+    doc.numbering = s.doc.numbering.clone();
+    doc.settings = s.doc.settings.clone();
+    doc.revisions = s.doc.revisions.clone();
+    doc.parts = fragment.parts.clone();
+    let mut media = std::collections::BTreeSet::new();
+    blocks_media(&doc.body, &mut media, 0);
+    for part in doc.parts.values() {
+        blocks_media(&part.blocks, &mut media, 0);
+    }
+    doc.media = s.doc.media.iter().filter(|(key, _)| media.contains(*key)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    wordcraft_docx::write(&doc).ok()
 }
 
 fn cut(s: &mut Session, v: &Value) -> CmdResult {

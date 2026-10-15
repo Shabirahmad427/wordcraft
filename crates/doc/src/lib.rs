@@ -1217,18 +1217,18 @@ impl Document {
 
     /// A drawing id no shape uses yet (for gluing a connector to a shape that has none).
     pub fn next_shape_id(&self) -> u32 {
-        let mut max = 0u32;
-        let mut see = |o: &InlineObject| match o {
-            InlineObject::Shape { extra, .. } => max = max.max(extra.id),
-            InlineObject::Group { children, .. } => {
-                for c in children {
-                    if let InlineObject::Shape { extra, .. } = &c.obj {
-                        max = max.max(extra.id);
-                    }
-                }
+        fn max_id(o: &InlineObject, depth: usize) -> u32 {
+            if depth > 32 {
+                return 0;
             }
-            _ => {}
-        };
+            match o {
+                InlineObject::Shape { extra, .. } => extra.id,
+                InlineObject::Group { children, .. } => children.iter().map(|c| max_id(&c.obj, depth + 1)).max().unwrap_or(0),
+                _ => 0,
+            }
+        }
+        let mut max = 0u32;
+        let mut see = |o: &InlineObject| max = max.max(max_id(o, 0));
         for blocks in std::iter::once(&self.body).chain(self.parts.values().map(|p| &p.blocks)) {
             for b in blocks {
                 edit::each_para(b, 0, &mut |p| p.objects.iter().for_each(&mut see));

@@ -178,6 +178,13 @@ fn has_content(d: &Document) -> bool {
 /// [`MAX_PASTE_BYTES`], or it holds nothing to paste (the caller pastes the text then).
 pub fn rich_fragment(s: &mut Session, v: &Value) -> Option<Fragment> {
     let fits = |k: &str| p::str(v, k).filter(|t| !t.trim().is_empty() && t.len() <= MAX_PASTE_BYTES);
+    if let Some(html) = fits("html")
+        && let Some(bytes) = embedded_wordcraft_docx(html)
+        && let Ok(doc) = wordcraft_docx::read(&bytes)
+        && has_content(&doc)
+    {
+        return Some(adopt(s, doc));
+    }
     let doc = fits("html").map(|html| wordcraft_formats::html::import(html_fragment(html)));
     let doc = match doc.filter(has_content) {
         Some(d) => d,
@@ -187,6 +194,19 @@ pub fn rich_fragment(s: &mut Session, v: &Value) -> Option<Fragment> {
         }
     };
     Some(adopt(s, doc))
+}
+
+/// The optional WordCraft-only DOCX embedded in our HTML clipboard payload. A missing, oversized
+/// or malformed payload is treated as ordinary HTML so another program's clipboard stays safe.
+fn embedded_wordcraft_docx(html: &str) -> Option<Vec<u8>> {
+    const MARKER: &str = "<meta name=\"wordcraft-fragment\" content=\"";
+    let html = html_fragment(html);
+    let start = html.find(MARKER)?.checked_add(MARKER.len())?;
+    let encoded = html.get(start..)?.split('"').next()?;
+    if encoded.is_empty() || encoded.len() > MAX_PASTE_BYTES {
+        return None;
+    }
+    super::insert::base64_decode(encoded)
 }
 
 /// What Paste inserts: WordCraft's own copy while the system clipboard still holds it, else
@@ -199,6 +219,7 @@ pub fn paste_fragment(s: &mut Session, v: &Value) -> Result<Fragment, CmdError> 
     let text = input_text.map(|t| t.replace("\r\n", "\n"));
     if let Some(f) = &s.clipboard
         && text.as_ref().is_none_or(|t| f.clipboard_text() == *t)
+        && p::str(v, "html").is_none_or(|html| s.clipboard_html == html)
         && (text.is_some() || (p::str(v, "html").is_none() && p::str(v, "rtf").is_none()))
     {
         return Ok(f.clone());
@@ -251,6 +272,14 @@ pub fn merge_formatting(s: &Session, frag: &mut Fragment) {
 /// Replace the selection with `frag`, marking it as an insertion under Track Changes.
 pub fn insert(s: &mut Session, mut frag: Fragment) -> Result<(), CmdError> {
     super::controls::prepare_edit(s)?;
+    // Pasting WordCraft's own copied drawing while it remains selected duplicates it after the
+    // source, as Ctrl+C/Ctrl+V does for an object. Ordinary pasted content still replaces a
+    // selected range.
+    if s.clipboard.as_ref() == Some(&frag) && super::objects::object_selection(s).is_some() {
+        let (_, end) = s.sel.ordered();
+        s.sel = Selection::caret(end);
+    }
+    remap_pasted_shape_ids(s, &mut frag);
     let at = delete_selection(s)?;
     let track = s.doc.settings.track_changes;
     let mut rid = None;
@@ -290,6 +319,94 @@ pub fn insert(s: &mut Session, mut frag: Fragment) -> Result<(), CmdError> {
     }
     s.sel = Selection::caret(end);
     Ok(())
+}
+
+/// Copies of drawings must not keep the source drawing IDs: connectors use them to attach to
+/// shapes, and duplicated IDs could make a copied connector move the original. Reassign IDs in
+/// the pasted fragment and keep only connector links whose targets are included in that fragment.
+fn remap_pasted_shape_ids(s: &Session, frag: &mut Fragment) {
+    fn collect(o: &wordcraft_doc::InlineObject, ids: &mut Vec<u32>, depth: usize) {
+        if depth > 32 {
+            return;
+        }
+        match o {
+            wordcraft_doc::InlineObject::Shape { extra, .. } if extra.id != 0 => {
+                if !ids.contains(&extra.id) {
+                    ids.push(extra.id);
+                }
+            }
+            wordcraft_doc::InlineObject::Group { children, .. } => {
+                for child in children {
+                    collect(&child.obj, ids, depth + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn rewrite(o: &mut wordcraft_doc::InlineObject, ids: &std::collections::BTreeMap<u32, u32>, depth: usize) {
+        if depth > 32 {
+            return;
+        }
+        match o {
+            wordcraft_doc::InlineObject::Shape { extra, .. } => {
+                if extra.id != 0 {
+                    extra.id = ids.get(&extra.id).copied().unwrap_or(0);
+                }
+                extra.start = extra.start.and_then(|mut end| {
+                    end.id = *ids.get(&end.id)?;
+                    Some(end)
+                });
+                extra.end = extra.end.and_then(|mut end| {
+                    end.id = *ids.get(&end.id)?;
+                    Some(end)
+                });
+            }
+            wordcraft_doc::InlineObject::Group { children, .. } => {
+                for child in children {
+                    rewrite(&mut child.obj, ids, depth + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut shape_ids = Vec::new();
+    for block in &mut frag.blocks {
+        each_para(block, 0, &mut |p| p.objects.iter().for_each(|o| collect(o, &mut shape_ids, 0)));
+    }
+    if shape_ids.is_empty() {
+        return;
+    }
+    let next = s.doc.next_shape_id().max(shape_ids.iter().copied().max().unwrap_or(0).saturating_add(1));
+    let mut remap = std::collections::BTreeMap::new();
+    for (offset, old) in shape_ids.iter().copied().enumerate() {
+        let Some(new) = u32::try_from(offset).ok().and_then(|n| next.checked_add(n)) else {
+            // If IDs are exhausted, leave IDs clear rather than create a collision.
+            for block in &mut frag.blocks {
+                each_para(block, 0, &mut |p| p.objects.iter_mut().for_each(|o| clear_shape_ids(o, 0)));
+            }
+            return;
+        };
+        remap.insert(old, new);
+    }
+    for block in &mut frag.blocks {
+        each_para(block, 0, &mut |p| p.objects.iter_mut().for_each(|o| rewrite(o, &remap, 0)));
+    }
+}
+
+fn clear_shape_ids(o: &mut wordcraft_doc::InlineObject, depth: usize) {
+    if depth > 32 {
+        return;
+    }
+    match o {
+        wordcraft_doc::InlineObject::Shape { extra, .. } => {
+            extra.id = 0;
+            extra.start = None;
+            extra.end = None;
+        }
+        wordcraft_doc::InlineObject::Group { children, .. } => children.iter_mut().for_each(|c| clear_shape_ids(&mut c.obj, depth + 1)),
+        _ => {}
+    }
 }
 
 /// Every paragraph in a block, tables included (bounded depth).

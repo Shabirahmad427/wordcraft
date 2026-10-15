@@ -314,7 +314,8 @@ pub fn canvas_events(app: &mut WordApp, ctx: &egui::Context) {
         if let egui::Event::Key { key: key @ (Key::V | Key::Paste), pressed: false, modifiers, .. } = &e {
             let paste_keys = is_paste_release(*key, *modifiers);
             let pasted = std::mem::take(&mut app.canvas.pasted);
-            if !pasted && paste_keys && app.session.math.is_none() && app.services.clipboard_picture.is_some() {
+            let has_internal_copy = app.session.clipboard.as_ref().is_some_and(|f| !f.blocks.is_empty());
+            if !pasted && paste_keys && app.session.math.is_none() && (app.services.clipboard_picture.is_some() || has_internal_copy) {
                 let _ = app.run("edit.paste", json!({}));
             }
             // Mod+Alt+V with no text on the clipboard: Paste Special still opens, listing what
@@ -637,6 +638,46 @@ mod tests {
         assert_eq!(shift_variant_params("text.backspace"), Some(json!({})));
         assert_eq!(shift_variant_params("caret.left"), Some(json!({"extend": true})));
         assert_eq!(shift_variant_params("text.delete"), None);
+    }
+
+    #[test]
+    fn copying_a_selected_object_publishes_its_rich_clipboard_payload() {
+        let published = std::sync::Arc::new(std::sync::Mutex::new(None::<(String, String)>));
+        let saved = published.clone();
+        let services = crate::Services {
+            clipboard_copy: Some(Box::new(move |text, html| {
+                *saved.lock().map_err(|e| e.to_string())? = Some((text.to_owned(), html.to_owned()));
+                Ok(())
+            })),
+            ..Default::default()
+        };
+        let mut app = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), services);
+        app.run("insert.icon", json!({"id": "heart", "size": 48})).unwrap();
+        let start = wordcraft_engine::cmd::objects::selected(&app.session).expect("inserted icon is selected").0;
+        let end = wordcraft_doc::Pos { off: start.off + wordcraft_doc::para::OBJ.len_utf8(), ..start.clone() };
+        app.run("select.range", json!({"anchor": start, "focus": end})).unwrap();
+
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput { events: vec![egui::Event::Copy], ..Default::default() }, |ui| canvas_events(&mut app, ui.ctx()))
+            .drop_without_applying_deltas();
+        let (text, html) = published.lock().unwrap().clone().expect("Ctrl+C invokes the native rich clipboard writer");
+        assert!(text.is_empty(), "a drawing is not turned into plain text");
+        assert!(html.contains("data:image/png;base64,"), "the picture travels with its bytes");
+
+        // Some native systems send no text Paste event when the clipboard contains HTML only.
+        // The key-release fallback still pastes the WordCraft-owned structured fragment.
+        let modifiers = Modifiers { command: true, ..Default::default() };
+        ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers }],
+                ..Default::default()
+            },
+            |ui| canvas_events(&mut app, ui.ctx()),
+        )
+        .drop_without_applying_deltas();
+        let copies =
+            app.session.doc.para_at(&wordcraft_doc::Pos::body(0, 0)).map(|p| p.objects.iter().filter(|o| o.is_drawing()).count()).unwrap_or(0);
+        assert_eq!(copies, 2, "Mod+V duplicates the picture even without a platform text paste event");
     }
 
     #[test]

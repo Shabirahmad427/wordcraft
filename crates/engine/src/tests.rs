@@ -1222,6 +1222,159 @@ fn system_clipboard_copy_includes_only_the_selected_rich_html_fragment() {
 }
 
 #[test]
+fn copying_a_selected_icon_duplicates_it_and_round_trips_to_another_document() {
+    use wordcraft_doc::para::InlineObject;
+
+    let mut source = Session::new(wordcraft_doc::Document::new());
+    run(&mut source, "text.insert", json!({"text": "previous clipboard text"}));
+    run(&mut source, "select.all", json!({}));
+    run(&mut source, "edit.copy", json!({}));
+    run(&mut source, "caret.docEnd", json!({}));
+    run(&mut source, "insert.icon", json!({"id": "heart", "color": "C00000", "size": 48}));
+    let start = crate::cmd::objects::selected(&source).expect("inserted icon is selected").0;
+    let end = Pos { off: start.off + wordcraft_doc::para::OBJ.len_utf8(), ..start.clone() };
+    run(&mut source, "select.range", json!({"anchor": start, "focus": end}));
+
+    // A drawing has no plain-text spelling. Its internal fragment and transferable HTML still
+    // need to be updated by Copy.
+    let copied = run(&mut source, "edit.copy", json!({}));
+    assert_eq!(copied["text"], "");
+    let html = copied["html"].as_str().expect("picture copy has a transferable HTML representation");
+    assert!(html.contains("data:image/png;base64,"), "the clipboard carries image bytes, not a document media key: {html}");
+    assert!(source.clipboard_text.is_empty(), "copying the object replaces the earlier text clipboard");
+
+    // Paste from WordCraft's structured fragment into the same document: a separate object with
+    // shared immutable image bytes, preserving the original picture's dimensions and alt text.
+    run(&mut source, "select.collapse", json!({"end": true}));
+    run(&mut source, "edit.paste", json!({}));
+    let images: Vec<_> = source
+        .doc
+        .para_paths(StoryRef::Body)
+        .into_iter()
+        .flat_map(|path| {
+            let pos = Pos { story: StoryRef::Body, path: path.clone(), off: 0 };
+            source.doc.para_at(&pos).into_iter().flat_map(move |p| {
+                p.objects
+                    .iter()
+                    .filter_map(|o| match o {
+                        InlineObject::Image { media, w, h, alt, .. } => Some((media.clone(), *w, *h, alt.clone())),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    assert_eq!(images.len(), 2, "paste creates an independent image object");
+    assert_eq!(images[0], images[1], "both objects retain geometry, alt text and the same immutable media");
+
+    // The system representation is self-contained: importing it in another WordCraft document
+    // adds fresh media under destination-owned keys.
+    let mut destination = Session::new(wordcraft_doc::Document::new());
+    run(&mut destination, "edit.paste", json!({"html": html}));
+    let Some(InlineObject::Image { media, w, h, alt, .. }) = destination.doc.para_at(&Pos::body(0, 0)).and_then(|p| p.objects.first()) else {
+        panic!("HTML paste retains the copied image object")
+    };
+    assert_eq!((*w, *h, alt.as_str()), (images[0].1, images[0].2, images[0].3.as_str()));
+    assert!(!media.is_empty() && destination.doc.media.contains_key(media), "media is adopted into the destination");
+    assert!(destination.doc.media.values().any(|bytes| bytes.as_slice() == source.doc.media[&images[0].0].as_slice()));
+}
+
+#[test]
+fn copying_a_selected_shape_keeps_its_geometry_and_reassigns_drawing_ids() {
+    use wordcraft_doc::para::InlineObject;
+
+    let mut session = Session::new(wordcraft_doc::Document::new());
+    run(&mut session, "insert.shape", json!({"kind": "rectangle", "width": 123, "height": 45, "fill": "1F4E79", "stroke": "C00000"}));
+    let start = crate::cmd::objects::selected(&session).expect("inserted shape is selected").0;
+    let end = Pos { off: start.off + wordcraft_doc::para::OBJ.len_utf8(), ..start.clone() };
+    run(&mut session, "select.range", json!({"anchor": start.clone(), "focus": end}));
+    if let Some(InlineObject::Shape { extra, .. }) = session.doc.para_mut(StoryRef::Body, &start.path).ok().and_then(|p| p.object_at_mut(start.off)) {
+        extra.id = 41;
+    }
+    let copied = run(&mut session, "edit.copy", json!({}));
+    let html = copied["html"].as_str().expect("selected shape publishes HTML and WordCraft's structured payload").to_owned();
+    assert!(html.contains("name=\"wordcraft-fragment\""), "editable shape data travels in the rich clipboard payload");
+    run(&mut session, "select.collapse", json!({"end": true}));
+    run(&mut session, "edit.paste", json!({}));
+
+    let shapes: Vec<_> = session
+        .doc
+        .para_paths(StoryRef::Body)
+        .iter()
+        .filter_map(|path| session.doc.para(StoryRef::Body, path))
+        .flat_map(|p| p.objects.iter())
+        .filter_map(|o| match o {
+            InlineObject::Shape { w, h, fill, stroke, extra, .. } => Some((*w, *h, *fill, *stroke, extra.id)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shapes.len(), 2, "Copy and Paste duplicate the selected shape");
+    assert_eq!((shapes[0].0, shapes[0].1), (123.0, 45.0));
+    assert_eq!((shapes[0].2, shapes[0].3), (Some(wordcraft_doc::props::Rgb(31, 78, 121)), Some(wordcraft_doc::props::Rgb(192, 0, 0))));
+    assert_eq!((shapes[0].0, shapes[0].1), (shapes[1].0, shapes[1].1));
+    assert_ne!(shapes[0].4, shapes[1].4, "the pasted shape gets a fresh drawing ID");
+    assert_eq!(shapes[0].4, 41, "copy leaves the original drawing ID unchanged");
+
+    let mut destination = Session::new(wordcraft_doc::Document::new());
+    run(&mut destination, "edit.paste", json!({"html": html}));
+    let Some(InlineObject::Shape { w, h, fill, stroke, extra, .. }) = destination.doc.para_at(&Pos::body(0, 0)).and_then(|p| p.objects.first())
+    else {
+        panic!("WordCraft can paste the selected editable shape into another document")
+    };
+    assert_eq!((*w, *h, *fill, *stroke), (123.0, 45.0, Some(wordcraft_doc::props::Rgb(31, 78, 121)), Some(wordcraft_doc::props::Rgb(192, 0, 0))));
+    assert_ne!(extra.id, 41, "the destination receives a fresh drawing ID");
+}
+
+#[test]
+fn external_html_copy_with_empty_text_does_not_reuse_an_old_internal_object() {
+    let mut session = Session::new(wordcraft_doc::Document::new());
+    run(&mut session, "insert.shape", json!({"kind": "rectangle", "width": 80, "height": 40}));
+    let start = crate::cmd::objects::selected(&session).expect("shape is selected").0;
+    let end = Pos { off: start.off + wordcraft_doc::para::OBJ.len_utf8(), ..start.clone() };
+    run(&mut session, "select.range", json!({"anchor": start, "focus": end}));
+    run(&mut session, "edit.copy", json!({}));
+
+    run(&mut session, "caret.docEnd", json!({}));
+    run(&mut session, "edit.paste", json!({"text": "", "html": "<p>external object description</p>"}));
+    assert!(
+        text(&session).contains("external object description"),
+        "different system HTML takes precedence over WordCraft's older internal object fragment"
+    );
+    assert_eq!(
+        session.doc.body.iter().filter_map(|b| b.as_para()).map(|p| p.objects.iter().filter(|o| o.is_drawing()).count()).sum::<usize>(),
+        1,
+        "external HTML did not duplicate the previous shape"
+    );
+}
+
+#[test]
+fn cutting_a_selected_shape_updates_the_internal_clipboard_and_undo_redo() {
+    use wordcraft_doc::para::InlineObject;
+
+    let mut session = Session::new(wordcraft_doc::Document::new());
+    run(&mut session, "insert.shape", json!({"kind": "rectangle", "width": 123, "height": 45, "fill": "1F4E79", "stroke": "C00000"}));
+    let start = crate::cmd::objects::selected(&session).expect("inserted shape is selected").0;
+    let end = Pos { off: start.off + wordcraft_doc::para::OBJ.len_utf8(), ..start.clone() };
+    run(&mut session, "select.range", json!({"anchor": start, "focus": end}));
+    let cut = run(&mut session, "edit.cut", json!({}));
+    assert_eq!(cut["text"], "");
+    assert!(session.doc.para_at(&start).is_some_and(|p| !p.objects.iter().any(InlineObject::is_drawing)), "cut removes the selected shape");
+    assert!(
+        session
+            .clipboard
+            .as_ref()
+            .is_some_and(|f| f.blocks.iter().any(|b| matches!(b, wordcraft_doc::Block::Para(p) if p.objects.iter().any(InlineObject::is_drawing)))),
+        "cut keeps the structured shape fragment"
+    );
+
+    run(&mut session, "edit.undo", json!({}));
+    let restored = session.doc.para_at(&start).and_then(|p| p.object_at(start.off)).expect("Undo restores the original shape");
+    assert!(matches!(restored, InlineObject::Shape { w, h, fill: Some(wordcraft_doc::props::Rgb(31, 78, 121)), .. } if *w == 123.0 && *h == 45.0));
+    run(&mut session, "edit.redo", json!({}));
+    assert!(session.doc.para_at(&start).is_some_and(|p| !p.objects.iter().any(InlineObject::is_drawing)), "Redo removes the shape again");
+}
+
+#[test]
 fn copying_bold_text_puts_html_on_the_clipboard() {
     // #1523: formatted text reaches other programs as HTML, not only as plain text.
     let mut s = s();

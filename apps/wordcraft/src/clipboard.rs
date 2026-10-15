@@ -216,6 +216,13 @@ mod tests {
         assert_eq!(session.doc.para_at(&wordcraft_doc::Pos::body(0, 7)).map(|p| p.props_of_char(7).bold), Some(Some(true)));
         let table = session.doc.body.iter().find_map(|b| b.as_table()).expect("table structure is retained");
         assert_eq!(table.rows.first().and_then(|r| r.cells.first()).map(|c| c.span()), Some(2));
+
+        // Object selections have no plain-text spelling; native adapters must still publish
+        // their transferable rich representation without leaving the earlier clipboard content.
+        let object_html = "<p><img src=\"data:image/png;base64,AA==\"></p>";
+        copy("", object_html).expect("HTML-only object copy publishes natively");
+        assert!(self::text().is_none_or(|text| text.is_empty()), "HTML-only copy does not leave the old plain text on the native clipboard");
+        assert!(self::html().is_some_and(|html| html.contains("data:image/png;base64,AA==")), "HTML-only copy replaces the old native clipboard");
     }
 }
 
