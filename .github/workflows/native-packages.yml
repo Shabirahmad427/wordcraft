@@ -609,10 +609,12 @@ jobs:
           if ((Get-Content (Join-Path $env:RUNNER_TEMP 'documents\keep.txt')) -ne 'owned by the user') { throw 'uninstall changed user document' }
           $profiles = Get-ChildItem $env:RUNNER_TEMP -Directory -Filter 'wordcraft-native-smoke-*'
           $retained = @($profiles | Where-Object {
-            (Test-Path (Join-Path $_.FullName 'AppData\WordCraft\ui.json')) -and
-            (Get-ChildItem (Join-Path $_.FullName 'AppData\WordCraft\recovery') -Filter '*.wcr' -ErrorAction SilentlyContinue)
+            $settings = Join-Path $_.FullName 'AppData\WordCraft'
+            $recovery = Join-Path $settings 'recovery'
+            (Test-Path (Join-Path $settings 'ui.json')) -and
+            (@(Get-ChildItem $recovery -Recurse -File -Filter 'snapshot-*.json' -ErrorAction SilentlyContinue).Count -gt 0)
           })
-          if ($retained.Count -eq 0) { throw 'uninstall removed isolated preferences or recovery entries' }
+          if ($retained.Count -eq 0) { throw 'uninstall removed isolated preferences or JSON recovery snapshots' }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wordcraft-windows-x64-test-packages
