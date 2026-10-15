@@ -239,7 +239,43 @@ pub fn canvas_events(app: &mut WordApp, ctx: &egui::Context) {
         return;
     }
     let alt_codes = alt_codes_supported(ctx);
+    let composing_at_frame_start = app.canvas.ime_composing;
+    let ime_preedit_in_frame = events.iter().any(|event| matches!(event, egui::Event::Ime(egui::ImeEvent::Preedit { .. })));
+    let ime_commits: Vec<String> = events
+        .iter()
+        .filter_map(|event| match event {
+            egui::Event::Ime(egui::ImeEvent::Commit(text)) if !text.is_empty() => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
     for e in events {
+        // On macOS, a key event may carry text while the native input method is also reporting
+        // marked text and a later commit. Never insert that intermediate text as ordinary typing.
+        // Precompute the frame's IME events so a text event that precedes Preedit is handled too.
+        if let egui::Event::Text(text) = &e
+            && (composing_at_frame_start || ime_preedit_in_frame || ime_commits.iter().any(|commit| commit == text))
+        {
+            continue;
+        }
+        // Backspace/Delete can edit the input method's marked text. While composing, they must
+        // not also delete document content when the platform reports a key event alongside the
+        // updated preedit.
+        if (composing_at_frame_start || ime_preedit_in_frame)
+            && matches!(&e, egui::Event::Key { key: Key::Backspace | Key::Delete, pressed: true, modifiers, .. } if !modifiers.command && !modifiers.ctrl && !modifiers.alt)
+        {
+            continue;
+        }
+        match &e {
+            egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
+                app.canvas.ime_preedit.clone_from(text);
+                app.canvas.ime_composing = !text.is_empty() || !ime_commits.is_empty();
+            }
+            egui::Event::Ime(egui::ImeEvent::Commit(_)) => {
+                app.canvas.ime_preedit.clear();
+                app.canvas.ime_composing = false;
+            }
+            _ => {}
+        }
         // An Alt shortcut (Alt+Shift+D, Alt+F7…) may also send its key's text; it isn't typed.
         match &e {
             egui::Event::Key { pressed: true, .. } => {
@@ -255,7 +291,11 @@ pub fn canvas_events(app: &mut WordApp, ctx: &egui::Context) {
                 }
             }
             // Focus elsewhere (another window) ends an Alt code unfinished.
-            egui::Event::WindowFocused(false) => app.canvas.alt_code.clear(),
+            egui::Event::WindowFocused(false) => {
+                app.canvas.alt_code.clear();
+                app.canvas.ime_preedit.clear();
+                app.canvas.ime_composing = false;
+            }
             _ => {}
         }
         if alt_codes && app.session.math.is_none() && alt_code_event(app, &e) {
@@ -296,6 +336,7 @@ pub fn canvas_events(app: &mut WordApp, ctx: &egui::Context) {
                 }
                 egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
                     app.canvas.ime_preedit.clear();
+                    app.canvas.ime_composing = false;
                     if !text.is_empty() {
                         let _ = app.run("equation.type", json!({"text": text}));
                     }
@@ -324,6 +365,7 @@ pub fn canvas_events(app: &mut WordApp, ctx: &egui::Context) {
             egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => app.canvas.ime_preedit = text,
             egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
                 app.canvas.ime_preedit.clear();
+                app.canvas.ime_composing = false;
                 if !text.is_empty() {
                     let _ = app.run("text.insert", json!({"text": text}));
                 }
@@ -721,6 +763,60 @@ mod tests {
 
     fn alt_frame(ctx: &egui::Context, a: &mut WordApp, events: Vec<egui::Event>) {
         ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| canvas_events(a, ui.ctx())).drop_without_applying_deltas();
+    }
+
+    fn ime_frame(ctx: &egui::Context, a: &mut WordApp, events: Vec<egui::Event>) {
+        ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| canvas_events(a, ui.ctx())).drop_without_applying_deltas();
+    }
+
+    fn ime_preedit(text: &str) -> egui::Event {
+        egui::Event::Ime(egui::ImeEvent::Preedit { text: text.into(), active_range_chars: None })
+    }
+
+    fn ime_commit(text: &str) -> egui::Event {
+        egui::Event::Ime(egui::ImeEvent::Commit(text.into()))
+    }
+
+    /// Marked text is temporary: commit once, discard canceled composition, and leave ordinary
+    /// repeated text and Backspace behavior alone. A Text event can precede the IME event in the
+    /// same native frame, so the whole event batch is inspected before processing.
+    #[test]
+    fn ime_composition_commits_accented_text_once_without_eating_normal_typing() {
+        let (ctx, mut app) = alt_frame_app();
+        ime_frame(&ctx, &mut app, vec![egui::Event::Text("cc".into())]);
+        assert_eq!(app.session.doc.plain_text(wordcraft_doc::StoryRef::Body).trim_end(), "cc");
+
+        // Portuguese tilde composition (ã) and dead-key composition (é/ç). Preedit is never
+        // inserted, and a duplicate Event::Text next to the commit is ignored.
+        ime_frame(&ctx, &mut app, vec![egui::Event::Text("~".into()), ime_preedit("~")]);
+        assert_eq!(app.session.doc.plain_text(wordcraft_doc::StoryRef::Body).trim_end(), "cc");
+        ime_frame(&ctx, &mut app, vec![egui::Event::Text("ã".into()), ime_preedit("ã")]);
+        ime_frame(&ctx, &mut app, vec![egui::Event::Text("ã".into()), ime_preedit(""), ime_commit("ã")]);
+        ime_frame(&ctx, &mut app, vec![ime_commit("é"), egui::Event::Text("é".into())]);
+        ime_frame(&ctx, &mut app, vec![egui::Event::Text("ç".into()), ime_preedit("ç"), ime_commit("ç")]);
+        assert_eq!(app.session.doc.plain_text(wordcraft_doc::StoryRef::Body).trim_end(), "ccãéç");
+    }
+
+    #[test]
+    fn backspace_during_ime_composition_does_not_delete_document_text() {
+        let (ctx, mut app) = alt_frame_app();
+        app.run("text.insert", json!({"text": "keep"})).unwrap();
+        ime_frame(&ctx, &mut app, vec![ime_preedit("´")]);
+        ime_frame(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::Key { key: Key::Backspace, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
+                ime_preedit(""),
+            ],
+        );
+        assert_eq!(app.session.doc.plain_text(wordcraft_doc::StoryRef::Body).trim_end(), "keep");
+        ime_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Key { key: Key::Backspace, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }],
+        );
+        assert_eq!(app.session.doc.plain_text(wordcraft_doc::StoryRef::Body).trim_end(), "kee");
     }
 
     fn alt_key(key: Key, pressed: bool, repeat: bool) -> egui::Event {

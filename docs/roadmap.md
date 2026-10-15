@@ -1,6 +1,6 @@
 # WordCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** Pinned latest upstream integration (`fd0bb2f`); validating local regressions · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** Phase 7U.1: page-number preservation, independent header-mode probe, IME regression coverage; hosted/native keyboard checks pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 Forward-looking plan. The summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is
 [`gaps.md`](gaps.md); the numbers are in [`target-app-parity.md`](target-app-parity.md). Hours are
@@ -20,6 +20,10 @@ All six local CI gates pass on the merged tree. Required hosted workflows still 
 final commit. Existing Linux and macOS installations remain untouched. Remaining desktop
 integration gaps are recorded in [native installation](native-installation.md). This work does not
 change the Word-feature estimates below.
+
+Phase 7U.1 also adapts upstream PR #2251 for header/footer page-number preservation. Synthetic
+coverage did not reproduce issue #2246. IME event tests cover the macOS composition lifecycle, while
+native Portuguese keyboard input and the final hosted Linux/macOS/Windows workflows remain pending.
 
 The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current five-gap evidence priority and distinguishes native runtime results from cross-builds.
 
@@ -89,6 +93,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Phase 7U.1: adapted #2251; #2246 independently probed without reproduction; native #2253 keyboard input and hosted checks pending |
 | 2026-10-14 | minor | Integrated upstream 0.7.0; all local CI gates and isolated Apple Silicon GUI/recovery shutdown checks pass; hosted package upgrade checks pending |
 | 2026-10-13 | minor | Phase 7T local DMG correction and installed native app smoke; hosted DEB/MSI validation pending, no beta estimate change |
 | 2026-10-14 | minor | Recorded hosted three-OS package results, Linux headless Wayland launch and unexplained Windows timeout/retry; ranked estimates unchanged |
