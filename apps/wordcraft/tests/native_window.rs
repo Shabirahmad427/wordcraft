@@ -85,6 +85,19 @@ struct Control {
 }
 
 impl Control {
+    fn submit_quit(&mut self) {
+        self.next_id += 1;
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], self.port));
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))
+            .unwrap_or_else(|error| panic!("could not connect to WordCraft control channel for app.quit: {error}"));
+        serde_json::to_writer(&mut stream, &json!({"id": self.next_id, "key": self.key, "method": "app.quit", "params": {}}))
+            .expect("serialize app.quit request");
+        stream.write_all(b"\n").expect("send app.quit request");
+        if std::env::var("WORDCRAFT_NATIVE_CONTROL_TRACE").as_deref() == Ok("1") {
+            eprintln!("native control request id={} method=app.quit submitted; awaiting normal process shutdown", self.next_id);
+        }
+    }
+
     fn call(&mut self, method: &str, params: Value) -> Value {
         self.next_id += 1;
         let started = Instant::now();
@@ -457,7 +470,10 @@ fn isolated_native_window_smoke() {
             );
             None
         };
-        control.call("app.quit", json!({}));
+        // A quit command can close the baseline app before its control reply reaches this
+        // harness. Verify shutdown from the child status and cleanup below instead of requiring
+        // a response from a transport that is being torn down.
+        control.submit_quit();
         let status = wait_for_exit(&mut process.0, Duration::from_secs(15), &stderr_path);
         assert!(status.success(), "replacement app did not quit normally with recovery pending: {status}; stderr: {}", read_log(&stderr_path));
         assert_app_exit_callback(&stderr_path);
