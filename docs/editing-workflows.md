@@ -10,6 +10,17 @@ An opt-in adapter regression publishes synthetic Unicode emphasis and a two-colu
 
 The shared tests also cover selected-fragment HTML/table serialization, malformed CF_HTML offsets, malformed/tag-soup HTML, unsafe links, scripts/styles, absent external-image loading, oversized HTML rejection before parsing, 16 MiB plain-text rejection for every Paste command without changing document content, plain-text fallback, and Undo for rich paste. See [clipboard security and validation](clipboard-security.md) for parser boundaries and the remaining native allocation limitation.
 
+## Phase 7U.2 drawing clipboard validation
+
+The current implementation embeds a bounded WordCraft DOCX fragment in the copied HTML when the
+selection contains drawings, and uses that fragment on paste to preserve editable objects. Engine
+and UI tests cover drawing-fragment retention, shape-ID remapping, HTML-only object publication and
+clearing stale internal text when a drawing is copied. The hosted Windows clipboard adapter check
+does not select an object in a WordCraft window or paste into a second document. A native Windows
+GUI copy/paste test that verifies the old system clipboard contents are replaced has not been run;
+do not mark upstream issue #2276 fully resolved until that test passes. Cross-application drawing
+paste also remains unverified.
+
 On native Apple Silicon macOS, `cargo xtask ci` passed all six gates, the release GUI/CLI build passed, and `wordcraft-cli --version` reported 0.6.1. Hosted [Document regressions run 38431156638](https://github.com/Shabirahmad427/wordcraft/actions/runs/38431156638) passed its Linux GUI/CLI release build, document/session suites and CLI smokes on Linux, macOS and Windows, visual regression and advisory performance. Hosted [Printing run 38429584697](https://github.com/Shabirahmad427/wordcraft/actions/runs/38429584697) passed the native clipboard adapter regression and broader app/UI tests on Linux, macOS and Windows. CI built the Linux GUI target but did not launch desktop windows; no native macOS or Windows GUI runtime or Word 365 clipboard exchange was performed.
 
 ## Phase 7P rich clipboard behavior

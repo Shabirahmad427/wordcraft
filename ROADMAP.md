@@ -1,6 +1,6 @@
 # WordCraft roadmap
 
-## Pinned upstream integration (validation in progress)
+## Pinned upstream integration (validated)
 
 The October 15 integration starts from fork commit `426331fa` and pins upstream
 `fd0bb2fb1ec081e3eddc4d01917637fef0cafdfe`. Before merging, the fork was 155 commits ahead
@@ -9,20 +9,38 @@ native print adapters, bounded rich clipboard publication, source styles/media a
 diagnostics while incorporating upstream document, proofing, recovery, UI and localization work.
 The merge also fixes recovery-test lock timing, adds missing content-type manifests to the
 date-field DOCX fixtures, and completes the new Croatian and Swedish catalog entries. All six
-local CI gates pass. Hosted Printing, Document regressions, Packaging lint and the complete
-Linux/macOS/Windows Native packages matrix must still run on the final merge commit. Historical
-passing runs below do not validate this merge. Existing installations remain unchanged.
+local CI gates pass. On the follow-up structured clipboard commit `85f03acb`, hosted Printing
+([run 38822700466](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700466)), Document
+regressions ([run 38822700393](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700393)),
+Packaging lint ([run 38822711168](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822711168))
+and the complete Linux/macOS/Windows Native packages matrix
+([run 38822700316](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700316)) passed.
+The package matrix covers Linux DEB, Apple Silicon DMG and Windows x64 MSI same-version replacement,
+preserved user data, installed-app editing/save/PDF/quit and uninstall. Existing workstation
+installations remain unchanged.
 
-## Phase 7U.1 — Critical upstream bug integration (validation in progress)
+## Phase 7U.1 — Critical upstream bug integration (synthetic checks passed; native checks pending)
 
 Adapted upstream PR #2251 so top/bottom page-number insertion retains the original header/footer
 blocks and avoids duplicating simple or range PAGE fields, including fields in table cells. The
 regressions cover formatting, intentional empty paragraphs, selection, undo/redo, and two DOCX
 round trips. Issue #2246 was separately tested against existing and synthetic imported DOCX
-content without reproducing the reported deletion. The macOS IME path now treats preedit as
-temporary and commits once; its event-sequence tests pass, but physical Portuguese keyboard
-composition has not been verified. Required hosted OS workflows remain pending. No installed
-0.7.0 copy or Word readiness estimate changed.
+content without reproducing the reported deletion; the focused harness regression was rerun and
+passed on this checkout, including DOCX save/reopen. The macOS IME path treats preedit as temporary
+and commits once; focused event-sequence tests pass, but physical Portuguese keyboard composition
+has not been verified. Hosted OS workflows passed on the subsequent commit. No installed 0.7.0 copy
+or Word readiness estimate changed.
+
+## Phase 7U.2 — Structured clipboard for selected drawings (validation passed)
+
+Copying selected drawings now places a bounded, self-contained WordCraft DOCX payload in the HTML
+clipboard representation while retaining ordinary HTML for other applications. Paste restores the
+editable drawing fragment, remaps shape identifiers and preserves internal connector links. Hosted
+Printing, Document regressions, Packaging lint and all Linux/macOS/Windows native package jobs pass
+on `85f03acb`. Native Windows GUI drawing copy/paste and confirmation that object Copy replaces
+prior clipboard contents remain unverified; hosted Windows clipboard adapter tests do not exercise
+WordCraft GUI selection. Cross-application drawing paste and physical Portuguese keyboard
+composition also remain unverified. Existing installations remain unchanged.
 
 Phase 7T.2 validation passed on commit `a2718489` in [the full native package run](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634643684): Linux DEB, Apple Silicon macOS DMG and Windows x64 MSI jobs all passed, with no skipped platform. Each ran package creation, fresh installation, same-version replacement, isolated preference/recovery preservation, native edit/save/PDF/quit, and package removal. The Windows ARM64 package/install/CLI check also passed, without GUI-runtime coverage. The separate [Printing](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634652720), [Document regressions](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634656901) and [Packaging lint](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634644071) workflows passed. The package jobs took 28m47s Linux, 32m24s macOS and 20m51s Windows. Cold 0.7.0 baseline builds took 9m15s Linux and 10m macOS; Windows restored its baseline MSI cache in 2s. Inspection found that Rust cache omitted workspace crates by default; cache keys now opt into workspace-crate caching. This cache change is being validated on the final commit. Intel Mac hardware, Windows ARM64 GUI runtime, signing/notarization claims, and updates to the existing workstations remain unverified/not performed.
 

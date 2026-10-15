@@ -1,6 +1,6 @@
 # Where WordCraft falls short of Word
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** trivial (Phase 7U.1: #2246 not reproduced on synthetic DOCX; native #2253 input remains unverified) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** trivial (Phase 7U.2 structured drawing clipboard; hosted validation passed; native #2276 GUI and #2253 input checks remain unverified) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 > **Printing update:** 2026-10-12 · direct desktop printing through craft-print; details below.
 
@@ -22,6 +22,13 @@ Issue #2246 was probed with existing header/footer content and a synthetic DOCX 
 header edit mode did not remove content in either case, so the report remains unreproduced. Issue
 #2253 has event-lifecycle regression coverage, but Portuguese input on a physical macOS keyboard
 has not been verified. Neither probe changes the ranked gaps or readiness estimates.
+
+Selected editable drawings now travel between WordCraft documents in a bounded WordCraft-specific
+DOCX payload embedded in the system clipboard's HTML; the same payload leaves ordinary HTML available
+to other applications. Hosted clipboard/printing tests and Linux/macOS/Windows package smokes passed
+on commit `85f03acb`; no Windows WordCraft GUI copy/paste or clipboard-replacement test was run, and
+cross-application drawing paste remains unverified. Do not call #2276 fully resolved until the
+requested native Windows GUI check passes.
 
 Document renaming: desktop renaming requires a filesystem that supports hard links (exFAT/FAT drives and some network shares refuse it). Behaviour: [UI parity](ui-parity.md).
 
@@ -92,6 +99,7 @@ The same gaps grouped the way the parity documents are, for agents working in on
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | trivial | Phase 7U.2: selected drawings use structured clipboard data in WordCraft; hosted regression/printing/lint and full native package matrix pass; #2276 Windows GUI copy/paste, cross-app behavior and physical #2253 keyboard input remain unverified |
 | 2026-10-15 | trivial | Phase 7U.1: #2246 did not reproduce with in-memory or synthetic imported DOCX content; #2253 still needs native Portuguese keyboard verification |
 | 2026-10-14 | trivial | Row table border exceptions fixed; other row table exceptions remain unsupported |
 | 2026-10-12 | minor | Czech proofing review: short-word splits rank after deletion, NOSUGGEST excludes suggestions while accepting typed forms, affix comments apply only to headers, ratios keep spaces and repeated-word messages use Czech quotes; synthetic engine end-to-end and latency checks |

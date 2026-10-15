@@ -12,18 +12,26 @@ Phase 7M adds shared theme rebinding and preservation regressions. Guarded impor
 safe package XML merge before theme or style edits can be saved; see the
 [DOCX preservation contract](docx-compatibility.md#phase-7m-theme-bindings-and-style-preservation).
 
-Phase 7T validates actual native packages; prior hosted Linux DEB, Apple Silicon DMG and Windows
+Phase 7T validates actual native packages; hosted Linux DEB, Apple Silicon DMG and Windows
 x64 MSI checks passed on their recorded commits. The current integration starts from the fork's
 existing 0.7.0 main history and merges upstream `fd0bb2f`; it does not downgrade or change the
 application version. Package tests remain same-version replacement checks, not version upgrades.
-All six local CI gates pass on the merged tree. Required hosted workflows still need to run on its
-final commit. Existing Linux and macOS installations remain untouched. Remaining desktop
-integration gaps are recorded in [native installation](native-installation.md). This work does not
-change the Word-feature estimates below.
+All six local CI gates pass on the merged tree. Hosted Printing, Document regressions, Packaging
+lint and the complete Linux/macOS/Windows package matrix passed on follow-up commit `85f03acb`
+(runs [38822700466](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700466),
+[38822700393](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700393),
+[38822711168](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822711168), and
+[38822700316](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700316)). Existing
+Linux and macOS installations remain untouched. Remaining desktop integration gaps are recorded in
+[native installation](native-installation.md). This work does not change the Word-feature estimates
+below.
 
 Phase 7U.1 also adapts upstream PR #2251 for header/footer page-number preservation. Synthetic
-coverage did not reproduce issue #2246. IME event tests cover the macOS composition lifecycle, while
-native Portuguese keyboard input and the final hosted Linux/macOS/Windows workflows remain pending.
+coverage did not reproduce issue #2246; its focused UI harness test was rerun here, including a
+synthetic imported DOCX, edit-mode exit and save/reopen. IME event tests cover synthetic Portuguese
+accent sequences and pass; physical keyboard input remains pending. The requested native Windows
+GUI drawing copy/paste and clipboard-replacement test for #2276 was not performed; the hosted Windows
+clipboard adapter test does not exercise a WordCraft window.
 
 The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current five-gap evidence priority and distinguishes native runtime results from cross-builds.
 
@@ -93,6 +101,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Phase 7U.2 structured drawing clipboard landed; hosted regression, printing, packaging lint and full three-OS package matrix passed on `85f03acb`; Windows GUI #2276 and physical Portuguese keyboard checks remain pending |
 | 2026-10-15 | minor | Phase 7U.1: adapted #2251; #2246 independently probed without reproduction; native #2253 keyboard input and hosted checks pending |
 | 2026-10-14 | minor | Integrated upstream 0.7.0; all local CI gates and isolated Apple Silicon GUI/recovery shutdown checks pass; hosted package upgrade checks pending |
 | 2026-10-13 | minor | Phase 7T local DMG correction and installed native app smoke; hosted DEB/MSI validation pending, no beta estimate change |
