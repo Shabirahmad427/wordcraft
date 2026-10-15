@@ -1,6 +1,6 @@
 # Where WordCraft falls short of Word
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** trivial (Phase 7U.2 structured drawing clipboard; hosted validation passed; native #2276 GUI and #2253 input checks remain unverified) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** trivial (Phase 7U.3 DOCX on/off and measure parsing fixes; real-world corpus remains unstarted) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 > **Printing update:** 2026-10-12 · direct desktop printing through craft-print; details below.
 
@@ -29,6 +29,10 @@ to other applications. Hosted clipboard/printing tests and Linux/macOS/Windows p
 on commit `85f03acb`; no Windows WordCraft GUI copy/paste or clipboard-replacement test was run, and
 cross-application drawing paste remains unverified. Do not call #2276 fully resolved until the
 requested native Windows GUI check passes.
+
+DOCX measure units including EMU now parse case-insensitively, and standard on/off values are
+trimmed and case-folded in the reader. The fixes are pinned by synthetic DOCX fixtures. They do not
+reduce the real-world DOCX corpus gap or change the readiness estimate.
 
 Document renaming: desktop renaming requires a filesystem that supports hard links (exFAT/FAT drives and some network shares refuse it). Behaviour: [UI parity](ui-parity.md).
 
@@ -99,6 +103,7 @@ The same gaps grouped the way the parity documents are, for agents working in on
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | trivial | Phase 7U.3 integrates reproduced DOCX on/off and unit parsing defects from #2275/#2267; synthetic fixtures only; corpus gap and readiness unchanged |
 | 2026-10-15 | trivial | Phase 7U.2: selected drawings use structured clipboard data in WordCraft; hosted regression/printing/lint and full native package matrix pass; #2276 Windows GUI copy/paste, cross-app behavior and physical #2253 keyboard input remain unverified |
 | 2026-10-15 | trivial | Phase 7U.1: #2246 did not reproduce with in-memory or synthetic imported DOCX content; #2253 still needs native Portuguese keyboard verification |
 | 2026-10-14 | trivial | Row table border exceptions fixed; other row table exceptions remain unsupported |

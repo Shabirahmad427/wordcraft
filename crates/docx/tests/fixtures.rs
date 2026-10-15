@@ -297,6 +297,28 @@ fn table_look_bitmask_and_legacy_merges() {
 }
 
 #[test]
+fn upstream_2275_case_insensitive_on_off_values_at_docx_boundary() {
+    let doc = read_body(
+        r#"<w:p><w:pPr><w:spacing w:beforeAutospacing=" TRUE "/></w:pPr><w:r><w:rPr><w:b w:val=" Off "/></w:rPr><w:t>x</w:t></w:r></w:p>
+<w:tbl><w:tblPr><w:tblLook w:firstRow="OFF"/></w:tblPr><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>"#,
+    );
+    let p = paras(&doc);
+    assert_eq!(p[0].props.space_before_auto, Some(true));
+    assert_eq!(p[0].props_of_char(0).bold, Some(false));
+    let Block::Table(table) = &*doc.body[1] else { panic!("expected table") };
+    assert!(!table.props.look.header_row);
+
+    let settings = with_settings(Some(r#"<w:documentProtection w:enforcement=" False " w:formatting="FALSE"/>"#));
+    assert_eq!(settings.settings.protection, None);
+}
+
+#[test]
+fn upstream_2267_emu_column_width_is_read_from_docx() {
+    let doc = read_body(r#"<w:p/><w:sectPr><w:cols w:equalWidth="FALSE"><w:col w:w="25400EMU" w:space="12700emu"/></w:cols></w:sectPr>"#);
+    assert_eq!(doc.last_section.columns.widths, vec![(2.0, 1.0)]);
+}
+
+#[test]
 fn styles_numbering_settings_notes_comments_from_parts() {
     let styles = format!(
         r#"<w:styles {W_NS}>

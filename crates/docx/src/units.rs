@@ -6,20 +6,50 @@ use crate::xml::El;
 pub const MAX_LEN_PT: f32 = 14_400.0;
 
 /// Parse a number, accepting decimals and ISO 29500 universal measures (`1in`, `2.5cm`, `12pt`,
-/// `3mm`, `1pc`, `1pi`). `per_pt` is how many file units make a point when there's no unit
-/// suffix (20 for twips, 2 for half-points, 8 for eighths, 12700 for EMU). Returns points.
+/// `3mm`, `1pc`, `1pi`, `12700emu`). `per_pt` is how many file units make a point when there's no
+/// unit suffix (20 for twips, 2 for half-points, 8 for eighths, 12700 for EMU). Returns points.
 pub fn measure(s: &str, per_pt: f32) -> Option<f32> {
     let t = s.trim();
     if t.is_empty() || t.len() > 40 {
         return None;
     }
-    let split = t.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E')).unwrap_or(t.len());
+    // Keep e/E in the numeric prefix only when it begins a valid exponent. Otherwise it is the
+    // start of a suffix such as `emu`. Scan bytes because the numeric grammar is ASCII; the split
+    // is therefore also a valid UTF-8 boundary.
+    let bytes = t.as_bytes();
+    let mut split = t.len();
+    let mut in_exponent = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b.is_ascii_digit() || b == b'.' {
+            in_exponent = false;
+            continue;
+        }
+        if (b == b'-' || b == b'+') && (i == 0 || in_exponent) {
+            in_exponent = false;
+            continue;
+        }
+        if b == b'e' || b == b'E' {
+            let rest = bytes.get(i.saturating_add(1)..)?;
+            let exponent = match rest.first() {
+                Some(b'+' | b'-') => rest.get(1..),
+                _ => Some(rest),
+            }?;
+            if exponent.first().is_some_and(u8::is_ascii_digit) {
+                in_exponent = true;
+                continue;
+            }
+        }
+        split = i;
+        break;
+    }
     let (num, unit) = t.split_at(split);
     let v: f64 = num.parse().ok()?;
     if !v.is_finite() {
         return None;
     }
-    let pt = match unit.trim() {
+    let unit = unit.trim();
+    let unit_lower = unit.to_ascii_lowercase();
+    let pt = match unit_lower.as_str() {
         "" => v / per_pt as f64,
         "pt" => v,
         "in" => v * 72.0,
@@ -56,11 +86,18 @@ pub fn tw(e: &El, attr: &str) -> Option<f32> {
     e.attr(attr).and_then(|v| measure(v, 20.0))
 }
 
+/// Whether a standard OOXML on/off value is on. The standard false values are `0`, `false`, and
+/// `off`, with surrounding whitespace ignored; other valid on/off spellings are true.
+pub fn is_on(value: &str) -> bool {
+    let value = value.trim();
+    !(value.eq_ignore_ascii_case("0") || value.eq_ignore_ascii_case("false") || value.eq_ignore_ascii_case("off"))
+}
+
 /// ST_OnOff: absent `w:val` = on; `0`, `false`, `off` = off.
 pub fn on_off(e: &El) -> bool {
     match e.attr("w:val") {
         None => true,
-        Some(v) => !matches!(v.trim(), "0" | "false" | "off" | "False" | "FALSE"),
+        Some(v) => is_on(v),
     }
 }
 
@@ -98,7 +135,26 @@ mod tests {
         assert_eq!(measure("1e400", 20.0), None);
         assert_eq!(measure("99999999999999", 20.0), Some(MAX_LEN_PT));
         assert_eq!(measure("x", 20.0), None);
+        assert_eq!(measure("12700emu", 20.0), Some(1.0));
+        assert_eq!(measure("25400EMU", 20.0), Some(2.0));
+        assert_eq!(measure("1IN", 20.0), Some(72.0));
+        assert_eq!(measure("12PT", 2.0), Some(12.0));
+        assert_eq!(measure("2.54CM", 20.0), Some(72.0));
+        assert_eq!(measure("25.4MM", 20.0), Some(72.0));
+        assert_eq!(measure("10PX", 20.0), Some(7.5));
+        assert_eq!(measure("1e2pt", 20.0), Some(100.0));
+        assert_eq!(measure("1e+2pt", 20.0), Some(100.0));
         assert_eq!(int("12.6"), Some(13));
         assert_eq!(u32_of("-5"), Some(0));
+    }
+
+    #[test]
+    fn on_off_values_ignore_case_and_surrounding_space() {
+        for value in ["0", " 0 ", "false", "False", "FALSE", " false ", "off", "Off", "OFF", " off "] {
+            assert!(!is_on(value), "{value:?}");
+        }
+        for value in ["1", "true", "True", "TRUE", "on", "On", "ON"] {
+            assert!(is_on(value), "{value:?}");
+        }
     }
 }

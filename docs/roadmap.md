@@ -33,6 +33,12 @@ accent sequences and pass; physical keyboard input remains pending. The requeste
 GUI drawing copy/paste and clipboard-replacement test for #2276 was not performed; the hosted Windows
 clipboard adapter test does not exercise a WordCraft window.
 
+Phase 7U.3 audits upstream DOCX reader PRs [#2275](https://github.com/storytold/wordcraft/pull/2275)
+and [#2267](https://github.com/storytold/wordcraft/pull/2267). Both defects were absent from the
+fork and reproduced with fail-first synthetic package tests. Shared case-insensitive on/off parsing
+and mixed-case measure units/EMU exponent handling are implemented; targeted package tests and all
+six `cargo xtask ci` gates pass locally. Required hosted workflows remain pending on this commit.
+
 The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current five-gap evidence priority and distinguishes native runtime results from cross-builds.
 
 1. **Merge or close the ~45 open PRs** before starting overlapping work: many close catalog gaps
@@ -101,6 +107,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Phase 7U.3: integrate missing DOCX fixes from #2275/#2267 after package-level repro; all six local CI gates pass, hosted OS workflows pending |
 | 2026-10-15 | minor | Phase 7U.2 structured drawing clipboard landed; hosted regression, printing, packaging lint and full three-OS package matrix passed on `85f03acb`; Windows GUI #2276 and physical Portuguese keyboard checks remain pending |
 | 2026-10-15 | minor | Phase 7U.1: adapted #2251; #2246 independently probed without reproduction; native #2253 keyboard input and hosted checks pending |
 | 2026-10-14 | minor | Integrated upstream 0.7.0; all local CI gates and isolated Apple Silicon GUI/recovery shutdown checks pass; hosted package upgrade checks pending |
