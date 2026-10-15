@@ -1,5 +1,7 @@
 use std::path::PathBuf;
-use wordcraft_doc::{Document, StoryRef};
+use wordcraft_doc::Document;
+#[cfg(unix)]
+use wordcraft_doc::StoryRef;
 use wordcraft_engine::io;
 
 struct Scratch(PathBuf);
