@@ -470,9 +470,8 @@ fn isolated_native_window_smoke() {
             );
             None
         };
-        // A quit command can close the baseline app before its control reply reaches this
-        // harness. Verify shutdown from the child status and cleanup below instead of requiring
-        // a response from a transport that is being torn down.
+        // Quitting can tear down the control transport before its reply reaches this harness.
+        // Verify shutdown from child status and cleanup instead of requiring that reply.
         control.submit_quit();
         let status = wait_for_exit(&mut process.0, Duration::from_secs(15), &stderr_path);
         assert!(status.success(), "replacement app did not quit normally with recovery pending: {status}; stderr: {}", read_log(&stderr_path));
@@ -614,7 +613,7 @@ fn isolated_native_window_smoke() {
     assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"), "window screenshot is a PNG");
     assert!(png.len() > 10_000, "window screenshot contains rendered UI content");
 
-    control.call("app.quit", json!({}));
+    control.submit_quit();
     let status = wait_for_exit(&mut process.0, Duration::from_secs(15), &stderr_path);
     assert!(status.success(), "native app launch did not finish successfully: {status}; stderr: {}", read_log(&stderr_path));
     assert_app_exit_callback(&stderr_path);
@@ -662,7 +661,7 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
         // verifies persistence and normal shutdown, so it avoids that unrelated inspection.
         control.execute("ui.theme", json!({"value": "dark"}));
         control.execute("text.insert", json!({"text": "checkpoint before native shutdown"}));
-        control.call("app.quit", json!({}));
+        control.submit_quit();
 
         let status = wait_for_exit(&mut process.0, Duration::from_secs(15), &stderr_path);
         assert!(status.success(), "baseline app did not quit normally: {status}; stderr: {}", read_log(&stderr_path));
@@ -680,7 +679,7 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
     control.execute("ui.theme", json!({"value": "dark"}));
     control.execute("text.insert", json!({"text": "checkpoint before native shutdown"}));
     wait_for_document_text(&mut control, "checkpoint before native shutdown", &profile);
-    control.call("app.quit", json!({}));
+    control.submit_quit();
 
     let status = wait_for_exit(&mut process.0, Duration::from_secs(15), &stderr_path);
     assert!(status.success(), "native app launch did not finish successfully: {status}; stderr: {}", read_log(&stderr_path));
@@ -862,7 +861,7 @@ fn diagnose_startup_case(label: &str, with_control: bool, with_prefs: bool, exis
     {
         let mut control = Control { port, key: key.trim().to_owned(), next_id: 0 };
         let _ = control.call("ui.inspect", json!({}));
-        let _ = control.call("app.quit", json!({}));
+        control.submit_quit();
         if let Some(status) = wait_for_exit_bounded(&mut child.0, Duration::from_secs(10)) {
             clean_quit = status.success();
             exited = Some(status);
