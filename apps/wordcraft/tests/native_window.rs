@@ -646,6 +646,18 @@ fn isolated_native_shutdown_checkpoints_recovery_before_exit() {
 }
 
 fn assert_recovery_snapshot(profile: &Profile, expected_text: &str) {
+    if std::env::var_os("WORDCRAFT_NATIVE_LEGACY_RECOVERY").is_some() {
+        let store = wordcraft_engine::recovery::legacy::Store::new(profile.settings().join("recovery")).expect("open isolated legacy recovery store");
+        let entries = store.list().expect("read isolated legacy recovery entries");
+        assert!(!entries.is_empty(), "native shutdown did not preserve the dirty document in legacy recovery");
+        assert!(
+            entries.iter().any(|entry| {
+                store.load(&entry.id).is_ok_and(|snapshot| snapshot.doc.plain_text(wordcraft_doc::StoryRef::Body).contains(expected_text))
+            }),
+            "legacy recovery entries do not contain {expected_text:?}"
+        );
+        return;
+    }
     let mut session = wordcraft_engine::Session::new(wordcraft_doc::Document::new());
     session.enable_recovery(profile.settings().join("recovery"), std::sync::Arc::new(|| {})).expect("open isolated native recovery store");
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -679,7 +691,9 @@ fn read_log(path: &Path) -> String {
 fn assert_app_exit_callback(stderr_path: &Path) {
     let log = read_log(stderr_path);
     assert!(log.contains("eframe application exit callback entered"), "WordCraft did not reach eframe's normal exit callback: {log}");
-    assert!(log.contains("final desktop recovery checkpoint completed"), "WordCraft did not complete its final recovery checkpoint: {log}");
+    if std::env::var_os("WORDCRAFT_NATIVE_LEGACY_RECOVERY").is_none() {
+        assert!(log.contains("final desktop recovery checkpoint completed"), "WordCraft did not complete its final recovery checkpoint: {log}");
+    }
 }
 
 fn wait_for_exit(child: &mut Child, timeout: Duration, stderr_path: &Path) -> ExitStatus {

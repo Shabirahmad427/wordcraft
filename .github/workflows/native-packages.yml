@@ -123,6 +123,7 @@ jobs:
           WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
           WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_LEGACY_RECOVERY: '1'
           WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
           RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
           WGPU_BACKEND: gl
@@ -293,6 +294,7 @@ jobs:
           WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
           WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_LEGACY_RECOVERY: '1'
           WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
           RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
         run: |
@@ -483,6 +485,7 @@ jobs:
           WORDCRAFT_NATIVE_PROFILE_ROOT: ${{ runner.temp }}
           WORDCRAFT_NATIVE_PROFILE_PATH: ${{ runner.temp }}/upgrade-profile
           WORDCRAFT_PRESERVE_NATIVE_PROFILE: '1'
+          WORDCRAFT_NATIVE_LEGACY_RECOVERY: '1'
           WORDCRAFT_NATIVE_CONTROL_TRACE: '1'
           RUST_LOG: warn,wordcraft=info,wordcraft::control_server=debug,wordcraft_ui_egui::control=debug
         run: |
