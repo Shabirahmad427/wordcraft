@@ -1,6 +1,6 @@
 # WordCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** Three-OS installed-package run passed; Windows control timeout remains unexplained · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** Pinned latest upstream integration (`fd0bb2f`); validating local regressions · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 Forward-looking plan. The summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is
 [`gaps.md`](gaps.md); the numbers are in [`target-app-parity.md`](target-app-parity.md). Hours are
@@ -12,14 +12,12 @@ Phase 7M adds shared theme rebinding and preservation regressions. Guarded impor
 safe package XML merge before theme or style edits can be saved; see the
 [DOCX preservation contract](docx-compatibility.md#phase-7m-theme-bindings-and-style-preservation).
 
-Phase 7T validates actual native packages. A local macOS DMG defect is corrected; the hosted
-installed DEB, DMG app and Windows x64 MSI passed the prior package workflow. Upstream's released
-0.7.0 source is now merged into the existing 0.6.1 fork history. The package workflow upgrades
-from fork commit `9270097` (0.6.1) to 0.7.0 in one checkout, checking isolated preference and
-recovery state plus Windows control-request tracing. Six local CI gates pass; hosted upgrade
-execution is pending.
-The Windows GUI smoke's earlier control-response timeout passed on retry but remains unexplained.
-Linux headless Weston startup/recovery/quit passed without input coverage. Remaining desktop
+Phase 7T validates actual native packages; prior hosted Linux DEB, Apple Silicon DMG and Windows
+x64 MSI checks passed on their recorded commits. The current integration starts from the fork's
+existing 0.7.0 main history and merges upstream `fd0bb2f`; it does not downgrade or change the
+application version. Package tests remain same-version replacement checks, not version upgrades.
+All six local CI gates pass on the merged tree. Required hosted workflows still need to run on its
+final commit. Existing Linux and macOS installations remain untouched. Remaining desktop
 integration gaps are recorded in [native installation](native-installation.md). This work does not
 change the Word-feature estimates below.
 

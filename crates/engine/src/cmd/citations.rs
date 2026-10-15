@@ -337,7 +337,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 return Err(CmdError::Params("select a citation or give `entry`".into()));
             }
             let (_, b) = s.sel.ordered();
-            s.doc.insert_object(&b, InlineObject::Field { instr: format!("TA \\l \"{}\"", entry.replace('"', "")), result: String::new(), locked: false, code: false, form: String::new() }, &CharProps { hidden: Some(true), ..Default::default() })?;
+            s.doc.insert_object(&b, InlineObject::Field { instr: format!("TA \\l \"{}\"", entry.replace('"', "")), result: String::new(), locked: false, dirty: false, code: false, form: String::new() }, &CharProps { hidden: Some(true), ..Default::default() })?;
             Ok(json!({"entry": entry}))
         })
         .params(r#"{"entry"?: string}"#)
@@ -666,7 +666,7 @@ fn citation(s: &mut Session, v: &Value) -> CmdResult {
     let instr = if pages.is_empty() { format!("CITATION {tag}") } else { format!("CITATION {tag} \\p {pages}") };
     let end = s.doc.insert_object(
         &at,
-        InlineObject::Field { instr, result: cite(&src, st.name, n, &pages), locked: false, code: false, form: String::new() },
+        InlineObject::Field { instr, result: cite(&src, st.name, n, &pages), locked: false, dirty: false, code: false, form: String::new() },
         &props,
     )?;
     s.sel = Selection::caret(end);
@@ -797,7 +797,7 @@ pub(crate) fn generated_list(s: &mut Session, instr: &str, title: &str) -> Resul
     let end = head.len();
     head.insert_object(
         end,
-        InlineObject::Field { instr: instr.to_string(), result: String::new(), locked: false, code: false, form: String::new() },
+        InlineObject::Field { instr: instr.to_string(), result: String::new(), locked: false, dirty: false, code: false, form: String::new() },
         &CharProps::default(),
     )?;
     let i = if s.doc.para_at(&at).is_some_and(|p| p.is_empty()) { at.path.last() } else { s.doc.split_paragraph(&at)?.path.last() };
@@ -1001,8 +1001,11 @@ fn cross_ref(s: &mut Session, v: &Value) -> CmdResult {
         ref_bookmark(s, &pos, show == "number", at)?
     };
     let instr = format!("{} {name} \\h", if show == "page" { "PAGEREF" } else { "REF" });
-    let end =
-        s.doc.insert_object(&at, InlineObject::Field { instr, result: result.clone(), locked: false, code: false, form: String::new() }, &props)?;
+    let end = s.doc.insert_object(
+        &at,
+        InlineObject::Field { instr, result: result.clone(), locked: false, dirty: false, code: false, form: String::new() },
+        &props,
+    )?;
     s.sel = Selection::caret(end);
     Ok(json!({"inserted": result}))
 }
@@ -1182,7 +1185,7 @@ mod tests {
         let external_instr = r#"ADDIN ZOTERO_ITEM CSL_CITATION {"citationID":"keep-me","citationItems":[{"id":9}]}"#;
         let c = CharProps::default();
         let para = s.doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap();
-        para.insert_object(0, InlineObject::FieldStart { instr: external_instr.into(), locked: true }, &c).unwrap();
+        para.insert_object(0, InlineObject::FieldStart { instr: external_instr.into(), locked: true, dirty: false }, &c).unwrap();
         para.insert_object(wordcraft_doc::para::OBJ.len_utf8(), InlineObject::FieldEnd, &c).unwrap();
         s.doc.set_custom_prop("ZOTERO_PREF_1", "<data><session id=\"keep\"/></data>");
         let external_before = s.doc.field_ranges(StoryRef::Body);
@@ -1217,6 +1220,7 @@ mod tests {
                     instr: "CITATION Missing2020".into(),
                     result: "(Doe, 2020)".into(),
                     locked: false,
+                    dirty: false,
                     code: false,
                     form: String::new(),
                 },
@@ -1249,6 +1253,7 @@ mod tests {
                     instr: "CITATION NoteRef".into(),
                     result: "old result".into(),
                     locked: false,
+                    dirty: false,
                     code: false,
                     form: String::new(),
                 },
@@ -1393,7 +1398,14 @@ mod tests {
         earlier
             .insert_object(
                 0,
-                InlineObject::Field { instr: "SEQ Equation \\* ARABIC".into(), result: "0".into(), locked: false, code: false, form: String::new() },
+                InlineObject::Field {
+                    instr: "SEQ Equation \\* ARABIC".into(),
+                    result: "0".into(),
+                    locked: false,
+                    dirty: false,
+                    code: false,
+                    form: String::new(),
+                },
                 &CharProps::default(),
             )
             .unwrap();

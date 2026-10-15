@@ -2,7 +2,8 @@
 
 use craft_ui::printing::Labels;
 pub use craft_ui::printing::{Discover, Duplex, Feedback, Printer, Settings, State};
-pub type Submit = Box<dyn Fn(Vec<u8>, craft_ui::printing::Settings, bool) -> std::sync::mpsc::Receiver<Result<String, String>>>;
+pub type Submit =
+    Box<dyn Fn(Vec<u8>, craft_ui::printing::Settings, bool, Vec<(String, String)>) -> std::sync::mpsc::Receiver<Result<String, String>>>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NativeDuplex {
@@ -179,7 +180,21 @@ pub fn submit(app: &mut crate::WordApp, params: &serde_json::Value) -> Result<se
     if app.services.print_native.is_some() && !app.printing.ready() {
         return Err("Select an available printer in File > Print before submitting.".into());
     }
-    if let Some(copies) = params.get("copies")
+    let native = app.services.print_native.is_some();
+    let mut settings = app.printing.settings.clone();
+    let mut pdf_params = params.clone();
+    if native {
+        let object = pdf_params.as_object_mut().ok_or("print settings must be an object")?;
+        if let Some(copies) = object.get("copies") {
+            settings.copies = copies
+                .as_u64()
+                .filter(|copies| (1..=wordcraft_engine::print::MAX_COPIES as u64).contains(copies))
+                .ok_or_else(|| format!("copies must be an integer from 1 to {}", wordcraft_engine::print::MAX_COPIES))?
+                as u32;
+        }
+        // Copies are performed by the native spooler, so they must not be embedded in the PDF.
+        object.insert("copies".into(), json!(1));
+    } else if let Some(copies) = params.get("copies")
         && !copies.as_u64().is_some_and(|n| (1..=wordcraft_engine::print::MAX_COPIES as u64).contains(&n))
     {
         return Err(format!("copies must be an integer from 1 to {}", wordcraft_engine::print::MAX_COPIES));
@@ -189,18 +204,32 @@ pub fn submit(app: &mut crate::WordApp, params: &serde_json::Value) -> Result<se
     {
         return Err("collate must be a boolean".into());
     }
-    let pdf = app.session.print_pdf(params).map_err(|error| error.to_string())?;
-    let byte_count = pdf.0.len();
+    let (pdf, plan) = app.session.print_pdf(&pdf_params).map_err(|error| error.to_string())?;
+    let byte_count = pdf.len();
     if let Some(submit) = &app.services.print_native {
-        let settings = app.printing.settings.clone();
+        if plan.chosen.checked_mul(settings.copies as usize).is_none_or(|pages| pages > wordcraft_engine::print::MAX_PRINT_PAGES) {
+            return Err("the selected pages and copies exceed the print-job page limit".into());
+        }
         let collated = params.get("collate").and_then(serde_json::Value::as_bool).unwrap_or(app.ui.print.collate);
-        let receiver = submit(pdf.0, settings, collated);
+        let orientation = params.get("orientation").and_then(serde_json::Value::as_str).unwrap_or(&app.ui.print.orientation);
+        let landscape = match orientation {
+            "landscape" => true,
+            "portrait" => false,
+            "auto" => app.session.export_layout().pages.first().is_some_and(|page| page.w > page.h),
+            _ => return Err("orientation must be auto, portrait or landscape".into()),
+        };
+        let options = if landscape {
+            vec![("orientation-requested".into(), "4".into()), ("landscape".into(), "true".into())]
+        } else {
+            vec![("orientation-requested".into(), "3".into())]
+        };
+        let receiver = submit(pdf, settings, collated, options);
         app.printing.begin(receiver).map_err(|_| "a print job is already in progress".to_string())?;
         app.print_feedback_seen = None;
         return Ok(json!({"printing":true,"bytes":byte_count,"pending":true}));
     }
     if let Some(print) = &app.services.print {
-        print(&pdf.0)?;
+        print(&pdf)?;
     }
     Ok(json!({"printing":true,"bytes":byte_count,"pending":false}))
 }

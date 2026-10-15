@@ -96,6 +96,7 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         log::info!("eframe application exit callback entered");
+        print::finish_pending_jobs();
         finish_recovery_before_exit(&mut self.0);
         save_prefs(&self.0);
         if let Some(key_file) = &self.2 {
@@ -128,6 +129,7 @@ fn schedule_macos_terminate(app: &mut WordApp, key_file: Option<&control_server:
     log::info!("window close: quitting");
     // AppKit termination can bypass eframe's on_exit callback. Stop and checkpoint the recovery
     // worker here as well as on_exit; finish_recovery is idempotent after the first call.
+    print::finish_pending_jobs();
     finish_recovery_before_exit(app);
     save_prefs(app);
     if let Some(key_file) = key_file {
@@ -245,6 +247,8 @@ fn write_prefs(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
 fn services(file_dialog: file_dialogs::Hook, ctx: &egui::Context) -> Services {
     Services {
         file_dialog: Some(file_dialog),
+        printers: Some(print::discover()),
+        print_native: Some(print::submit()),
         print: Some(print::hook()),
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         native_print: Some(Box::new(print::CupsBackend)),

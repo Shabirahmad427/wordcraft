@@ -2,15 +2,16 @@
 
 ## Pinned upstream integration (validation in progress)
 
-The October 14 integration preserves fork history from `cdb3d282` and pins upstream
-`9d4d2ea01c87e5709f2f3da022e22a372799270b`. At that pin the fork was 153 commits ahead
-and 186 behind. Later upstream commits are deferred to the next integration. The application
-remains version 0.7.0. Conflict resolution retains bounded rich clipboard publication,
-source styles/media, custom layout diagnostics and their regressions, while incorporating
-upstream complex-script theme fonts, hidden paragraph handling and additional clipboard tests.
-The final merged tree still requires local gates and the complete hosted Printing, Document
-regressions, Packaging lint and Linux/macOS/Windows Native packages checks. Historical passing
-runs below do not validate this merge. Existing workstation installations are unchanged.
+The October 15 integration starts from fork commit `426331fa` and pins upstream
+`fd0bb2fb1ec081e3eddc4d01917637fef0cafdfe`. Before merging, the fork was 155 commits ahead
+and 35 behind. The application remains version 0.7.0. Conflict resolution retains the fork's
+native print adapters, bounded rich clipboard publication, source styles/media and layout
+diagnostics while incorporating upstream document, proofing, recovery, UI and localization work.
+The merge also fixes recovery-test lock timing, adds missing content-type manifests to the
+date-field DOCX fixtures, and completes the new Croatian and Swedish catalog entries. All six
+local CI gates pass. Hosted Printing, Document regressions, Packaging lint and the complete
+Linux/macOS/Windows Native packages matrix must still run on the final merge commit. Historical
+passing runs below do not validate this merge. Existing installations remain unchanged.
 
 Phase 7T.2 validation passed on commit `a2718489` in [the full native package run](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634643684): Linux DEB, Apple Silicon macOS DMG and Windows x64 MSI jobs all passed, with no skipped platform. Each ran package creation, fresh installation, same-version replacement, isolated preference/recovery preservation, native edit/save/PDF/quit, and package removal. The Windows ARM64 package/install/CLI check also passed, without GUI-runtime coverage. The separate [Printing](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634652720), [Document regressions](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634656901) and [Packaging lint](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634644071) workflows passed. The package jobs took 28m47s Linux, 32m24s macOS and 20m51s Windows. Cold 0.7.0 baseline builds took 9m15s Linux and 10m macOS; Windows restored its baseline MSI cache in 2s. Inspection found that Rust cache omitted workspace crates by default; cache keys now opt into workspace-crate caching. This cache change is being validated on the final commit. Intel Mac hardware, Windows ARM64 GUI runtime, signing/notarization claims, and updates to the existing workstations remain unverified/not performed.
 

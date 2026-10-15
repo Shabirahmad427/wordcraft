@@ -89,7 +89,7 @@ pub fn fixture(kind: &str) -> BTreeMap<String, Vec<u8>> {
     footer
         .insert_object(
             footer.len(),
-            InlineObject::Field { instr: "PAGE".into(), result: "1".into(), locked: false, code: false, form: String::new() },
+            InlineObject::Field { instr: "PAGE".into(), result: "1".into(), locked: false, dirty: false, code: false, form: String::new() },
             &Default::default(),
         )
         .unwrap();
