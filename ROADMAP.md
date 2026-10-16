@@ -50,9 +50,13 @@ fork and both defects reproduced through minimal DOCX package fixtures before co
 DOCX reader now handles standard on/off values case-insensitively with surrounding whitespace and
 parses mixed-case measure units including EMU without consuming the unit's initial `e` as an
 exponent. Added package-boundary regressions for run formatting, automatic spacing, table look,
-protection, unequal-column widths and EMU spacing. `cargo xtask ci` and targeted tests pass locally;
-required hosted workflows are pending on the implementation commit. Existing installations remain
-unchanged; no claim is made for #2276, #2253 or #2246.
+protection, unequal-column widths and EMU spacing. `cargo xtask ci` and targeted tests pass locally.
+On implementation commit `099cbd5f`, Printing ([run 38826430092](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826430092)),
+Document regressions ([run 38826404239](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826404239)),
+Native packages ([run 38826404171](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826404171)) and
+Packaging lint ([run 38826437523](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826437523))
+all passed with Linux, macOS and Windows jobs successful. Existing installations remain unchanged;
+no claim is made for #2276, #2253 or #2246.
 
 Phase 7T.2 validation passed on commit `a2718489` in [the full native package run](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634643684): Linux DEB, Apple Silicon macOS DMG and Windows x64 MSI jobs all passed, with no skipped platform. Each ran package creation, fresh installation, same-version replacement, isolated preference/recovery preservation, native edit/save/PDF/quit, and package removal. The Windows ARM64 package/install/CLI check also passed, without GUI-runtime coverage. The separate [Printing](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634652720), [Document regressions](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634656901) and [Packaging lint](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634644071) workflows passed. The package jobs took 28m47s Linux, 32m24s macOS and 20m51s Windows. Cold 0.7.0 baseline builds took 9m15s Linux and 10m macOS; Windows restored its baseline MSI cache in 2s. Inspection found that Rust cache omitted workspace crates by default; cache keys now opt into workspace-crate caching. This cache change is being validated on the final commit. Intel Mac hardware, Windows ARM64 GUI runtime, signing/notarization claims, and updates to the existing workstations remain unverified/not performed.
 

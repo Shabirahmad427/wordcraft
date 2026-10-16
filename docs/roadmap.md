@@ -37,7 +37,12 @@ Phase 7U.3 audits upstream DOCX reader PRs [#2275](https://github.com/storytold/
 and [#2267](https://github.com/storytold/wordcraft/pull/2267). Both defects were absent from the
 fork and reproduced with fail-first synthetic package tests. Shared case-insensitive on/off parsing
 and mixed-case measure units/EMU exponent handling are implemented; targeted package tests and all
-six `cargo xtask ci` gates pass locally. Required hosted workflows remain pending on this commit.
+six `cargo xtask ci` gates pass locally. On implementation commit `099cbd5f`, hosted Printing
+([run 38826430092](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826430092)), Document
+regressions ([run 38826404239](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826404239)),
+Native packages ([run 38826404171](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826404171))
+and Packaging lint ([run 38826437523](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826437523))
+passed, including successful Linux, macOS and Windows jobs.
 
 The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current five-gap evidence priority and distinguishes native runtime results from cross-builds.
 
@@ -107,7 +112,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-15 | minor | Phase 7U.3: integrate missing DOCX fixes from #2275/#2267 after package-level repro; all six local CI gates pass, hosted OS workflows pending |
+| 2026-10-15 | minor | Phase 7U.3: integrate missing DOCX fixes from #2275/#2267 after package-level repro; all six local CI gates and hosted three-OS workflows pass on `099cbd5f` |
 | 2026-10-15 | minor | Phase 7U.2 structured drawing clipboard landed; hosted regression, printing, packaging lint and full three-OS package matrix passed on `85f03acb`; Windows GUI #2276 and physical Portuguese keyboard checks remain pending |
 | 2026-10-15 | minor | Phase 7U.1: adapted #2251; #2246 independently probed without reproduction; native #2253 keyboard input and hosted checks pending |
 | 2026-10-14 | minor | Integrated upstream 0.7.0; all local CI gates and isolated Apple Silicon GUI/recovery shutdown checks pass; hosted package upgrade checks pending |
