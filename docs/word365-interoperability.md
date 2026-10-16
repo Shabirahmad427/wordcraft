@@ -1,7 +1,8 @@
 # Word 365 interoperability benchmark
 
-**Status: one local-only Word reference pair created; DOCX round-trip is blocked and the WordCraft
-visual comparison is diagnostic only, not an acceptance result.**
+**Status: one local-only Word reference pair created; a controlled text edit and package-preserving
+DOCX round-trip pass within the narrow guarded-edit envelope. Word reopen remains unverified, and the
+WordCraft visual comparison is diagnostic only, not an acceptance result.**
 This report does not infer Office provenance from OOXML shape, filenames, metadata, or passing
 WordCraft tests.
 
@@ -31,13 +32,16 @@ have one Letter page and rasterize to 1275 × 1650 at 150 dpi. The diagnostic ra
 changed. Extracted text retained the fixture content; Arabic glyph extraction/shaping differs and
 needs review. These numbers are diagnostics, not an acceptance pass.
 
-WordCraft opened the source through its CLI and reported one page. The no-edit DOCX save was blocked
-by the existing guarded-package policy with “this edit changes protected document state; saving
-would risk unsupported OOXML”; no output DOCX was created. This is a protective rejection, not data
-loss, and its model-state cause was not isolated. WordCraft PDF export succeeded. Consequently, DOCX
-package round-trip, controlled edits, and reopening a WordCraft-saved DOCX in Word are **blocked/not
-run** for this case. The per-case report, DOCX, both PDFs and diagnostic rasters remain under ignored
-`/corpus/interop/`; the report contains hashes and is not suitable for publication.
+WordCraft opened the source through its CLI and reported one page. An unchanged save was refused by
+the guarded-package policy. A direct append at document end was also refused because that edit had no
+provable source mapping. Replacing the final, directly mapped body paragraph with its original text
+plus a controlled annotation succeeded. The package comparison found exactly one changed part,
+`word/document.xml`; all other package parts and relationships matched. Reopening and saving that
+output again retained the annotation and passed the same allowlist. This demonstrates one supported
+isolated edit, not general package editability. Opening the saved DOCX in Microsoft Word remains
+**not run**. The source, edited files, both PDFs, comparison reports and diagnostic rasters remain
+under ignored `/corpus/interop/` storage; reports containing fingerprints are not suitable for
+publication.
 
 ## Synthetic opening-path check for upstream issue #963
 
@@ -108,8 +112,8 @@ names and hashes, not text, but part names can still disclose document structure
 
 To finish the application-level pass, open a WordCraft-saved DOCX in the recorded Microsoft Word
 build, note any repair/recovery warning, save a copy from Word, reopen that copy in WordCraft and
-compare its package report. That DOCX was not created in the local smoke case because WordCraft's
-preservation guard rejected its no-edit save. The one-page raster diagnostic above was run, but
+compare its package report. A WordCraft-saved DOCX now exists from the controlled edit, but this
+Microsoft Word reopen stage has not been run. The one-page raster diagnostic above was run, but
 text-anchor and object-edge measurements were not. The planned acceptance tolerances are exact page
 count, text-anchor p95 displacement ≤3 pt and figure/table/equation edge displacement ≤3 pt; raster
 similarity is diagnostic only because font rasterizers differ. These remain protocol targets, not
@@ -235,3 +239,28 @@ represent Microsoft Word output.
 The next evidence-producing step requires a consented, redistributable Word-created corpus and a
 Windows/macOS environment that can run the actual target application. Until those exist, improvements
 can be proven internally but not certified as Word 365 interoperability.
+
+## Phase 7U.8 follow-up (2026-10-16)
+
+On macOS arm64, the authorized local Word-generated synthetic sample was copied to temporary output,
+edited by replacing one directly mapped final body paragraph, saved, reopened and saved again. Both
+package comparisons passed with `word/document.xml` as the sole allowed changed part; the annotation
+remained after reopening. The original DOCX was not modified. A direct append at document end remains
+safely rejected because the imported model cannot prove its source mapping. All output and comparison
+data remain local and ignored.
+
+The Word PDF extraction maps a source Arabic Yeh to presentation-form Farsi Yeh. WordCraft's PDF
+extracts the original logical Arabic word. This did not demonstrate a WordCraft text-mapping defect;
+a regression now checks that WordCraft PDF text preserves the source Arabic characters.
+
+FreeBSD run [38878636541](https://github.com/Shabirahmad427/wordcraft/actions/runs/38878636541)
+built successfully and failed only two layout pagination tests. Those test inputs relied on default
+font metrics. They now specify the bundled Source Serif 4 face and 12 pt exact line spacing while
+retaining their original pagination assertions. Both pass locally on macOS; the hosted FreeBSD result
+still needs a rerun.
+
+Windows ARM64 run [38893268625](https://github.com/Shabirahmad427/wordcraft/actions/runs/38893268625)
+cross-compiled the GUI and CLI, built an ARM64 MSI, installed it on a hosted ARM64 runner, checked
+executable architecture, ran the CLI version command and uninstalled. It did not launch the GUI or
+exercise native editing, rendering, clipboard, DOCX save/reopen or PDF export. The MSI was unsigned
+because signing secrets were unavailable.

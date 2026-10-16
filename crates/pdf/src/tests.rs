@@ -1507,6 +1507,14 @@ fn right_to_left_text_extracts_in_logical_order() {
     }
 }
 
+#[test]
+fn arabic_pdf_text_mapping_preserves_logical_source_characters() {
+    let d = Document::from_text("العربية");
+    let words = viewer_words(&export(&d, &PdfOptions::default()).unwrap());
+    assert!(words.iter().any(|word| word == "العربية"), "Arabic source characters were not retained: {words:?}");
+    assert!(!words.iter().any(|word| word.contains('ﯿ')), "PDF text mapping substituted a presentation-form character: {words:?}");
+}
+
 /// Every glyph's outline on the page, as a rounded bounding box in page space (sorted): what the
 /// page looks like, whatever order the glyphs were written in.
 fn glyph_boxes(bytes: &[u8]) -> Vec<[i64; 4]> {

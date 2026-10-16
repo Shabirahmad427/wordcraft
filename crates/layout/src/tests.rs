@@ -4407,14 +4407,23 @@ fn floating_tables_take_no_room_and_text_wraps_beside_them() {
 #[test]
 fn a_floating_table_ignores_a_paragraphs_empty_lines() {
     use wordcraft_doc::para::Anchor;
+    use wordcraft_doc::props::LineSpacing;
     use wordcraft_doc::props::TableFloat;
+    let paragraph = |text: &str| {
+        let mut p = wordcraft_doc::Paragraph::with_text(
+            text,
+            wordcraft_doc::CharProps { font: Some("Source Serif 4".into()), size: Some(12.0), ..Default::default() },
+        );
+        p.props.line_spacing = Some(LineSpacing::Exactly(12.0));
+        wordcraft_doc::para_block(p)
+    };
 
     let mut doc = Document::from_text(&[""; 9].join("\n"));
-    doc.body.push(wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text("Visible\n\n\n", Default::default())));
-    doc.body.extend((0..14).map(|_| wordcraft_doc::para_block(wordcraft_doc::Paragraph::new())));
+    doc.body.push(paragraph("Visible\n\n\n"));
+    doc.body.extend((0..14).map(|_| paragraph("")));
     let mut table = Table::new(12, 1, 300.0);
     for (i, row) in table.rows.iter_mut().enumerate() {
-        row.cells[0].blocks = vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text(&format!("Approval {i}"), Default::default()))];
+        row.cells[0].blocks = vec![paragraph(&format!("Approval {i}"))];
     }
     table.props.float = Some(TableFloat { h_rel: Anchor::Margin, v_rel: Anchor::Margin, x: 100.0, y: 50.0, ..Default::default() });
     let at = doc.body.len();
@@ -5059,18 +5068,29 @@ fn an_inherited_footer_sizes_its_percentage_table_by_its_own_section() {
 #[test]
 fn a_row_with_less_room_than_its_minimum_height_moves_on_whole() {
     use wordcraft_doc::props::HeightRule;
+    use wordcraft_doc::props::LineSpacing;
     // Measured in Word: with 49 pt left on the page, a row of eight lines splits, but the same row
     // with an at-least height of 63.6 pt goes to the next page whole.
+    let paragraph = |text: &str| {
+        let mut p = wordcraft_doc::Paragraph::with_text(
+            text,
+            wordcraft_doc::CharProps { font: Some("Source Serif 4".into()), size: Some(12.0), ..Default::default() },
+        );
+        p.props.line_spacing = Some(LineSpacing::Exactly(12.0));
+        wordcraft_doc::para_block(p)
+    };
     let first_row_line_page = |min: Option<f32>| {
         let lines: Vec<String> = (1..=200).map(|i| format!("Filler {i}")).collect();
-        let one_page = lay(&Document::from_text(&lines.join("\n"))).pages[0].items.iter().filter(|i| matches!(i, Placed::Lines { .. })).count();
+        let mut filler = Document::from_text("");
+        filler.body = lines.iter().map(|line| paragraph(line)).collect();
+        let one_page = lay(&filler).pages[0].items.iter().filter(|i| matches!(i, Placed::Lines { .. })).count();
         let mut t = Table::new(1, 1, 400.0);
         t.rows[0].props.height = min;
         t.rows[0].props.height_rule = HeightRule::AtLeast;
-        t.rows[0].cells[0].blocks =
-            (1..=8).map(|k| wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text(&format!("Row line {k}"), Default::default()))).collect();
+        t.rows[0].cells[0].blocks = (1..=8).map(|k| paragraph(&format!("Row line {k}"))).collect();
         // Fill the page, leaving two filler paragraphs' room (less than 63.6 pt) for the row.
-        let mut d = Document::from_text(&lines[..one_page - 2].join("\n"));
+        let mut d = Document::from_text("");
+        d.body = lines[..one_page - 2].iter().map(|line| paragraph(line)).collect();
         let end = d.body.len();
         d.insert_block(StoryRef::Body, &Path::top(end), wordcraft_doc::Block::Table(t)).unwrap();
         let l = lay(&d);
