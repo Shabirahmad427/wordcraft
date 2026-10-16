@@ -160,8 +160,19 @@ the package comparator could not be run against a WordCraft DOCX output. The DOC
 `cargo xtask ci` was attempted on this Mac but did not pass: 581 workspace tests passed, 1 UI test
 failed because the local WGPU test environment returned “No adapter found,” and 2 tests were ignored.
 Explicit `gl` software and `metal` backend reruns of the failing headless test had the same adapter
-failure. No code was changed in this phase. The hosted cross-platform workflows have not run on the
-Phase 7U.6 documentation commit; historical workflow results below apply only to their named SHAs.
+failure. No application code was changed in this phase. Hosted workflows passed on implementation
+commit `0873ac0c0d04866e48e672dc2d2839906e775a6e`:
+
+- [Printing](https://github.com/Shabirahmad427/wordcraft/actions/runs/38847139170): Linux, macOS and
+  Windows passed.
+- [Document regressions](https://github.com/Shabirahmad427/wordcraft/actions/runs/38847141664):
+  Linux, macOS and Windows regression jobs passed; Linux visual and performance jobs passed.
+- [Native packages](https://github.com/Shabirahmad427/wordcraft/actions/runs/38847120300): Linux,
+  macOS and Windows package/install validation passed (DEB, DMG and MSI).
+- [Packaging lint](https://github.com/Shabirahmad427/wordcraft/actions/runs/38847154127): passed.
+
+These actions validated the implementation and manifest at the listed SHA; this paragraph is a
+report-only follow-up and does not change application code or corpus assets.
 
 ### Phase 7G baseline check (2026-10-12)
 
