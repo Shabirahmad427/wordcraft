@@ -596,10 +596,14 @@ impl Session {
     pub fn new(doc: Document) -> Self {
         let start = doc.start_of(StoryRef::Body);
         let bib_style = doc_bib_style(&doc);
+        let mut view = ViewState::default();
+        if let Some(zoom) = doc.settings.zoom {
+            crate::cmd::view::restore_zoom(&mut view, zoom);
+        }
         Session {
             doc,
             sel: Selection::caret(start),
-            view: ViewState::default(),
+            view,
             pending: None,
             path: None,
             file_name: None,

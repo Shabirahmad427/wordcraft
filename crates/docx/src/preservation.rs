@@ -464,6 +464,45 @@ struct GraphicSizeEdit {
     new_w: f32,
     new_h: f32,
 }
+
+/// Names document-model fields that differ after an edit is normalized against the imported
+/// baseline. The diagnostic intentionally reports field paths only, never source text or values.
+fn differing_model_fields(current: &Document, baseline: &Document) -> Vec<&'static str> {
+    let mut fields = Vec::new();
+    macro_rules! compare_field {
+        ($field:ident) => {
+            if current.$field != baseline.$field {
+                fields.push(concat!("document.", stringify!($field)));
+            }
+        };
+    }
+    compare_field!(body);
+    compare_field!(last_section);
+    compare_field!(parts);
+    compare_field!(styles);
+    compare_field!(numbering);
+    compare_field!(comments);
+    compare_field!(revisions);
+    let zoom_changed = current.settings.zoom != baseline.settings.zoom;
+    if zoom_changed {
+        fields.push("document.settings.zoom");
+    }
+    let mut current_settings = current.settings.clone();
+    let baseline_settings = baseline.settings.clone();
+    current_settings.zoom = baseline_settings.zoom;
+    if current_settings != baseline_settings {
+        fields.push("document.settings");
+    }
+    compare_field!(core);
+    compare_field!(sources);
+    compare_field!(custom_props);
+    compare_field!(footnote_separators);
+    compare_field!(endnote_separators);
+    compare_field!(media);
+    compare_field!(passthrough);
+    fields
+}
+
 fn edits(doc: &Document, baseline: &Document) -> Result<(Vec<TextEdit>, Vec<GraphicSizeEdit>), DocxError> {
     let mut normalized = doc.clone();
     if normalized.body.len() != baseline.body.len() {
@@ -536,7 +575,9 @@ fn edits(doc: &Document, baseline: &Document) -> Result<(Vec<TextEdit>, Vec<Grap
         normalized.passthrough.remove(key);
     }
     if serde_json::to_vec(&normalized).map_err(|e| error(e.to_string()))? != serde_json::to_vec(baseline).map_err(|e| error(e.to_string()))? {
-        return Err(error("this edit changes protected document state; saving would risk unsupported OOXML"));
+        let fields = differing_model_fields(&normalized, baseline);
+        let fields = if fields.is_empty() { "serialized model state".to_string() } else { fields.join(", ") };
+        return Err(error(format!("protected document state changed at {fields}; refusing save to preserve unsupported OOXML")));
     }
     Ok((edits, graphic_sizes))
 }
@@ -764,5 +805,23 @@ pub(crate) fn warnings(doc: &Document) -> Vec<String> {
         vec!["This DOCX contains package content WordCraft cannot fully reproduce. Original parts, namespaces, content controls and active content are preserved without execution. Only isolated main-body text edits outside protected structures can be saved; unsafe edits return an error. Unsupported content may not be displayed or printed. Other export formats do not preserve the original package.".into()]
     } else {
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn protected_state_error_names_changed_field_without_values() {
+        let baseline = Document::new();
+        let mut current = baseline.clone();
+        current.settings.zoom = Some(wordcraft_doc::Zoom { percent: 173, fit: None });
+        let error = match edits(&current, &baseline) {
+            Ok(_) => panic!("changed protected setting must be rejected"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("document.settings.zoom"));
+        assert!(!error.to_string().contains("173"));
     }
 }

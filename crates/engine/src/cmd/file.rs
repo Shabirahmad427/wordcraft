@@ -230,7 +230,7 @@ fn open(s: &mut Session, v: &Value) -> CmdResult {
     s.set_document(doc);
     s.source_package = source;
     if let Some(z) = s.doc.settings.zoom {
-        super::view::restore_zoom(s, z);
+        super::view::restore_zoom(&mut s.view, z);
     }
     s.path = Some(path.into());
     if encrypted {

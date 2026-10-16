@@ -188,17 +188,17 @@ pub(crate) fn saved_zoom(v: &crate::ViewState) -> Option<Zoom> {
 }
 
 /// Show an opened document at the zoom it was saved with.
-pub(crate) fn restore_zoom(s: &mut Session, z: Zoom) {
+pub(crate) fn restore_zoom(v: &mut crate::ViewState, z: Zoom) {
     let fit = match z.fit {
         Some(ZoomFit::OnePage) => "onePage",
         Some(ZoomFit::PageWidth) => "pageWidth",
         Some(ZoomFit::TextWidth) => "textWidth",
         None => "",
     };
-    s.view.zoom = z.percent.clamp(10, 500) as f32 / 100.0;
-    s.view.fit = fit.into();
-    s.view.multi_page = false;
-    s.view.single_column = fit == "onePage" || fit == "pageWidth";
+    v.zoom = z.percent.clamp(10, 500) as f32 / 100.0;
+    v.fit = fit.into();
+    v.multi_page = false;
+    v.single_column = fit == "onePage" || fit == "pageWidth";
 }
 
 fn zoom(s: &mut Session, v: &Value) -> CmdResult {

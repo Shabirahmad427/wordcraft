@@ -1,7 +1,7 @@
 //! Engine save, Undo and durable recovery must carry guarded package state together.
 #[path = "../../docx/tests/common/preservation.rs"]
 mod fixtures;
-use fixtures::{archive, fixture, unpack};
+use fixtures::{archive, fixture, replace, unpack};
 use serde_json::json;
 use wordcraft_engine::{
     Session,
@@ -57,6 +57,33 @@ fn guarded_text_save_undo_and_recovery_preserve_inert_parts_and_bindings() {
             wordcraft_render::render_page(&reopened.doc, b, 1.0, &options).to_straight()
         );
     }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn guarded_no_edit_save_restores_imported_zoom_and_round_trips_unchanged() {
+    let directory = std::env::temp_dir().join(format!("wordcraft-guarded-zoom-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let output = directory.join("saved.docx");
+    let mut parts = fixture();
+    replace(&mut parts, "word/settings.xml", "</w:settings>", "<w:zoom w:percent=\"173\"/></w:settings>");
+    let source = archive(&parts);
+    let doc = wordcraft_engine::io::open_bytes("source.docx", &source).unwrap();
+    assert!(wordcraft_docx::has_preserved_package(&doc));
+    assert_eq!(doc.settings.zoom, Some(wordcraft_engine::doc::Zoom { percent: 173, fit: None }));
+    let expected_text = doc.plain_text(StoryRef::Body);
+
+    // The CLI builds a headless session directly from the imported model. That session must
+    // inherit the DOCX view zoom so a no-edit save doesn't turn it into a different protected edit.
+    let mut session = Session::new(doc);
+    assert_eq!(session.view.zoom, 1.73);
+    session.run("file.save", &json!({"path":output})).unwrap();
+
+    let saved = std::fs::read(&output).unwrap();
+    assert_eq!(saved, source, "a no-edit guarded save keeps every original package byte");
+    let reopened = wordcraft_engine::io::open_bytes("saved.docx", &saved).unwrap();
+    assert_eq!(reopened.plain_text(StoryRef::Body), expected_text);
+    assert_eq!(reopened.settings.zoom, Some(wordcraft_engine::doc::Zoom { percent: 173, fit: None }));
     std::fs::remove_dir_all(directory).unwrap();
 }
 #[test]
