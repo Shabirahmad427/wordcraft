@@ -39,8 +39,9 @@ provable source mapping. Replacing the final, directly mapped body paragraph wit
 plus a controlled annotation succeeded. The package comparison found exactly one changed part,
 `word/document.xml`; all other package parts and relationships matched. Reopening and saving that
 output again retained the annotation and passed the same allowlist. This demonstrates one supported
-isolated edit, not general package editability. Opening the saved DOCX in Microsoft Word remains
-**not run**. The source, edited files, both PDFs, comparison reports and diagnostic rasters remain
+isolated edit, not general package editability. The saved DOCX was opened and visually inspected in
+Word for Mac without a repair warning; Word-side editing/save/reopen remains **not run**. The source,
+edited files, both PDFs, comparison reports and diagnostic rasters remain
 under ignored `/corpus/interop/` storage; reports containing fingerprints are not suitable for
 publication.
 
@@ -268,6 +269,32 @@ WordCraft mapping defect. No PDF code change was made.
 Windows ARM64 workflow [38893268625](https://github.com/Shabirahmad427/wordcraft/actions/runs/38893268625)
 verified cross-compilation, ARM64 MSI installation, PE architecture, CLI version, and uninstall. It
 did not run the GUI or validate editing, rendering, clipboard, DOCX save/reopen, or PDF export.
+
+## Phase 7U.10 follow-up (2026-10-16)
+
+Synthetic preservation tests now prove that a directly mapped whole source run can have bold/italic
+changed and that a paragraph can switch to an existing style reference while all other ZIP parts
+remain byte-identical. These are low-level model edits; they do not demonstrate that ordinary editor
+selection commands can express the edits.
+
+On the authorized local Word-created sample, `format.italic` selected through the CLI was refused
+with the guard diagnostic `run formatting boundaries changed and cannot be mapped to source OOXML`.
+The selected range splits a source run, and selecting through the paragraph end can also change the
+paragraph mark. The current splice code cannot prove those changes safe. No guard was weakened, and
+selection-based formatting remains unresolved. The WordCraft → Word → save/reopen cycle was not
+performed because this session's desktop controls allowed inspection but not UI interaction. No
+private sample, content, hashes, or screenshots were added to the repository.
+
+An earlier pre-merge `cargo xtask ci` run failed one egui test because the Mac test process reported
+WGPU `No adapter found`. After merging upstream, a fresh `cargo xtask ci` run passed all six gates:
+formatting, Clippy, workspace tests (582 passed, two ignored), assets, layers, and WASM. The focused
+DOCX preservation (19), DOCX chart preservation (8), and merged shared-PDF writer (44) suites also
+passed. This local run does not establish GUI success on other platforms.
+
+On 2026-10-16, the fork merged the fetched upstream main tip at merge commit `336a74f3`. It adds the
+shared PDF writer, the Nix workflow and associated tests; fork-only Arabic extraction regressions
+were retained. Targeted PDF and DOCX suites passed after the merge. No release or installed
+application was updated.
 Independent Intel Mac and Windows ARM64 GUI behavior remain unverified.
 
 This remains one synthetic Word-created sample, not an external real-world corpus. Formatting edits,

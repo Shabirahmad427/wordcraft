@@ -13,6 +13,23 @@ but not GUI runtime or document editing. One synthetic case does not close the e
 DOCX corpus gap; see [the interoperability report](docs/word365-interoperability.md). No installed
 application was modified.
 
+## Phase 7U.10 — guarded formatting preservation (2026-10-16)
+
+Added narrowly scoped OOXML splices and synthetic regressions for bold/italic changes to an entire
+mapped source run and switching to an existing paragraph style; unrelated package parts remain
+byte-identical. The authorized Word-created sample still refuses selection-based formatting: its
+command path changes run boundaries (and a whole-paragraph selection also changes the paragraph
+mark), which cannot yet be mapped safely. The guard remains intact for those edits. The requested
+WordCraft → Word save/reopen cycle was not performed in this session. The post-merge `cargo xtask
+ci` run passed all six gates, including 582 passing workspace tests (two ignored); see
+[interoperability evidence](docs/word365-interoperability.md). An earlier pre-merge run encountered
+a WGPU “No adapter found” error, which did not recur after merging upstream. No applications were
+updated.
+
+The upstream `storytold/wordcraft` main commits fetched on 2026-10-16 were merged at `336a74f3`.
+This brings the branch current with the fetched upstream tip, including the shared PDF writer and
+Nix workflow, while retaining fork-only PDF tests. Targeted PDF (44 tests) and DOCX tests passed.
+
 ## Pinned upstream integration (validated)
 
 The October 15 integration starts from fork commit `426331fa` and pins upstream

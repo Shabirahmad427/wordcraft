@@ -8,6 +8,45 @@ fn insert(doc: &mut Document, index: usize, text: &str) {
     let props = doc.para(StoryRef::Body, &Path::top(index)).unwrap().props_of_char(0).clone();
     doc.insert_text(&Pos::body(index, 0), text, &props).unwrap();
 }
+
+fn mixed_format_fixture() -> Vec<u8> {
+    let mut files = fixture();
+    replace(
+        &mut files,
+        "word/document.xml",
+        "Editable introduction α &amp; β",
+        "Editable </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>introduction</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t xml:space=\"preserve\"> α &amp; β",
+    );
+    archive(&files)
+}
+
+fn source_with_explicit_normal_style() -> Vec<u8> {
+    let mut files = fixture();
+    let source = String::from_utf8(files.get("word/document.xml").unwrap().clone()).unwrap();
+    let text = source.find("Editable introduction α &amp; β").unwrap();
+    let paragraph = source.get(..text).unwrap().rfind("<w:p>").unwrap();
+    let before_text = source.get(paragraph..text).unwrap();
+    let updated = if let Some(ppr_end) = before_text.find("</w:pPr>") {
+        let insertion = paragraph + ppr_end;
+        format!("{}<w:pStyle w:val=\"Normal\"/>{}", &source[..insertion], &source[insertion..])
+    } else {
+        let run = before_text.find("<w:r>").unwrap() + paragraph;
+        format!("{}<w:pPr><w:pStyle w:val=\"Normal\"/></w:pPr>{}", &source[..run], &source[run..])
+    };
+    files.insert("word/document.xml".into(), updated.into_bytes());
+    archive(&files)
+}
+
+fn assert_only_document_xml_changed(source: &[u8], saved: &[u8]) {
+    let before = unpack(source);
+    let after = unpack(saved);
+    assert_eq!(before.keys().collect::<Vec<_>>(), after.keys().collect::<Vec<_>>());
+    for (path, bytes) in before {
+        if path != "word/document.xml" {
+            assert_eq!(after.get(&path), Some(&bytes), "changed package part {path}");
+        }
+    }
+}
 #[test]
 fn original_package_and_inert_embedded_content_survive_noop_exactly() {
     let files = fixture();
@@ -52,6 +91,70 @@ fn text_edits_preserve_every_other_part_and_unsupported_story_markup() {
         assert!(doc.plain_text(StoryRef::Body).contains(&format!("Edit {generation}: ")));
     }
 }
+
+#[test]
+fn text_edit_inside_one_mixed_format_run_preserves_neighbor_runs() {
+    let source = mixed_format_fixture();
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    let offset = "Edit".len();
+    let props = doc.para(StoryRef::Body, &Path::top(0)).unwrap().props_at(offset).clone();
+    doc.insert_text(&Pos::body(0, offset), "safe ", &props).unwrap();
+
+    let saved = wordcraft_docx::write(&doc).unwrap();
+    assert_only_document_xml_changed(&source, &saved);
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    let para = reopened.para(StoryRef::Body, &Path::top(0)).unwrap();
+    assert_eq!(para.text, "Editsafe able introduction α & β");
+    assert_eq!(para.runs.get(1).map(|run| run.props.bold), Some(Some(true)));
+    assert!(para.runs.iter().any(|run| run.props.italic == Some(true)));
+}
+
+#[test]
+fn formatting_a_supported_run_preserves_its_source_markup_and_other_parts() {
+    let source = archive(&fixture());
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    let run = doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap().runs.first_mut().unwrap();
+    run.props.bold = Some(true);
+
+    let saved = wordcraft_docx::write(&doc).unwrap();
+    assert_only_document_xml_changed(&source, &saved);
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    assert_eq!(reopened.para(StoryRef::Body, &Path::top(0)).unwrap().props_of_char(0).bold, Some(true));
+    let package = unpack(&saved);
+    let xml = String::from_utf8(package.get("word/document.xml").unwrap().clone()).unwrap();
+    assert!(xml.contains("<w:b/>"));
+    assert!(xml.contains("future:extension=\"keep\""));
+}
+
+#[test]
+fn adding_italic_to_one_mixed_format_run_keeps_existing_bold_and_neighbor_runs() {
+    let source = mixed_format_fixture();
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    let run = doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap().runs.get_mut(1).unwrap();
+    run.props.italic = Some(true);
+
+    let saved = wordcraft_docx::write(&doc).unwrap();
+    assert_only_document_xml_changed(&source, &saved);
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    let para = reopened.para(StoryRef::Body, &Path::top(0)).unwrap();
+    assert_eq!(para.runs.get(1).map(|run| run.props.bold), Some(Some(true)));
+    assert_eq!(para.runs.get(1).map(|run| run.props.italic), Some(Some(true)));
+    let xml = String::from_utf8(unpack(&saved).get("word/document.xml").unwrap().clone()).unwrap();
+    assert!(xml.contains("<w:b/>") && xml.contains("<w:i/>"), "mixed run formatting was not preserved: {xml}");
+}
+
+#[test]
+fn changing_to_an_existing_paragraph_style_preserves_unknown_package_parts() {
+    let source = source_with_explicit_normal_style();
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    assert!(doc.styles.styles.iter().any(|style| style.id == "Heading1"));
+    doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap().props.style = Some("Heading1".into());
+
+    let saved = wordcraft_docx::write(&doc).unwrap();
+    assert_only_document_xml_changed(&source, &saved);
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    assert_eq!(reopened.para(StoryRef::Body, &Path::top(0)).unwrap().props.style.as_deref(), Some("Heading1"));
+}
 #[test]
 fn bound_control_edit_is_blocked_even_when_outside_text_is_identical() {
     let files = fixture();
@@ -69,12 +172,15 @@ fn bound_control_edit_is_blocked_even_when_outside_text_is_identical() {
     assert!(reopened.para(StoryRef::Body, &Path::top(2)).unwrap().text.starts_with("Outside: "));
 }
 #[test]
-fn formatting_structure_settings_and_object_edits_fail_safely() {
+fn unsupported_formatting_structure_settings_and_object_edits_fail_safely() {
     let source = archive(&fixture());
-    for action in ["format", "delete paragraph", "settings", "binding text", "object", "style", "numbering", "metadata"] {
+    for action in ["unsupported format", "delete paragraph", "settings", "binding text", "object", "style", "numbering", "metadata"] {
         let mut doc = wordcraft_docx::read(&source).unwrap();
         match action {
-            "format" => doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap().runs.first_mut().unwrap().props.bold = Some(true),
+            "unsupported format" => {
+                doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap().runs.first_mut().unwrap().props.underline =
+                    Some(wordcraft_doc::props::Underline::Single)
+            }
             "delete paragraph" => {
                 doc.body.remove(1);
             }

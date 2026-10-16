@@ -5,10 +5,7 @@ use crate::{
     package::{ContentTypes, Package, zip_entries},
     preserved_xml::{self as xml, CT, Element, R, REL, RS, error, qualified},
 };
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeSet, sync::Arc};
 use wordcraft_doc::{Block, Document};
 const SOURCE: &str = "wordcraft:packageSource.v1";
 const BASE: &str = "wordcraft:packageBaseline.v1";
@@ -458,6 +455,24 @@ struct TextEdit {
     replacement: String,
 }
 #[derive(Clone, Copy)]
+struct RunFormatEdit {
+    index: usize,
+    start: usize,
+    end: usize,
+    property: RunProperty,
+    value: Option<bool>,
+}
+#[derive(Clone, Copy)]
+enum RunProperty {
+    Bold,
+    Italic,
+}
+struct StyleEdit {
+    index: usize,
+    previous: Option<String>,
+    style: String,
+}
+#[derive(Clone, Copy)]
 struct GraphicSizeEdit {
     old_w: f32,
     old_h: f32,
@@ -503,12 +518,14 @@ fn differing_model_fields(current: &Document, baseline: &Document) -> Vec<&'stat
     fields
 }
 
-fn edits(doc: &Document, baseline: &Document) -> Result<(Vec<TextEdit>, Vec<GraphicSizeEdit>), DocxError> {
+fn edits(doc: &Document, baseline: &Document) -> Result<(Vec<TextEdit>, Vec<RunFormatEdit>, Vec<StyleEdit>, Vec<GraphicSizeEdit>), DocxError> {
     let mut normalized = doc.clone();
     if normalized.body.len() != baseline.body.len() {
         return Err(error("structural editing of a guarded DOCX is unsupported; the original package is preserved"));
     }
     let mut edits = Vec::new();
+    let mut format_edits = Vec::new();
+    let mut style_edits = Vec::new();
     let mut graphic_sizes = Vec::new();
     for (index, (current, original)) in doc.body.iter().zip(&baseline.body).enumerate() {
         if current == original {
@@ -517,6 +534,61 @@ fn edits(doc: &Document, baseline: &Document) -> Result<(Vec<TextEdit>, Vec<Grap
         let (Some(current), Some(original)) = (current.as_para(), original.as_para()) else {
             return Err(error("table/object editing cannot be preserved safely in this DOCX"));
         };
+        if current.text == original.text && current.objects == original.objects && current.section == original.section {
+            let mut paragraph = current.clone();
+            let style = paragraph.props.style.take();
+            let mut baseline_paragraph = original.clone();
+            baseline_paragraph.props.style = None;
+            if paragraph.props == baseline_paragraph.props {
+                let changed_style = style != original.props.style;
+                if changed_style {
+                    let Some(style) = style else {
+                        return Err(error("removing a paragraph style cannot be preserved safely"));
+                    };
+                    if !baseline.styles.styles.iter().any(|candidate| candidate.id == style) {
+                        return Err(error("target paragraph style is not present in the source styles part"));
+                    }
+                    style_edits.push(StyleEdit { index, previous: original.props.style.clone(), style });
+                }
+                if current.mark != original.mark || current.runs.len() != original.runs.len() {
+                    return Err(error("run formatting boundaries changed and cannot be mapped to source OOXML"));
+                }
+                let mut offset = 0usize;
+                for (now, before) in current.runs.iter().zip(&original.runs) {
+                    if now.len != before.len {
+                        return Err(error("run formatting boundaries changed and cannot be mapped to source OOXML"));
+                    }
+                    if now.props != before.props {
+                        let mut restored = now.props.clone();
+                        restored.bold = before.props.bold;
+                        let bold_only = restored == before.props;
+                        let property = if bold_only {
+                            restored = now.props.clone();
+                            RunProperty::Bold
+                        } else {
+                            restored = now.props.clone();
+                            restored.italic = before.props.italic;
+                            if restored != before.props {
+                                return Err(error("only direct bold or italic formatting on whole mapped runs can be preserved safely"));
+                            }
+                            RunProperty::Italic
+                        };
+                        let value = match property {
+                            RunProperty::Bold => now.props.bold,
+                            RunProperty::Italic => now.props.italic,
+                        };
+                        let end = offset.checked_add(now.len).ok_or_else(|| error("run offset overflow"))?;
+                        format_edits.push(RunFormatEdit { index, start: offset, end, property, value });
+                    }
+                    offset = offset.checked_add(now.len).ok_or_else(|| error("run offset overflow"))?;
+                }
+                let changed_format = current.runs.iter().zip(&original.runs).any(|(now, before)| now.props != before.props);
+                if changed_style || changed_format {
+                    *normalized.body.get_mut(index).ok_or_else(|| error("paragraph index"))? = Arc::new(Block::Para(original.clone()));
+                    continue;
+                }
+            }
+        }
         let mut size_only = current.clone();
         let mut size_edits = Vec::new();
         if size_only.objects.len() == original.objects.len() {
@@ -579,19 +651,65 @@ fn edits(doc: &Document, baseline: &Document) -> Result<(Vec<TextEdit>, Vec<Grap
         let fields = if fields.is_empty() { "serialized model state".to_string() } else { fields.join(", ") };
         return Err(error(format!("protected document state changed at {fields}; refusing save to preserve unsupported OOXML")));
     }
-    Ok((edits, graphic_sizes))
+    Ok((edits, format_edits, style_edits, graphic_sizes))
 }
-/// Only a first direct, simple text run in a direct body paragraph has a provable model
-/// mapping. Protected wrappers, fields, markers and mixed text runs cannot be edited here.
+struct SourceRun {
+    start: usize,
+    end: usize,
+    run: usize,
+}
+
+/// Direct paragraphs made only of simple text runs have a provable source mapping. Wrappers,
+/// fields, markers, multiple text nodes in a run, and non-text run children remain guarded.
+fn source_runs(nodes: &[Element], para: &Element) -> Option<Vec<SourceRun>> {
+    if !para.word("p") {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    for run_index in &para.children {
+        let run = nodes.get(*run_index)?;
+        if run.word("pPr") {
+            continue;
+        }
+        if !run.word("r") {
+            return (!out.is_empty()).then_some(out);
+        }
+        let mut text = None;
+        for child_index in &run.children {
+            let child = nodes.get(*child_index)?;
+            if child.word("rPr") {
+                continue;
+            }
+            if text.is_some() || !child.word("t") || child.empty || !child.children.is_empty() {
+                return (!out.is_empty()).then_some(out);
+            }
+            if !child.attrs.keys().all(|key| key == &qualified("http://www.w3.org/XML/1998/namespace", "space")) {
+                return None;
+            }
+            text = Some(*child_index);
+        }
+        let text_index = text?;
+        let text_node = nodes.get(text_index)?;
+        if text_node.text.is_empty() {
+            return None;
+        }
+        let end = offset.checked_add(text_node.text.len())?;
+        out.push(SourceRun { start: offset, end, run: *run_index });
+        offset = end;
+    }
+    Some(out)
+}
+/// Only the first direct, simple text run has the legacy safe text-edit mapping.
 fn text_slot<'a>(nodes: &'a [Element], para: &Element) -> Option<&'a Element> {
     if !para.word("p") {
         return None;
     }
-    let run = para.children.iter().filter_map(|i| nodes.get(*i)).find(|n| !n.word("pPr"))?;
+    let run = para.children.iter().filter_map(|i| nodes.get(*i)).find(|node| !node.word("pPr"))?;
     if !run.word("r") {
         return None;
     }
-    let texts: Vec<_> = run.children.iter().filter_map(|i| nodes.get(*i)).filter(|n| !n.word("rPr")).collect();
+    let texts: Vec<_> = run.children.iter().filter_map(|i| nodes.get(*i)).filter(|node| !node.word("rPr")).collect();
     let text = *texts.first()?;
     if texts.len() != 1
         || !text.word("t")
@@ -620,8 +738,173 @@ fn map_blocks(nodes: &[Element], parent: &Element, protected: bool, blocks: &mut
     }
     Ok(())
 }
-fn patch_text(bytes: &[u8], edits: &[TextEdit], expected_blocks: usize) -> Result<Vec<u8>, DocxError> {
-    if edits.is_empty() {
+#[derive(Clone)]
+struct Splice {
+    start: usize,
+    end: usize,
+    replacement: String,
+}
+
+fn run_property_name(property: RunProperty) -> &'static str {
+    match property {
+        RunProperty::Bold => "b",
+        RunProperty::Italic => "i",
+    }
+}
+
+fn run_property_rank(name: &str) -> Option<usize> {
+    Some(match name {
+        "rStyle" => 0,
+        "rFonts" => 1,
+        "b" => 2,
+        "bCs" => 3,
+        "i" => 4,
+        "iCs" => 5,
+        "caps" => 6,
+        "smallCaps" => 7,
+        "strike" => 8,
+        "dstrike" => 9,
+        "outline" => 10,
+        "shadow" => 11,
+        "emboss" => 12,
+        "imprint" => 13,
+        "noProof" => 14,
+        "snapToGrid" => 15,
+        "vanish" => 16,
+        "webHidden" => 17,
+        "color" => 18,
+        "spacing" => 19,
+        "w" => 20,
+        "kern" => 21,
+        "position" => 22,
+        "sz" => 23,
+        "szCs" => 24,
+        "highlight" => 25,
+        "u" => 26,
+        "effect" => 27,
+        "bdr" => 28,
+        "shd" => 29,
+        "fitText" => 30,
+        "vertAlign" => 31,
+        "rtl" => 32,
+        "cs" => 33,
+        "em" => 34,
+        "lang" => 35,
+        "eastAsianLayout" => 36,
+        "specVanish" => 37,
+        "oMath" => 38,
+        "rPrChange" => 39,
+        _ => return None,
+    })
+}
+
+fn property_element(bytes: &[u8], node: &Element) -> Result<String, DocxError> {
+    let raw =
+        std::str::from_utf8(bytes.get(node.span.clone()).ok_or_else(|| error("run property source range"))?).map_err(|e| error(e.to_string()))?;
+    let name = raw.strip_prefix('<').and_then(|tail| tail.split([' ', '/', '>']).next()).ok_or_else(|| error("run property source tag"))?;
+    if name.split_once(':').map(|(_, local)| local) != Some(node.name.rsplit('}').next().unwrap_or_default()) {
+        return Err(error("run property source name is ambiguous"));
+    }
+    Ok(name.to_string())
+}
+
+fn patch_run_property(bytes: &[u8], nodes: &[Element], run_index: usize, property: RunProperty, value: Option<bool>) -> Result<Splice, DocxError> {
+    let run = nodes.get(run_index).ok_or_else(|| error("source run index"))?;
+    let local = run_property_name(property);
+    let word_name = qualified(xml::W, local);
+    let rpr = run.children.iter().filter_map(|index| nodes.get(*index)).find(|child| child.word("rPr"));
+    let prefix = property_element(bytes, run)?
+        .split_once(':')
+        .map(|(prefix, _)| prefix.to_string())
+        .filter(|prefix| !prefix.is_empty())
+        .ok_or_else(|| error("formatting edit needs an explicit source namespace prefix"))?;
+    let tag = format!("{prefix}:{local}");
+    let value_attr = format!("{prefix}:val");
+    let markup = match value {
+        Some(true) => format!("<{tag}/>"),
+        Some(false) => format!("<{tag} {value_attr}=\"0\"/>"),
+        None => String::new(),
+    };
+    if let Some(rpr) = rpr {
+        let matches: Vec<_> = rpr.children.iter().filter_map(|index| nodes.get(*index)).filter(|child| child.name == word_name).collect();
+        if matches.len() > 1 {
+            return Err(error("duplicate direct run properties cannot be edited safely"));
+        }
+        if let Some(existing) = matches.first() {
+            if !existing.children.is_empty() || existing.attrs.keys().any(|name| name != &qualified(xml::W, "val")) {
+                return Err(error("run property carries unsupported markup or attributes"));
+            }
+            return Ok(Splice { start: existing.span.start, end: existing.span.end, replacement: markup });
+        }
+        if value.is_none() {
+            return Err(error("source run formatting does not match the imported baseline"));
+        }
+        if rpr.empty {
+            return Ok(Splice { start: rpr.span.start, end: rpr.span.end, replacement: format!("<{prefix}:rPr>{markup}</{prefix}:rPr>") });
+        }
+        let rank = run_property_rank(local).ok_or_else(|| error("unsupported run property rank"))?;
+        let mut insertion = rpr.content.end;
+        for child in rpr.children.iter().filter_map(|index| nodes.get(*index)) {
+            let name = child.name.strip_prefix(&format!("{{{}}}", xml::W)).ok_or_else(|| error("run properties contain an unsupported namespace"))?;
+            let child_rank = run_property_rank(name).ok_or_else(|| error("run property order cannot be preserved safely"))?;
+            if child_rank > rank {
+                insertion = child.span.start;
+                break;
+            }
+        }
+        Ok(Splice { start: insertion, end: insertion, replacement: markup })
+    } else {
+        if value.is_none() {
+            return Err(error("source run formatting does not match the imported baseline"));
+        }
+        let text = run
+            .children
+            .iter()
+            .filter_map(|index| nodes.get(*index))
+            .find(|child| child.word("t"))
+            .ok_or_else(|| error("source run has no text node"))?;
+        Ok(Splice { start: text.span.start, end: text.span.start, replacement: format!("<{prefix}:rPr>{markup}</{prefix}:rPr>") })
+    }
+}
+
+fn patch_paragraph_style(bytes: &[u8], nodes: &[Element], paragraph_index: usize, edit: &StyleEdit) -> Result<Splice, DocxError> {
+    let paragraph = nodes.get(paragraph_index).ok_or_else(|| error("source paragraph index"))?;
+    let ppr = paragraph
+        .children
+        .iter()
+        .filter_map(|index| nodes.get(*index))
+        .find(|child| child.word("pPr"))
+        .ok_or_else(|| error("paragraph style has no mapped source properties"))?;
+    let mut styles = ppr.children.iter().filter_map(|index| nodes.get(*index)).filter(|child| child.word("pStyle"));
+    let style = styles.next().ok_or_else(|| error("paragraph style reference is absent from source OOXML"))?;
+    if styles.next().is_some() || style.attrs.len() != 1 || !style.children.is_empty() {
+        return Err(error("paragraph style source mapping is ambiguous"));
+    }
+    let value = style.attrs.get(&qualified(xml::W, "val")).ok_or_else(|| error("paragraph style value is absent"))?;
+    if edit.previous.as_deref() != Some(value.as_str()) {
+        return Err(error("paragraph style source does not match the imported baseline"));
+    }
+    let name = property_element(bytes, style)?;
+    let prefix = name
+        .split_once(':')
+        .map(|(prefix, _)| prefix)
+        .filter(|prefix| !prefix.is_empty())
+        .ok_or_else(|| error("paragraph style edit needs an explicit source namespace prefix"))?;
+    Ok(Splice {
+        start: style.span.start,
+        end: style.span.end,
+        replacement: format!("<{prefix}:pStyle {prefix}:val=\"{}\"/>", crate::xml::esc(&edit.style)),
+    })
+}
+
+fn patch_text(
+    bytes: &[u8],
+    edits: &[TextEdit],
+    format_edits: &[RunFormatEdit],
+    style_edits: &[StyleEdit],
+    expected_blocks: usize,
+) -> Result<Vec<u8>, DocxError> {
+    if edits.is_empty() && format_edits.is_empty() && style_edits.is_empty() {
         return Ok(bytes.to_vec());
     }
     if !matches!(xml::utf8(bytes)?, std::borrow::Cow::Borrowed(_)) {
@@ -637,33 +920,49 @@ fn patch_text(bytes: &[u8], edits: &[TextEdit], expected_blocks: usize) -> Resul
     if blocks.len() != expected_blocks {
         return Err(error("source/model block mapping is ambiguous; this edit cannot be preserved safely"));
     }
-    let mut replacements = BTreeMap::new();
+    let mut replacements = Vec::new();
     for edit in edits {
         let para = blocks
             .get(edit.index)
             .and_then(|i| *i)
             .and_then(|i| nodes.get(i))
             .ok_or_else(|| error("edited text is inside a protected block structure"))?;
-        let slot = text_slot(&nodes, para).filter(|t| t.text == edit.anchor).ok_or_else(|| error("edited text has no provable source mapping"))?;
-        if replacements.contains_key(&slot.content.start) {
-            return Err(error("conflicting text edits"));
-        }
+        let slot =
+            text_slot(&nodes, para).filter(|text| text.text == edit.anchor).ok_or_else(|| error("edited text has no provable source mapping"))?;
         if slot.attrs.get(&qualified("http://www.w3.org/XML/1998/namespace", "space")).is_none_or(|s| s != "preserve")
             && edit.replacement.trim() != edit.replacement
         {
             return Err(error("this text edit requires a whitespace attribute change that cannot be preserved safely"));
         }
-        replacements.insert(slot.content.start, (slot.content.end, crate::xml::esc(&edit.replacement)));
+        replacements.push(Splice { start: slot.content.start, end: slot.content.end, replacement: crate::xml::esc(&edit.replacement) });
     }
+    for edit in format_edits {
+        let paragraph =
+            blocks.get(edit.index).and_then(|index| *index).ok_or_else(|| error("formatted text is inside a protected block structure"))?;
+        let para = nodes.get(paragraph).ok_or_else(|| error("source paragraph index"))?;
+        let slot = source_runs(&nodes, para)
+            .and_then(|runs| runs.into_iter().find(|run| run.start == edit.start && run.end == edit.end))
+            .ok_or_else(|| error("formatted text has no whole-run source mapping"))?;
+        replacements.push(patch_run_property(bytes, &nodes, slot.run, edit.property, edit.value)?);
+    }
+    for edit in style_edits {
+        let paragraph =
+            blocks.get(edit.index).and_then(|index| *index).ok_or_else(|| error("styled paragraph is inside a protected block structure"))?;
+        replacements.push(patch_paragraph_style(bytes, &nodes, paragraph, edit)?);
+    }
+    replacements.sort_by_key(|splice| (splice.start, splice.end));
     let mut output = Vec::new();
     let mut position = 0usize;
-    for (start, (end, text)) in replacements {
-        output.extend_from_slice(bytes.get(position..start).ok_or_else(|| error("invalid text splice"))?);
-        output.extend_from_slice(text.as_bytes());
+    for splice in replacements {
+        if splice.start < position || splice.end < splice.start {
+            return Err(error("overlapping or invalid source edits"));
+        }
+        output.extend_from_slice(bytes.get(position..splice.start).ok_or_else(|| error("invalid text splice"))?);
+        output.extend_from_slice(splice.replacement.as_bytes());
         if output.len() > MAX_DATA {
             return Err(error("edited package exceeds preservation budget"));
         }
-        position = end;
+        position = splice.end;
     }
     output.extend_from_slice(bytes.get(position..).ok_or_else(|| error("invalid text splice tail"))?);
     Ok(output)
@@ -736,7 +1035,7 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
     if serde_json::to_vec(&model).map_err(|e| error(e.to_string()))? != get(doc, MODEL, MAX_MODEL)? {
         return Err(error("preservation baseline does not match the original document projection"));
     }
-    let (edits, graphic_sizes) = edits(doc, &model)?;
+    let (edits, format_edits, style_edits, graphic_sizes) = edits(doc, &model)?;
     let main = pkg
         .rels_checked("")?
         .by_type(crate::package::rt::OFFICE_DOC)
@@ -748,12 +1047,25 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
     // The native writer can remove personal metadata from the model projection, but a guarded
     // package may contain unsupported annotation-bearing parts that it does not know about.
     // Returning the original bytes here would silently defeat the user's privacy settings.
-    if edits.is_empty() && graphic_sizes.is_empty() && !modeled_rewrite && (doc.settings.remove_personal_info || doc.settings.remove_date_time) {
+    if edits.is_empty()
+        && format_edits.is_empty()
+        && style_edits.is_empty()
+        && graphic_sizes.is_empty()
+        && !modeled_rewrite
+        && (doc.settings.remove_personal_info || doc.settings.remove_date_time)
+    {
         return Err(error(
             "privacy settings cannot be applied safely to a guarded DOCX with unsupported package content; original file was not overwritten",
         ));
     }
-    if signed(&pkg) && (!edits.is_empty() || !graphic_sizes.is_empty() || requested != original_flavor || modeled_rewrite) {
+    if signed(&pkg)
+        && (!edits.is_empty()
+            || !format_edits.is_empty()
+            || !style_edits.is_empty()
+            || !graphic_sizes.is_empty()
+            || requested != original_flavor
+            || modeled_rewrite)
+    {
         return Err(error("editing this package would invalidate its digital signature; original content was preserved"));
     }
     if original_flavor.macros() && !requested.macros() {
@@ -769,12 +1081,12 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
     if current.entries().any(|(path, _)| baseline.get(path).is_none()) {
         return Err(error("adding package relationships or parts is unsupported in a guarded DOCX"));
     }
-    if edits.is_empty() && graphic_sizes.is_empty() && requested == original_flavor {
+    if edits.is_empty() && format_edits.is_empty() && style_edits.is_empty() && graphic_sizes.is_empty() && requested == original_flavor {
         return Ok(Some(if modeled_rewrite { generated.to_vec() } else { original.to_vec() }));
     }
     let mut entries: Vec<_> = pkg.entries().map(|(path, bytes)| (path.to_string(), bytes.to_vec())).collect();
     let main_data = pkg.get(&main).ok_or_else(|| error("missing source story"))?;
-    let patched = patch_graphic_extents(&patch_text(main_data, &edits, model.body.len())?, &graphic_sizes)?;
+    let patched = patch_graphic_extents(&patch_text(main_data, &edits, &format_edits, &style_edits, model.body.len())?, &graphic_sizes)?;
     let (_, bytes) = entries.iter_mut().find(|(path, _)| path.eq_ignore_ascii_case(&main)).ok_or_else(|| error("missing output source story"))?;
     *bytes = patched;
     if requested != original_flavor {
@@ -802,7 +1114,7 @@ pub(crate) fn is_guarded(doc: &Document) -> bool {
 }
 pub(crate) fn warnings(doc: &Document) -> Vec<String> {
     if doc.passthrough.contains_key(SOURCE) {
-        vec!["This DOCX contains package content WordCraft cannot fully reproduce. Original parts, namespaces, content controls and active content are preserved without execution. Only isolated main-body text edits outside protected structures can be saved; unsafe edits return an error. Unsupported content may not be displayed or printed. Other export formats do not preserve the original package.".into()]
+        vec!["This DOCX contains package content WordCraft cannot fully reproduce. Original parts, namespaces, content controls and active content are preserved without execution. Only isolated main-body text edits within one mapped run, direct bold/italic formatting on whole mapped runs, and changes to existing paragraph style references outside protected structures can be saved; unsafe edits return an error. Unsupported content may not be displayed or printed. Other export formats do not preserve the original package.".into()]
     } else {
         Vec::new()
     }
