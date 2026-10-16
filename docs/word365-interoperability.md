@@ -254,6 +254,16 @@ undo/redo. The authorized private Word sample accepted a controlled substring it
 reopen and both existing interop package-allowlist comparisons passed. The file was not opened,
 edited or saved in Microsoft Word during this phase, so Word-side save/reopen is still unverified.
 
+### Phase 7U.12 WordCraft reopen and export check (2026-10-16)
+
+Reopened the Phase 7U.11 edited copy through the CLI: one page, seven paragraphs, 42 words, and the
+expected source text remained present. PDF export completed. The package comparator passed against
+the original with only `word/document.xml` changed; all 10 other package parts retained identical
+expanded-content hashes. This confirms the saved file survives another WordCraft read and the
+allowlisted package edit remains isolated. It does not verify formatting appearance or a Microsoft
+Word save/reopen cycle. All generated files and reports remain ignored local data; no fingerprints
+are published.
+
 ## Phase 7U.9 follow-up (2026-10-16)
 
 On macOS arm64, controlled edits were attempted against the authorized, purpose-created Word sample.

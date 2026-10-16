@@ -9,8 +9,10 @@ and safe paragraph-mark bold insertion; ambiguous paragraph marks and runs conta
 bookmarks, fields or other non-text structures remain guarded. Regressions cover selections across
 mixed runs, Unicode/entity offsets, package-part preservation, save/reopen and engine undo/redo.
 The authorized local Word sample accepted a substring italic edit; WordCraft reopen and the existing
-package allowlist passed. Microsoft Word save/reopen was not run. `cargo xtask ci` passed; hosted
-Linux/macOS/Windows and FreeBSD workflows are pending the final commit. No installed app changed.
+package allowlist passed. A follow-up reopened the saved output, retained the expected document text,
+exported PDF and passed the package allowlist with only `word/document.xml` changed. Microsoft Word
+save/reopen was not run. `cargo xtask ci` passed; hosted Linux/macOS/Windows and FreeBSD workflows
+are pending the final commit. No installed app changed.
 
 ## Phase 7U.9 — Word-created DOCX controlled edit and reopen (2026-10-16)
 

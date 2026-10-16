@@ -1,6 +1,6 @@
 # File-format parity with Microsoft Word
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (Phase 7U.11 adds XML-mapped selection formatting over simple source runs; Word-side save/reopen remains unverified) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.114, plus Word for Windows' extra formats
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (Phase 7U.12 confirms WordCraft reopen, PDF export and isolated package delta for the Phase 7U.11 edit; Word-side save/reopen remains unverified) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.114, plus Word for Windows' extra formats
 
 Every format Word opens or saves, what WordCraft does with it, and how it's tested. Fidelity is the
 share of a typical real-world file's content and formatting that survives (read: shows correctly;
@@ -216,6 +216,7 @@ attributes inside stories and style or list definitions; a regenerated theme. Te
 ## Revision history
 
 | 2026-10-16 | minor | Phase 7U.11: direct bold/italic selections across mapped runs preserve source run markup and unrelated package parts; Unicode/entity offset map is unit-tested; authorized Word sample substring save/reopen and package allowlist pass in WordCraft; Word-side save/reopen not run |
+| 2026-10-16 | trivial | Phase 7U.12: reopen and PDF export of the 7U.11 edit pass; only `word/document.xml` differs in the package allowlist; no Word-side save/reopen claim |
 
 | Date | Change | Summary |
 |---|---|---|
