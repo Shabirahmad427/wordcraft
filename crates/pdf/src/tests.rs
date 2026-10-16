@@ -1639,3 +1639,18 @@ fn right_to_left_clusters_are_written_whole_left_to_right() {
     // Glyph by glyph by x this would be [5, 4, 3, 2, 0, 1]: the lam-alef's glyphs swapped.
     assert_eq!(visual_order(text, &glyphs, &ranges, &parts), [5, 4, 2, 3, 0, 1]);
 }
+
+/// A font may draw an Arabic base letter as more than one unmapped contextual glyph while also
+/// exposing the combining mark in its cmap. Searchable text belongs to the source characters once;
+/// an extra visual glyph must not duplicate the base letter.
+#[test]
+fn right_to_left_clusters_with_extra_glyphs_do_not_duplicate_source_text() {
+    let text = "بً";
+    let glyphs = [(384, 0.0, 2.0), (323, 1.0, 1.0), (16, 2.0, 0.0)];
+    let ranges = [0..4, 0..4, 0..4];
+    let rev: std::collections::HashMap<u32, char> = [(384, '\u{64B}')].into_iter().collect();
+
+    let parts = split_clusters(text, &glyphs, &ranges, &rev);
+    assert_eq!(parts, [2..4, 0..2, 0..0]);
+    assert_eq!(visual_order(text, &glyphs, &ranges, &parts), [0, 1, 2]);
+}

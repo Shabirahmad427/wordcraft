@@ -268,7 +268,8 @@ fn split_clusters(
         let chars: Vec<(usize, char)> = text.get(r.clone()).map(|t| t.char_indices().map(|(k, c)| (r.start + k, c)).collect()).unwrap_or_default();
         if n > 1 && chars.len() == n {
             // Glyphs the character map knows take their characters; one left over (a letter's
-            // contextual form, which the map doesn't list) takes the one character left.
+            // contextual form, which the map doesn't list) takes the one character left. If the
+            // cmap cannot distinguish several glyphs, keep the shared range: they may be a ligature.
             let mut used = vec![false; n];
             let mut of: Vec<Option<usize>> = (i..i + n)
                 .map(|g| {
@@ -290,6 +291,34 @@ fn split_clusters(
                 })
                 .collect();
             if let (Some(parts), Some(dst)) = (parts, out.get_mut(i..i + n)) {
+                dst.clone_from_slice(&parts);
+            }
+        } else if n > 1 && !chars.is_empty() && chars.len() < n {
+            // Glyphs the character map knows take their characters. When a cluster has extra
+            // glyphs (for example, a contextual Arabic letter plus separately drawn vowel marks),
+            // map the known marks first, give each remaining source character to one unmapped
+            // glyph, then leave any purely visual extra glyphs without duplicate searchable text.
+            let mut used = vec![false; chars.len()];
+            let mut of: Vec<Option<usize>> = (i..i + n)
+                .map(|g| {
+                    let c = rev.get(&glyphs.get(g)?.0)?;
+                    let k = chars.iter().enumerate().position(|(k, (_, ch))| ch == c && !used.get(k).copied().unwrap_or(true))?;
+                    *used.get_mut(k)? = true;
+                    Some(k)
+                })
+                .collect();
+            let free = (0..chars.len()).filter(|k| !used.get(*k).copied().unwrap_or(true));
+            for (slot, k) in of.iter_mut().filter(|o| o.is_none()).zip(free) {
+                *slot = Some(k);
+            }
+            let parts: Vec<std::ops::Range<usize>> = of
+                .iter()
+                .map(|k| match k.and_then(|k| chars.get(k)) {
+                    Some((a, ch)) => *a..a + ch.len_utf8(),
+                    None => r.start..r.start,
+                })
+                .collect();
+            if let Some(dst) = out.get_mut(i..i + n) {
                 dst.clone_from_slice(&parts);
             }
         }
