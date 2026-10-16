@@ -254,10 +254,13 @@ extracts the original logical Arabic word. This did not demonstrate a WordCraft 
 a regression now checks that WordCraft PDF text preserves the source Arabic characters.
 
 FreeBSD run [38878636541](https://github.com/Shabirahmad427/wordcraft/actions/runs/38878636541)
-built successfully and failed only two layout pagination tests. Those test inputs relied on default
-font metrics. They now specify the bundled Source Serif 4 face and 12 pt exact line spacing while
-retaining their original pagination assertions. Both pass locally on macOS; the hosted FreeBSD result
-still needs a rerun.
+built successfully and first exposed two layout pagination tests with platform-dependent default
+font metrics. Those tests now specify bundled Source Serif 4 and 12 pt exact line spacing, retaining
+their original assertions. On rerun [38921987082](https://github.com/Shabirahmad427/wordcraft/actions/runs/38921987082),
+both layout tests passed; the PDF crate then exposed two Hebrew extraction failures because the VM
+installed no Hebrew font. This is a missing test dependency, not a FreeBSD PDF implementation
+failure. The FreeBSD VM now installs the open `noto-sans-hebrew` package; the new workflow run must
+confirm it resolves the remaining failures.
 
 Windows ARM64 run [38893268625](https://github.com/Shabirahmad427/wordcraft/actions/runs/38893268625)
 cross-compiled the GUI and CLI, built an ARM64 MSI, installed it on a hosted ARM64 runner, checked
