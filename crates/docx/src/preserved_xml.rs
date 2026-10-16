@@ -37,6 +37,46 @@ impl Element {
 pub(crate) fn qualified(namespace: &str, local: &str) -> String {
     format!("{{{namespace}}}{local}")
 }
+
+/// Map UTF-8 byte boundaries in decoded XML text to byte boundaries in its source content.
+/// Entity references are treated as indivisible characters, so a caller can safely split only
+/// at decoded character boundaries and will never cut through `&amp;` or a numeric reference.
+pub(crate) fn decoded_text_offsets(raw: &str, decoded: &str) -> Result<Vec<(usize, usize)>, DocxError> {
+    let mut offsets = Vec::with_capacity(decoded.len().saturating_add(1));
+    let mut raw_at = 0usize;
+    let mut decoded_at = 0usize;
+    offsets.push((0, 0));
+    while raw_at < raw.len() {
+        let raw_end = if raw.as_bytes().get(raw_at) == Some(&b'&') {
+            raw.get(raw_at..).and_then(|tail| tail.find(';')).map(|end| raw_at + end + 1).ok_or_else(|| error("unterminated XML entity in text"))?
+        } else {
+            raw.get(raw_at..)
+                .and_then(|tail| tail.chars().next())
+                .map(|ch| raw_at + ch.len_utf8())
+                .ok_or_else(|| error("invalid XML text boundary"))?
+        };
+        let raw_piece = raw.get(raw_at..raw_end).ok_or_else(|| error("invalid XML source text range"))?;
+        let value = if raw_piece.starts_with('&') {
+            quick_xml::escape::unescape(raw_piece).map_err(|e| error(format!("invalid XML entity: {e}")))?.into_owned()
+        } else {
+            raw_piece.to_owned()
+        };
+        if value.is_empty() || value.chars().count() != 1 {
+            return Err(error("XML text segment does not map to one character"));
+        }
+        let decoded_end = decoded_at.checked_add(value.len()).ok_or_else(|| error("decoded text offset overflow"))?;
+        if decoded.get(decoded_at..decoded_end) != Some(value.as_str()) {
+            return Err(error("decoded XML text does not match its source"));
+        }
+        decoded_at = decoded_end;
+        raw_at = raw_end;
+        offsets.push((decoded_at, raw_at));
+    }
+    if decoded_at != decoded.len() || decoded.get(..decoded_at) != Some(decoded) {
+        return Err(error("decoded XML text length does not match its source"));
+    }
+    Ok(offsets)
+}
 fn name(namespace: ResolveResult<'_>, local: &[u8]) -> Result<String, DocxError> {
     let local = std::str::from_utf8(local).map_err(|e| error(e.to_string()))?;
     match namespace {
@@ -250,5 +290,16 @@ mod tests {
         assert!(matches!(inspect(deep.as_bytes()), Err(DocxError::Limit(_))));
         assert!(inspect(&[0xff, 0xfe, b'<']).is_err());
         assert!(inspect(&[0xff, 0xfe, 0, 0xd8]).is_err());
+    }
+
+    #[test]
+    fn decoded_text_offsets_map_entities_and_unicode_without_splitting_entities() {
+        let raw = "A&amp;é&#x1F642;z";
+        let decoded = "A&é🙂z";
+        let offsets = decoded_text_offsets(raw, decoded).unwrap();
+        assert_eq!(offsets, [(0, 0), (1, 1), (2, 6), (4, 8), (8, 17), (9, 18)]);
+        assert_eq!(&raw[offsets[1].1..offsets[2].1], "&amp;");
+        assert_eq!(&raw[offsets[3].1..offsets[4].1], "&#x1F642;");
+        assert!(offsets.iter().all(|(_, offset)| raw.is_char_boundary(*offset)));
     }
 }

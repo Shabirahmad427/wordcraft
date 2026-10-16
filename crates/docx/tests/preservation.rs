@@ -144,6 +144,67 @@ fn adding_italic_to_one_mixed_format_run_keeps_existing_bold_and_neighbor_runs()
 }
 
 #[test]
+fn formatting_a_selection_across_source_runs_splits_only_the_selected_text() {
+    let source = mixed_format_fixture();
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    let paragraph = doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap();
+    let from = 6;
+    let to = 25;
+    paragraph
+        .format(from, to, &|props| {
+            props.bold = Some(true);
+            props.bold_cs = Some(true);
+        })
+        .unwrap();
+
+    let saved = wordcraft_docx::write(&doc).unwrap();
+    assert_only_document_xml_changed(&source, &saved);
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    let paragraph = reopened.para(StoryRef::Body, &Path::top(0)).unwrap();
+    assert_eq!(paragraph.text, "Editable introduction α & β");
+    assert_ne!(paragraph.props_of_char(from.saturating_sub(1)).bold, Some(true));
+    for offset in from..to {
+        assert_eq!(paragraph.props_of_char(offset).bold, Some(true), "bold mismatch at character {offset}");
+    }
+    assert_ne!(paragraph.props_of_char(to).bold, Some(true));
+}
+
+#[test]
+fn formatting_an_existing_mixed_run_boundary_retains_original_italic_and_bold() {
+    let source = mixed_format_fixture();
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    let paragraph = doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap();
+    paragraph.format(9, 21, &|props| props.italic = Some(true)).unwrap();
+
+    let saved = wordcraft_docx::write(&doc).unwrap();
+    assert_only_document_xml_changed(&source, &saved);
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    let paragraph = reopened.para(StoryRef::Body, &Path::top(0)).unwrap();
+    for offset in 9..21 {
+        assert_eq!(paragraph.props_of_char(offset).bold, Some(true));
+        assert_eq!(paragraph.props_of_char(offset).italic, Some(true));
+    }
+    assert_eq!(paragraph.props_of_char(8).italic, None);
+    assert_eq!(paragraph.props_of_char(21).italic, Some(true), "the source's italic run remains intact");
+}
+
+#[test]
+fn formatting_a_whole_paragraph_preserves_paragraph_mark_formatting() {
+    let source = archive(&fixture());
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    let paragraph = doc.para_mut(StoryRef::Body, &Path::top(0)).unwrap();
+    paragraph.mark.bold = Some(true);
+    paragraph.mark.bold_cs = Some(true);
+
+    let saved = wordcraft_docx::write(&doc).unwrap();
+    assert_only_document_xml_changed(&source, &saved);
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    let paragraph = reopened.para(StoryRef::Body, &Path::top(0)).unwrap();
+    assert_eq!(paragraph.mark.bold, Some(true));
+    assert_eq!(paragraph.mark.bold_cs, Some(true));
+}
+
+#[test]
 fn changing_to_an_existing_paragraph_style_preserves_unknown_package_parts() {
     let source = source_with_explicit_normal_style();
     let mut doc = wordcraft_docx::read(&source).unwrap();

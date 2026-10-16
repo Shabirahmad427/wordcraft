@@ -862,6 +862,33 @@ fn bold_toggles_selection_and_caret_word() {
 }
 
 #[test]
+fn selection_formatting_across_mixed_runs_undoes_and_redoes() {
+    use wordcraft_doc::props::CharProps;
+    use wordcraft_doc::{Block, Paragraph, Path};
+
+    let mut doc = wordcraft_doc::Document::new();
+    let mut paragraph = Paragraph::with_text("α mixed text", CharProps::default());
+    paragraph.runs = vec![
+        wordcraft_doc::para::Run { len: "α ".len(), props: CharProps::default() },
+        wordcraft_doc::para::Run { len: "mixed".len(), props: CharProps { italic: Some(true), ..Default::default() } },
+        wordcraft_doc::para::Run { len: " text".len(), props: CharProps::default() },
+    ];
+    doc.insert_block(StoryRef::Body, &Path::top(0), Block::Para(paragraph)).unwrap();
+    let mut session = Session::new(doc);
+    let start = "α ".len() - 1;
+    let end = "α mixed".len();
+    run(&mut session, "select.range", json!({"anchor": Pos::body(0, start), "focus": Pos::body(0, end)}));
+    let before = session.doc.clone();
+    run(&mut session, "format.bold", json!({"value": true}));
+    assert_eq!(session.doc.para_at(&Pos::body(0, start)).unwrap().props_of_char(start).bold, Some(true));
+    run(&mut session, "edit.undo", json!({}));
+    assert_eq!(session.doc.body, before.body);
+    run(&mut session, "edit.redo", json!({}));
+    assert_eq!(session.doc.para_at(&Pos::body(0, start)).unwrap().props_of_char(start).bold, Some(true));
+    assert_eq!(session.doc.para_at(&Pos::body(0, start)).unwrap().props_of_char("α mixed".len()).italic, None);
+}
+
+#[test]
 fn border_toggles_and_saves() {
     use wordcraft_doc::props::Border;
     let border = |s: &Session| s.doc.para_at(&Pos::body(0, 0)).unwrap().props_of_char(5).border;

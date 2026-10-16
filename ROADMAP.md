@@ -1,5 +1,17 @@
 # WordCraft roadmap
 
+## Phase 7U.11 — guarded DOCX selection formatting (2026-10-16)
+
+Added decoded-text-to-source-byte mapping that handles Unicode and XML entities, then splits only
+simple directly mapped text runs while retaining the original run markup and all other package
+parts. Selection formatting now supports direct bold/italic (including complex-script variants),
+and safe paragraph-mark bold insertion; ambiguous paragraph marks and runs containing wrappers,
+bookmarks, fields or other non-text structures remain guarded. Regressions cover selections across
+mixed runs, Unicode/entity offsets, package-part preservation, save/reopen and engine undo/redo.
+The authorized local Word sample accepted a substring italic edit; WordCraft reopen and the existing
+package allowlist passed. Microsoft Word save/reopen was not run. `cargo xtask ci` passed; hosted
+Linux/macOS/Windows and FreeBSD workflows are pending the final commit. No installed app changed.
+
 ## Phase 7U.9 — Word-created DOCX controlled edit and reopen (2026-10-16)
 
 On the authorized, purpose-created Word for Mac sample, a directly mapped single-run body-text

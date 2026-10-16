@@ -1,6 +1,6 @@
 # Where WordCraft falls short of Word
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (Phase 7U.10 adds guarded whole-run bold/italic and existing-style preservation tests; selection-based format edits remain blocked and the Word-save cycle is unverified) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.114
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (Phase 7U.11 adds guarded selection formatting over simple source runs; Word-side save/reopen remains unverified) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.114
 
 > **Printing update:** 2026-10-12 · direct desktop printing through craft-print; details below.
 
@@ -103,6 +103,8 @@ The same gaps grouped the way the parity documents are, for agents working in on
 - **Stability and performance gaps:** #3, #20.
 
 ## Revision history
+
+| 2026-10-16 | minor | Phase 7U.11: mapped Unicode/entity selection offsets to source DOCX runs; safe run splitting and paragraph-mark bold insertion pass synthetic preservation, save/reopen and undo/redo tests; Word-side save/reopen remains unverified |
 
 | Date | Change | Summary |
 |---|---|---|

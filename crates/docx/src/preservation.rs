@@ -463,9 +463,17 @@ struct RunFormatEdit {
     value: Option<bool>,
 }
 #[derive(Clone, Copy)]
+struct MarkFormatEdit {
+    index: usize,
+    property: RunProperty,
+    value: Option<bool>,
+}
+#[derive(Clone, Copy)]
 enum RunProperty {
     Bold,
+    BoldCs,
     Italic,
+    ItalicCs,
 }
 struct StyleEdit {
     index: usize,
@@ -518,13 +526,17 @@ fn differing_model_fields(current: &Document, baseline: &Document) -> Vec<&'stat
     fields
 }
 
-fn edits(doc: &Document, baseline: &Document) -> Result<(Vec<TextEdit>, Vec<RunFormatEdit>, Vec<StyleEdit>, Vec<GraphicSizeEdit>), DocxError> {
+fn edits(
+    doc: &Document,
+    baseline: &Document,
+) -> Result<(Vec<TextEdit>, Vec<RunFormatEdit>, Vec<MarkFormatEdit>, Vec<StyleEdit>, Vec<GraphicSizeEdit>), DocxError> {
     let mut normalized = doc.clone();
     if normalized.body.len() != baseline.body.len() {
         return Err(error("structural editing of a guarded DOCX is unsupported; the original package is preserved"));
     }
     let mut edits = Vec::new();
     let mut format_edits = Vec::new();
+    let mut mark_edits = Vec::new();
     let mut style_edits = Vec::new();
     let mut graphic_sizes = Vec::new();
     for (index, (current, original)) in doc.body.iter().zip(&baseline.body).enumerate() {
@@ -550,40 +562,65 @@ fn edits(doc: &Document, baseline: &Document) -> Result<(Vec<TextEdit>, Vec<RunF
                     }
                     style_edits.push(StyleEdit { index, previous: original.props.style.clone(), style });
                 }
-                if current.mark != original.mark || current.runs.len() != original.runs.len() {
-                    return Err(error("run formatting boundaries changed and cannot be mapped to source OOXML"));
+                let mut restored_mark = current.mark.clone();
+                restored_mark.bold = original.mark.bold;
+                restored_mark.bold_cs = original.mark.bold_cs;
+                if restored_mark != original.mark {
+                    return Err(error("only paragraph-mark bold properties can be preserved safely"));
                 }
-                let mut offset = 0usize;
-                for (now, before) in current.runs.iter().zip(&original.runs) {
-                    if now.len != before.len {
-                        return Err(error("run formatting boundaries changed and cannot be mapped to source OOXML"));
+                for (property, old, value) in
+                    [(RunProperty::Bold, original.mark.bold, current.mark.bold), (RunProperty::BoldCs, original.mark.bold_cs, current.mark.bold_cs)]
+                {
+                    if old != value {
+                        mark_edits.push(MarkFormatEdit { index, property, value });
                     }
-                    if now.props != before.props {
+                }
+                let mut original_ranges = Vec::new();
+                let mut offset = 0usize;
+                for before in &original.runs {
+                    let end = offset.checked_add(before.len).ok_or_else(|| error("run offset overflow"))?;
+                    original_ranges.push((offset, end, before));
+                    offset = end;
+                }
+                let mut changed_format = false;
+                let mut current_offset = 0usize;
+                for now in &current.runs {
+                    let current_end = current_offset.checked_add(now.len).ok_or_else(|| error("run offset overflow"))?;
+                    if current_end > original.text.len() || now.len == 0 {
+                        return Err(error("formatted text range does not map to original paragraph text"));
+                    }
+                    for (start, end, before) in &original_ranges {
+                        let piece_start = current_offset.max(*start);
+                        let piece_end = current_end.min(*end);
+                        if piece_start >= piece_end {
+                            continue;
+                        }
                         let mut restored = now.props.clone();
                         restored.bold = before.props.bold;
-                        let bold_only = restored == before.props;
-                        let property = if bold_only {
-                            restored = now.props.clone();
-                            RunProperty::Bold
-                        } else {
-                            restored = now.props.clone();
-                            restored.italic = before.props.italic;
-                            if restored != before.props {
-                                return Err(error("only direct bold or italic formatting on whole mapped runs can be preserved safely"));
+                        restored.bold_cs = before.props.bold_cs;
+                        restored.italic = before.props.italic;
+                        restored.italic_cs = before.props.italic_cs;
+                        if restored != before.props {
+                            return Err(error("only direct bold and italic properties on simple text runs can be preserved safely"));
+                        }
+                        for (property, old, value) in [
+                            (RunProperty::Bold, before.props.bold, now.props.bold),
+                            (RunProperty::BoldCs, before.props.bold_cs, now.props.bold_cs),
+                            (RunProperty::Italic, before.props.italic, now.props.italic),
+                            (RunProperty::ItalicCs, before.props.italic_cs, now.props.italic_cs),
+                        ] {
+                            if old != value {
+                                format_edits.push(RunFormatEdit { index, start: piece_start, end: piece_end, property, value });
+                                changed_format = true;
                             }
-                            RunProperty::Italic
-                        };
-                        let value = match property {
-                            RunProperty::Bold => now.props.bold,
-                            RunProperty::Italic => now.props.italic,
-                        };
-                        let end = offset.checked_add(now.len).ok_or_else(|| error("run offset overflow"))?;
-                        format_edits.push(RunFormatEdit { index, start: offset, end, property, value });
+                        }
                     }
-                    offset = offset.checked_add(now.len).ok_or_else(|| error("run offset overflow"))?;
+                    current_offset = current_end;
                 }
-                let changed_format = current.runs.iter().zip(&original.runs).any(|(now, before)| now.props != before.props);
-                if changed_style || changed_format {
+                if current_offset != original.text.len() {
+                    return Err(error("formatted paragraph text length changed"));
+                }
+                if changed_style || changed_format || current.mark != original.mark {
                     *normalized.body.get_mut(index).ok_or_else(|| error("paragraph index"))? = Arc::new(Block::Para(original.clone()));
                     continue;
                 }
@@ -651,38 +688,48 @@ fn edits(doc: &Document, baseline: &Document) -> Result<(Vec<TextEdit>, Vec<RunF
         let fields = if fields.is_empty() { "serialized model state".to_string() } else { fields.join(", ") };
         return Err(error(format!("protected document state changed at {fields}; refusing save to preserve unsupported OOXML")));
     }
-    Ok((edits, format_edits, style_edits, graphic_sizes))
+    Ok((edits, format_edits, mark_edits, style_edits, graphic_sizes))
 }
 struct SourceRun {
     start: usize,
     end: usize,
     run: usize,
+    text: usize,
+    offsets: Vec<(usize, usize)>,
 }
 
 /// Direct paragraphs made only of simple text runs have a provable source mapping. Wrappers,
 /// fields, markers, multiple text nodes in a run, and non-text run children remain guarded.
-fn source_runs(nodes: &[Element], para: &Element) -> Option<Vec<SourceRun>> {
+fn source_runs(bytes: &[u8], nodes: &[Element], para: &Element) -> Option<Vec<SourceRun>> {
     if !para.word("p") {
         return None;
     }
     let mut out = Vec::new();
     let mut offset = 0usize;
-    for run_index in &para.children {
+    for (position, run_index) in para.children.iter().enumerate() {
         let run = nodes.get(*run_index)?;
         if run.word("pPr") {
+            if position != 0 {
+                return None;
+            }
             continue;
         }
         if !run.word("r") {
-            return (!out.is_empty()).then_some(out);
+            return None;
         }
         let mut text = None;
+        let mut has_rpr = false;
         for child_index in &run.children {
             let child = nodes.get(*child_index)?;
             if child.word("rPr") {
+                if has_rpr || text.is_some() {
+                    return None;
+                }
+                has_rpr = true;
                 continue;
             }
             if text.is_some() || !child.word("t") || child.empty || !child.children.is_empty() {
-                return (!out.is_empty()).then_some(out);
+                return None;
             }
             if !child.attrs.keys().all(|key| key == &qualified("http://www.w3.org/XML/1998/namespace", "space")) {
                 return None;
@@ -695,10 +742,77 @@ fn source_runs(nodes: &[Element], para: &Element) -> Option<Vec<SourceRun>> {
             return None;
         }
         let end = offset.checked_add(text_node.text.len())?;
-        out.push(SourceRun { start: offset, end, run: *run_index });
+        let raw = std::str::from_utf8(bytes.get(text_node.content.clone())?).ok()?;
+        let offsets = xml::decoded_text_offsets(raw, &text_node.text).ok()?;
+        out.push(SourceRun { start: offset, end, run: *run_index, text: text_index, offsets });
         offset = end;
     }
     Some(out)
+}
+
+fn source_offset(run: &SourceRun, decoded: usize) -> Result<usize, DocxError> {
+    run.offsets
+        .iter()
+        .find(|(position, _)| *position == decoded)
+        .map(|(_, source)| *source)
+        .ok_or_else(|| error("formatting boundary falls inside a Unicode character or XML entity"))
+}
+
+fn apply_local_splices(source: &str, mut splices: Vec<(usize, usize, String)>) -> Result<String, DocxError> {
+    splices.sort_by_key(|(start, end, _)| (*start, *end));
+    let mut previous = 0usize;
+    for (start, end, _) in &splices {
+        if *start < previous || *end < *start || *end > source.len() {
+            return Err(error("overlapping local run edits"));
+        }
+        previous = *end;
+    }
+    let mut output = source.to_owned();
+    for (start, end, replacement) in splices.into_iter().rev() {
+        output.replace_range(start..end, &replacement);
+    }
+    Ok(output)
+}
+
+fn split_source_run(
+    bytes: &[u8],
+    nodes: &[Element],
+    source_run: &SourceRun,
+    pieces: &[(usize, usize, Vec<(RunProperty, Option<bool>)>)],
+) -> Result<Splice, DocxError> {
+    let run = nodes.get(source_run.run).ok_or_else(|| error("source run index"))?;
+    let text = nodes.get(source_run.text).ok_or_else(|| error("source text index"))?;
+    let original = std::str::from_utf8(bytes.get(run.span.clone()).ok_or_else(|| error("source run span"))?).map_err(|e| error(e.to_string()))?;
+    if original.contains("<!--") || original.contains("<?") || original.contains("<![CDATA[") {
+        return Err(error("runs with comments, processing instructions or CDATA cannot be split safely"));
+    }
+    let raw_text =
+        std::str::from_utf8(bytes.get(text.content.clone()).ok_or_else(|| error("source text content"))?).map_err(|e| error(e.to_string()))?;
+    let mut fragments = String::new();
+    for (start, end, properties) in pieces {
+        let local_start = start.checked_sub(source_run.start).ok_or_else(|| error("run piece start"))?;
+        let local_end = end.checked_sub(source_run.start).ok_or_else(|| error("run piece end"))?;
+        let raw_start = source_offset(source_run, local_start)?;
+        let raw_end = source_offset(source_run, local_end)?;
+        let value = text.text.get(local_start..local_end).ok_or_else(|| error("run piece is not on decoded UTF-8 boundaries"))?;
+        let raw_value = raw_text.get(raw_start..raw_end).ok_or_else(|| error("run piece is not on source XML boundaries"))?;
+        let mut edits = Vec::new();
+        edits.push((text.content.start - run.span.start, text.content.end - run.span.start, raw_value.to_string()));
+        let needs_space = value.starts_with(char::is_whitespace) || value.ends_with(char::is_whitespace);
+        if needs_space && text.attrs.get(&qualified("http://www.w3.org/XML/1998/namespace", "space")).is_none_or(|value| value != "preserve") {
+            let opening_end =
+                text.content.start.checked_sub(run.span.start).and_then(|at| at.checked_sub(1)).ok_or_else(|| error("text opening tag"))?;
+            edits.push((opening_end, opening_end, " xml:space=\"preserve\"".to_string()));
+        }
+        for (property, value) in properties {
+            let splice = patch_run_property(bytes, nodes, source_run.run, *property, *value)?;
+            let start = splice.start.checked_sub(run.span.start).ok_or_else(|| error("run property is outside source run"))?;
+            let end = splice.end.checked_sub(run.span.start).ok_or_else(|| error("run property is outside source run"))?;
+            edits.push((start, end, splice.replacement));
+        }
+        fragments.push_str(&apply_local_splices(original, edits)?);
+    }
+    Ok(Splice { start: run.span.start, end: run.span.end, replacement: fragments })
 }
 /// Only the first direct, simple text run has the legacy safe text-edit mapping.
 fn text_slot<'a>(nodes: &'a [Element], para: &Element) -> Option<&'a Element> {
@@ -748,7 +862,9 @@ struct Splice {
 fn run_property_name(property: RunProperty) -> &'static str {
     match property {
         RunProperty::Bold => "b",
+        RunProperty::BoldCs => "bCs",
         RunProperty::Italic => "i",
+        RunProperty::ItalicCs => "iCs",
     }
 }
 
@@ -794,6 +910,7 @@ fn run_property_rank(name: &str) -> Option<usize> {
         "specVanish" => 37,
         "oMath" => 38,
         "rPrChange" => 39,
+        "ligatures" => 40,
         _ => return None,
     })
 }
@@ -845,8 +962,13 @@ fn patch_run_property(bytes: &[u8], nodes: &[Element], run_index: usize, propert
         let rank = run_property_rank(local).ok_or_else(|| error("unsupported run property rank"))?;
         let mut insertion = rpr.content.end;
         for child in rpr.children.iter().filter_map(|index| nodes.get(*index)) {
-            let name = child.name.strip_prefix(&format!("{{{}}}", xml::W)).ok_or_else(|| error("run properties contain an unsupported namespace"))?;
-            let child_rank = run_property_rank(name).ok_or_else(|| error("run property order cannot be preserved safely"))?;
+            let child_rank = if child.is("http://schemas.microsoft.com/office/word/2010/wordml", "ligatures") {
+                run_property_rank("ligatures").ok_or_else(|| error("run property order cannot be preserved safely"))?
+            } else {
+                let name =
+                    child.name.strip_prefix(&format!("{{{}}}", xml::W)).ok_or_else(|| error("run properties contain an unsupported namespace"))?;
+                run_property_rank(name).ok_or_else(|| error("run property order cannot be preserved safely"))?
+            };
             if child_rank > rank {
                 insertion = child.span.start;
                 break;
@@ -897,14 +1019,50 @@ fn patch_paragraph_style(bytes: &[u8], nodes: &[Element], paragraph_index: usize
     })
 }
 
+fn patch_paragraph_mark(bytes: &[u8], nodes: &[Element], paragraph_index: usize, edits: &[MarkFormatEdit]) -> Result<Splice, DocxError> {
+    let para = nodes.get(paragraph_index).filter(|node| node.word("p")).ok_or_else(|| error("paragraph mark source mapping is ambiguous"))?;
+    let prefix = property_element(bytes, para)?
+        .split_once(':')
+        .map(|(prefix, _)| prefix.to_string())
+        .filter(|prefix| !prefix.is_empty())
+        .ok_or_else(|| error("paragraph mark needs a source namespace prefix"))?;
+    let markup = edits
+        .iter()
+        .filter_map(|edit| {
+            let name = run_property_name(edit.property);
+            match edit.value {
+                Some(true) => Some(format!("<{prefix}:{name}/>")),
+                Some(false) => Some(format!("<{prefix}:{name} {prefix}:val=\"0\"/>")),
+                None => None,
+            }
+        })
+        .collect::<String>();
+    let ppr = para.children.iter().filter_map(|index| nodes.get(*index)).find(|node| node.word("pPr"));
+    let Some(ppr) = ppr else {
+        let first = para.children.iter().filter_map(|index| nodes.get(*index)).next().ok_or_else(|| error("paragraph has no source child"))?;
+        return Ok(Splice {
+            start: first.span.start,
+            end: first.span.start,
+            replacement: format!("<{prefix}:pPr><{prefix}:rPr>{markup}</{prefix}:rPr></{prefix}:pPr>"),
+        });
+    };
+    if ppr.children.iter().filter_map(|index| nodes.get(*index)).any(|node| node.word("rPr")) {
+        return Err(error("editing existing paragraph-mark run properties is not yet safely mapped"));
+    }
+    let insertion =
+        ppr.children.iter().filter_map(|index| nodes.get(*index)).find(|node| node.word("sectPr")).map_or(ppr.content.end, |node| node.span.start);
+    Ok(Splice { start: insertion, end: insertion, replacement: format!("<{prefix}:rPr>{markup}</{prefix}:rPr>") })
+}
+
 fn patch_text(
     bytes: &[u8],
     edits: &[TextEdit],
     format_edits: &[RunFormatEdit],
+    mark_edits: &[MarkFormatEdit],
     style_edits: &[StyleEdit],
     expected_blocks: usize,
 ) -> Result<Vec<u8>, DocxError> {
-    if edits.is_empty() && format_edits.is_empty() && style_edits.is_empty() {
+    if edits.is_empty() && format_edits.is_empty() && mark_edits.is_empty() && style_edits.is_empty() {
         return Ok(bytes.to_vec());
     }
     if !matches!(xml::utf8(bytes)?, std::borrow::Cow::Borrowed(_)) {
@@ -936,19 +1094,51 @@ fn patch_text(
         }
         replacements.push(Splice { start: slot.content.start, end: slot.content.end, replacement: crate::xml::esc(&edit.replacement) });
     }
-    for edit in format_edits {
+    let formatted_paragraphs: BTreeSet<_> = format_edits.iter().map(|edit| edit.index).collect();
+    for paragraph_index in formatted_paragraphs {
         let paragraph =
-            blocks.get(edit.index).and_then(|index| *index).ok_or_else(|| error("formatted text is inside a protected block structure"))?;
+            blocks.get(paragraph_index).and_then(|index| *index).ok_or_else(|| error("formatted text is inside a protected block structure"))?;
         let para = nodes.get(paragraph).ok_or_else(|| error("source paragraph index"))?;
-        let slot = source_runs(&nodes, para)
-            .and_then(|runs| runs.into_iter().find(|run| run.start == edit.start && run.end == edit.end))
-            .ok_or_else(|| error("formatted text has no whole-run source mapping"))?;
-        replacements.push(patch_run_property(bytes, &nodes, slot.run, edit.property, edit.value)?);
+        let runs =
+            source_runs(bytes, &nodes, para).ok_or_else(|| error("formatted paragraph does not consist of simple, directly mapped text runs"))?;
+        for run in runs {
+            let run_edits: Vec<_> =
+                format_edits.iter().filter(|edit| edit.index == paragraph_index && edit.start < run.end && edit.end > run.start).collect();
+            if run_edits.is_empty() {
+                continue;
+            }
+            let mut boundaries = vec![run.start, run.end];
+            for edit in &run_edits {
+                boundaries.push(edit.start.max(run.start));
+                boundaries.push(edit.end.min(run.end));
+            }
+            boundaries.sort_unstable();
+            boundaries.dedup();
+            let mut pieces = Vec::new();
+            for pair in boundaries.windows(2) {
+                let (start, end) = (pair[0], pair[1]);
+                let properties =
+                    run_edits.iter().filter(|edit| edit.start <= start && edit.end >= end).map(|edit| (edit.property, edit.value)).collect();
+                pieces.push((start, end, properties));
+            }
+            replacements.push(split_source_run(bytes, &nodes, &run, &pieces)?);
+        }
     }
     for edit in style_edits {
         let paragraph =
             blocks.get(edit.index).and_then(|index| *index).ok_or_else(|| error("styled paragraph is inside a protected block structure"))?;
         replacements.push(patch_paragraph_style(bytes, &nodes, paragraph, edit)?);
+    }
+    let mark_paragraphs: BTreeSet<_> = mark_edits.iter().map(|edit| edit.index).collect();
+    for paragraph_index in mark_paragraphs {
+        let paragraph =
+            blocks.get(paragraph_index).and_then(|index| *index).ok_or_else(|| error("paragraph mark is inside a protected structure"))?;
+        replacements.push(patch_paragraph_mark(
+            bytes,
+            &nodes,
+            paragraph,
+            &mark_edits.iter().filter(|edit| edit.index == paragraph_index).copied().collect::<Vec<_>>(),
+        )?);
     }
     replacements.sort_by_key(|splice| (splice.start, splice.end));
     let mut output = Vec::new();
@@ -1035,7 +1225,7 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
     if serde_json::to_vec(&model).map_err(|e| error(e.to_string()))? != get(doc, MODEL, MAX_MODEL)? {
         return Err(error("preservation baseline does not match the original document projection"));
     }
-    let (edits, format_edits, style_edits, graphic_sizes) = edits(doc, &model)?;
+    let (edits, format_edits, mark_edits, style_edits, graphic_sizes) = edits(doc, &model)?;
     let main = pkg
         .rels_checked("")?
         .by_type(crate::package::rt::OFFICE_DOC)
@@ -1049,6 +1239,7 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
     // Returning the original bytes here would silently defeat the user's privacy settings.
     if edits.is_empty()
         && format_edits.is_empty()
+        && mark_edits.is_empty()
         && style_edits.is_empty()
         && graphic_sizes.is_empty()
         && !modeled_rewrite
@@ -1061,6 +1252,7 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
     if signed(&pkg)
         && (!edits.is_empty()
             || !format_edits.is_empty()
+            || !mark_edits.is_empty()
             || !style_edits.is_empty()
             || !graphic_sizes.is_empty()
             || requested != original_flavor
@@ -1081,12 +1273,18 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
     if current.entries().any(|(path, _)| baseline.get(path).is_none()) {
         return Err(error("adding package relationships or parts is unsupported in a guarded DOCX"));
     }
-    if edits.is_empty() && format_edits.is_empty() && style_edits.is_empty() && graphic_sizes.is_empty() && requested == original_flavor {
+    if edits.is_empty()
+        && format_edits.is_empty()
+        && mark_edits.is_empty()
+        && style_edits.is_empty()
+        && graphic_sizes.is_empty()
+        && requested == original_flavor
+    {
         return Ok(Some(if modeled_rewrite { generated.to_vec() } else { original.to_vec() }));
     }
     let mut entries: Vec<_> = pkg.entries().map(|(path, bytes)| (path.to_string(), bytes.to_vec())).collect();
     let main_data = pkg.get(&main).ok_or_else(|| error("missing source story"))?;
-    let patched = patch_graphic_extents(&patch_text(main_data, &edits, &format_edits, &style_edits, model.body.len())?, &graphic_sizes)?;
+    let patched = patch_graphic_extents(&patch_text(main_data, &edits, &format_edits, &mark_edits, &style_edits, model.body.len())?, &graphic_sizes)?;
     let (_, bytes) = entries.iter_mut().find(|(path, _)| path.eq_ignore_ascii_case(&main)).ok_or_else(|| error("missing output source story"))?;
     *bytes = patched;
     if requested != original_flavor {

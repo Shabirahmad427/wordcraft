@@ -1,9 +1,9 @@
 # Word 365 interoperability benchmark
 
-**Status: one local-only Word reference pair created; a single-run text edit and package-preserving
-DOCX round-trip pass within the narrow guarded-edit envelope. The WordCraft-saved file reopened in
-Word for Mac without a repair warning during visual inspection. Formatting edits remain safely
-blocked; the visual comparison is diagnostic only, not an acceptance result.**
+**Status: one local-only Word reference pair exists. Simple directly mapped run selection formatting
+now has structural, save/reopen and package-allowlist coverage. A controlled substring italic edit
+to the private sample saved and reopened in WordCraft; Microsoft Word save/reopen remains unverified.
+The visual comparison is diagnostic only, not an acceptance result.**
 This report does not infer Office provenance from OOXML shape, filenames, metadata, or passing
 WordCraft tests.
 
@@ -242,6 +242,17 @@ represent Microsoft Word output.
 The next evidence-producing step requires a consented, redistributable Word-created corpus and a
 Windows/macOS environment that can run the actual target application. Until those exist, improvements
 can be proven internally but not certified as Word 365 interoperability.
+
+## Phase 7U.11 follow-up (2026-10-16)
+
+The guarded editor now maps decoded selection offsets to raw XML byte boundaries, including Unicode
+and entity references. It splits only direct paragraphs made of simple text runs, preserving each
+source run's raw markup and limiting changed package data to `word/document.xml`. Synthetic
+regressions cover bold selection across mixed runs, an italic selection over an existing bold run,
+paragraph-mark bold insertion, save/reopen and package-part preservation; an engine test covers
+undo/redo. The authorized private Word sample accepted a controlled substring italic edit. WordCraft
+reopen and both existing interop package-allowlist comparisons passed. The file was not opened,
+edited or saved in Microsoft Word during this phase, so Word-side save/reopen is still unverified.
 
 ## Phase 7U.9 follow-up (2026-10-16)
 
