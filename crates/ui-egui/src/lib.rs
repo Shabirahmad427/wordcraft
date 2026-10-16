@@ -3130,6 +3130,60 @@ mod tests {
         assert!((frame(&mut a) - 1.0).abs() < 1e-3);
     }
 
+    #[test]
+    fn status_bar_zoom_slider_does_not_oscillate_while_held_at_95_percent() {
+        use egui::accesskit::Role;
+        use egui_kittest::kittest::Queryable;
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+            |ui, app: &mut WordApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app(),
+        );
+        h.run_steps(5);
+        h.state_mut().run("view.zoom", json!({"value": 90})).unwrap();
+        h.run_steps(3);
+        let slider = h.get_by_role(Role::Slider);
+        let rect = slider.rect();
+        let mut target = None;
+        for i in 0..=1000 {
+            let x = rect.left() + rect.width() * i as f32 / 1000.0;
+            let p = egui::pos2(x, rect.center().y);
+            h.hover_at(p);
+            if i == 0 {
+                h.drag_at(p);
+            }
+            h.step();
+            let zoom = (h.state().session.view.zoom * 100.0).round() as i32;
+            if zoom == 95 {
+                target = Some(p);
+                break;
+            }
+        }
+        let p = target.expect("the slider drag should reach 95%");
+        h.drop_at(p);
+        h.run_steps(2);
+        h.state_mut().run("view.zoom", json!({"value": 90})).unwrap();
+        h.run_steps(2);
+        h.hover_at(p);
+        h.drag_at(p);
+        h.step();
+        let mut values = Vec::new();
+        for _ in 0..30 {
+            h.hover_at(p);
+            h.step();
+            let zoom = (h.state().session.view.zoom * 100.0).round() as i32;
+            let rect = h.get_by_role(Role::Slider).rect();
+            values.push((zoom, rect.left()));
+        }
+        h.drop_at(p);
+        assert!(values.iter().all(|(zoom, _)| *zoom == 95), "the zoom stays at 95% while the pointer is held: {values:?}");
+        let left = values.first().map(|(_, left)| *left).unwrap_or(0.0);
+        assert!(values.iter().all(|(_, x)| (*x - left).abs() < 0.01), "the slider track stays fixed while the label changes: {values:?}");
+    }
+
     /// Issue #122: touchpad deltas scroll the page 1:1 at once; a wheel notch eases in to about
     /// three lines.
     #[test]

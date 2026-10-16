@@ -58,6 +58,19 @@ Packaging lint ([run 38826437523](https://github.com/Shabirahmad427/wordcraft/ac
 all passed with Linux, macOS and Windows jobs successful. Existing installations remain unchanged;
 no claim is made for #2276, #2253 or #2246.
 
+## Phase 7U.4 — Responsiveness, rendering and zoom reliability (validation in progress)
+
+The status-bar zoom slider defect from #2256 was reproduced with a held-pointer UI event sequence:
+the zoom label resized as its digits changed, moving the slider track beneath the stationary pointer
+and alternating the value between 90% and 95%. A fixed-width readout keeps the track stationary;
+the 30-frame held-at-95% regression passes. On the Apple Silicon M4 macOS host, an existing release
+UI probe measured 4.0/8.2/10.0 ms median key frames before and 4.0/8.3/10.0 ms after on deterministic
+3-, 35- and 140-page ordinary-prose DOCX files; no typing-performance improvement is claimed. The
+reporter's ~50 ms delay (#2259) was not reproduced on this headless harness. #2278
+was also not reproduced; no trigger was supplied and the reporter's Ubuntu/Intel HD 4600 graphics
+are unavailable here. Native surface/device-loss scenarios and hosted three-OS validation remain
+pending. Neither existing Ubuntu nor macOS installation was modified.
+
 Phase 7T.2 validation passed on commit `a2718489` in [the full native package run](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634643684): Linux DEB, Apple Silicon macOS DMG and Windows x64 MSI jobs all passed, with no skipped platform. Each ran package creation, fresh installation, same-version replacement, isolated preference/recovery preservation, native edit/save/PDF/quit, and package removal. The Windows ARM64 package/install/CLI check also passed, without GUI-runtime coverage. The separate [Printing](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634652720), [Document regressions](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634656901) and [Packaging lint](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634644071) workflows passed. The package jobs took 28m47s Linux, 32m24s macOS and 20m51s Windows. Cold 0.7.0 baseline builds took 9m15s Linux and 10m macOS; Windows restored its baseline MSI cache in 2s. Inspection found that Rust cache omitted workspace crates by default; cache keys now opt into workspace-crate caching. This cache change is being validated on the final commit. Intel Mac hardware, Windows ARM64 GUI runtime, signing/notarization claims, and updates to the existing workstations remain unverified/not performed.
 
 
@@ -799,6 +812,7 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 - Upstream audit details, conflict notes, issue/PR status and hosted run results are tracked in [docs/upstream-audit-2026-10-11.md](docs/upstream-audit-2026-10-11.md). No independent Microsoft Word rendering comparison or native printer/platform runtime test is implied.
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Phase 7U.4: reproduced and fixed #2256 zoom slider oscillation; headless M4 before/after typing probe shows no measurable change; #2259/#2278 reporter-hardware checks remain open |
 | 2026-10-14 | trivial | Progress log: VML freeforms read and kept on save |
 | 2026-10-14 | trivial | Progress log: consistent preferred cell widths |
 | 2026-10-14 | trivial | Field instructions spanning paragraphs no longer add blank lines during pagination; empty result paragraphs still take a line. |

@@ -1,6 +1,6 @@
 # WordCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** Phase 7U.1: page-number preservation, independent header-mode probe, IME regression coverage; hosted/native keyboard checks pending · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** Phase 7U.4: reproduce/fix #2256 zoom slider oscillation; #2259 typing lag and #2278 black page remain unverified on reporter hardware · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 Forward-looking plan. The summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is
 [`gaps.md`](gaps.md); the numbers are in [`target-app-parity.md`](target-app-parity.md). Hours are
@@ -43,6 +43,15 @@ regressions ([run 38826404239](https://github.com/Shabirahmad427/wordcraft/actio
 Native packages ([run 38826404171](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826404171))
 and Packaging lint ([run 38826437523](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826437523))
 passed, including successful Linux, macOS and Windows jobs.
+
+Phase 7U.4 reproduces and fixes #2256: the status-bar zoom percentage's changing width moved the
+slider while it was held, causing a 90%/95% oscillation. A held-at-95% UI regression passes. A
+three-run Apple Silicon M4 headless probe on 3-, 35- and 140-page ordinary DOCX files measured
+4.0/8.2/10.0 ms median key frames before and 4.0/8.3/10.0 ms after; it found no typing performance change and did
+not reproduce #2259's reported ~50 ms native delay. #2278 remains open: no trigger was provided,
+and the M4 headless harness did not exercise an actual graphics surface or the reporter's Intel
+HD 4600 GPU. Native reporter hardware and surface-loss coverage are still outstanding. Exact probe
+method and results are in [performance benchmarks](performance-benchmarks.md).
 
 The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current five-gap evidence priority and distinguishes native runtime results from cross-builds.
 
@@ -112,6 +121,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Phase 7U.4: #2256 zoom oscillation reproduced/fixed; M4 headless typing probe unchanged; #2259 and #2278 need reporter-platform evidence |
 | 2026-10-15 | minor | Phase 7U.3: integrate missing DOCX fixes from #2275/#2267 after package-level repro; all six local CI gates and hosted three-OS workflows pass on `099cbd5f` |
 | 2026-10-15 | minor | Phase 7U.2 structured drawing clipboard landed; hosted regression, printing, packaging lint and full three-OS package matrix passed on `85f03acb`; Windows GUI #2276 and physical Portuguese keyboard checks remain pending |
 | 2026-10-15 | minor | Phase 7U.1: adapted #2251; #2246 independently probed without reproduction; native #2253 keyboard input and hosted checks pending |

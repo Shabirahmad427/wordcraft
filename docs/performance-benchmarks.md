@@ -1,5 +1,7 @@
 # Synthetic visual and performance regression benchmarks
 
+> **Last updated:** 2026-10-15 · **Change:** Phase 7U.4 headless editor responsiveness measurements, zoom-slider reproduction and remaining native rendering limits
+
 These benchmarks exercise WordCraft's own document model, layout and renderers. They are not
 Microsoft Word reference comparisons. Never use a private manuscript as a benchmark input without
 its owner's explicit authorization.
@@ -132,6 +134,48 @@ raw metrics and summaries as run artifacts. These are single-host reference meas
 performance limits or comparisons against Microsoft Word. In particular,
 all-page raster duration grows with the number of separate CLI processes and is sensitive to host
 scheduling.
+
+## Phase 7U.4 — editor responsiveness and zoom (#2259, #2256)
+
+At baseline commit `ac748b3a`, the existing `perf_probe` example was run in release mode on the
+Apple Silicon M4 macOS development host (Darwin 27.0.0, Rust 1.99.0). The probe uses the real
+`WordApp::logic`/`WordApp::ui`, document layout and page raster code through `egui_kittest`; it has
+no native window, GPU presentation surface or physical input device. The bundled open fonts were
+used with system-font discovery disabled. Each deterministic, source-generated DOCX contains
+ordinary A4 paragraphs and paginates to 3, 35 or 140 pages (36, 420 or 1,680 paragraphs). Three
+complete probe runs were collected per size; each run samples 40 typed characters in the longest
+paragraph, 120 wheel-scroll frames, 300 trackpad frames, six zoom transitions and 34 resizes. The
+probe reports synchronous elapsed time around each headless frame to tenths of a millisecond;
+`layout_ms` and `render_ms` are the engine's layout and page-raster timers. Three run medians/MADs
+are therefore rounded summaries, not microsecond-precision claims.
+
+| Workload | Typed-key frame median, before → after | Per-run key-frame p95, before → after | Layout median, before → after | Page raster median, before → after |
+|---|---:|---:|---:|---:|
+| 3 pages | 4.0 → 4.0 ms (MAD 0.0 → 0.0) | 4.3 → 4.1 ms | 0.1 → 0.1 ms | 3.5 → 3.5 ms |
+| 35 pages | 8.2 → 8.3 ms (MAD 0.0 → 0.1) | 8.7 → 8.6 ms | 0.5 → 0.5 ms | 7.2 → 7.2 ms |
+| 140 pages | 10.0 → 10.0 ms (MAD 0.1 → 0.0) | 10.5 → 10.4 ms | 2.0 → 2.0 ms | 7.3 → 7.2 ms |
+
+“After” is the same probe and fixtures with the status-bar zoom readout fix in this phase. The
+changes are within run variability; this UI-only fix did not measurably improve typing. The reported
+~50 ms typing delay was not reproduced on this M4 headless harness, but this is not the reporter's
+MacBook Neo or native keyboard-to-display latency. Cursor movement, selection, Undo/Redo, editing
+near tables/images, GUI redraw cadence and CPU utilization were not independently timed by this
+probe; OS process inspection is denied in this environment. No comparison with v0.5.0 is claimed
+because an equivalent historical UI benchmark is unavailable.
+
+Issue #2256 was reproduced in a held-pointer UI event sequence: the zoom readout changed its
+intrinsic width as its digits changed, which moved the neighboring slider track under a stationary
+pointer. Before the fix, the same held location alternated between 90% and 95%; with smart aiming
+disabled during diagnosis it cycled 93%, 94%, 95%. The readout now reserves a fixed width, leaving
+the slider track stationary. A 30-frame held-at-95% regression passes and asserts both a constant
+95% value and unchanged slider position. This is a synthetic egui interaction test, not physical
+trackpad or mouse validation.
+
+Issue #2278 was not reproduced. No trigger or document is available from its reporter. This Mac
+probe has no native graphics surface and does not exercise device loss, surface recreation,
+minimize/restore or Intel HD Graphics 4600. The issue remains open; the Windows backend's existing
+adapter/backend diagnostics are retained. No renderer fallback or black-background behavior was
+changed.
 
 ### Earlier smoke run
 

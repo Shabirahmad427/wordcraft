@@ -520,7 +520,10 @@ pub fn status_bar(app: &mut WordApp, ui: &mut Ui) {
                     let ztxt = format!("{z}%");
                     let zfont = TypeRung::Caption.regular();
                     let ztrack = TypeRung::Caption.tracking();
-                    let zw = text_width(ui.painter(), &ztxt, &zfont, ztrack, t.text_dim);
+                    // Keep the slider's track at a fixed x position as zoom digits change. If this
+                    // label shrinks and grows during a held drag, a stationary pointer maps to a
+                    // different value on each frame and zoom can oscillate (issue #2256).
+                    let zw = text_width(ui.painter(), "888%", &zfont, ztrack, t.text_dim);
                     let (zr, zresp) = ui.allocate_exact_size(vec2(zw + 1.0, TypeRung::Caption.line_height()), Sense::click());
                     paint_text(ui.painter(), pos2(zr.min.x, zr.min.y), Align2::LEFT_TOP, &ztxt, &zfont, ztrack, t.text_dim);
                     if zresp.clicked() && !reading {
