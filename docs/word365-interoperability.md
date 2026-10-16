@@ -258,9 +258,13 @@ built successfully and first exposed two layout pagination tests with platform-d
 font metrics. Those tests now specify bundled Source Serif 4 and 12 pt exact line spacing, retaining
 their original assertions. On rerun [38921987082](https://github.com/Shabirahmad427/wordcraft/actions/runs/38921987082),
 both layout tests passed; the PDF crate then exposed two Hebrew extraction failures because the VM
-installed no Hebrew font. This is a missing test dependency, not a FreeBSD PDF implementation
-failure. The FreeBSD VM now installs the open `noto-sans-hebrew` package; the new workflow run must
-confirm it resolves the remaining failures.
+installed no Hebrew font. The VM now installs the open `noto-sans-hebrew` package. Run
+[38928171576](https://github.com/Shabirahmad427/wordcraft/actions/runs/38928171576) confirmed that
+resolved the Hebrew failures, but exposed one Arabic-vowel extraction mismatch: the VM had no
+Arabic-script font and selected DejaVu Sans. The FreeBSD VM now also installs `noto-naskh-arabic`,
+the first Arabic family in WordCraft's fallback order; a fresh run is required to confirm the full
+suite passes. The required Linux/macOS/Windows workflows remained green throughout; this is the
+separate nightly FreeBSD matrix, which had not been part of the previously green 7U.6 gates.
 
 Windows ARM64 run [38893268625](https://github.com/Shabirahmad427/wordcraft/actions/runs/38893268625)
 cross-compiled the GUI and CLI, built an ARM64 MSI, installed it on a hosted ARM64 runner, checked
