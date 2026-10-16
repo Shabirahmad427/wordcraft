@@ -1,5 +1,18 @@
 # WordCraft roadmap
 
+## Phase 7U.9 — Word-created DOCX controlled edit and reopen (2026-10-16)
+
+On the authorized, purpose-created Word for Mac sample, a directly mapped single-run body-text
+insertion saved and survived WordCraft reopen/resave; package comparison found only the allowed
+`word/document.xml` change. The preservation guard safely refused formatting-only and mixed-format
+paragraph edits, so no production fix was justified. Microsoft Word for Mac reopened the saved
+output without a repair warning and displayed the inserted text and existing formatting. Arabic PDF
+logical-order/source-character regressions pass; no WordCraft PDF mapping defect was demonstrated.
+Windows ARM64 CI covered cross-compilation, MSI install, architecture, CLI version and uninstall,
+but not GUI runtime or document editing. One synthetic case does not close the external real-world
+DOCX corpus gap; see [the interoperability report](docs/word365-interoperability.md). No installed
+application was modified.
+
 ## Pinned upstream integration (validated)
 
 The October 15 integration starts from fork commit `426331fa` and pins upstream

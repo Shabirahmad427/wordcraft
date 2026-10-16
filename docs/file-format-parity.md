@@ -1,6 +1,6 @@
 # File-format parity with Microsoft Word
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** trivial (Phase 7U.3: case-insensitive OOXML on/off and unit parsing; synthetic DOCX regressions) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4, plus Word for Windows' extra formats
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** trivial (Phase 7U.9: one Word-created synthetic DOCX single-run text edit, package comparison and Word reopen; external corpus remains unavailable) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.114, plus Word for Windows' extra formats
 
 Every format Word opens or saves, what WordCraft does with it, and how it's tested. Fidelity is the
 share of a typical real-world file's content and formatting that survives (read: shows correctly;
@@ -35,7 +35,7 @@ Weights are the share of a Word user's file traffic (estimate). Read/write: ✅ 
 | Format | Weight | Word | WordCraft read | WordCraft write | Fidelity | Hours | How it's tested | Notes |
 |---|---|---|---|---|---|---|---|---|
 | `.docx` page background picture/texture (`v:background/v:fill`) | — | R/W | ✅ | ✅ | ~80% | — | `roundtrip.rs::page_background_picture_round_trips`, `crates/render` | Image part and `type`/`o:title` kept; tiled at 96 dpi or stretched; drawn on screen and in PDF; no Fill Effects dialog yet, gradients and patterns are not read |
-| `.docx` Word Document (ECMA-376 Transitional) | 70% | R/W | ✅ | ✅ | ~65% | 70–110 | `crates/docx/tests` (roundtrip 34, fixtures 29, malformed 8, bidi 5, citations 5); synthetic fixtures only | Word opens our files. Untested on a real-world corpus. Tracked changes inside a field result stay revisions (the field is kept as a range, #1037). Details below |
+| `.docx` Word Document (ECMA-376 Transitional) | 70% | R/W | ✅ | ✅ | ~65% | 70–110 | `crates/docx/tests` plus one local-only Word-created synthetic case with a narrow text-edit/package-preservation round trip; external corpus unavailable | One saved sample reopened in Word without a repair warning. Formatting-only and mixed-format-run edits remain guarded/refused. Not tested on an authorized external real-world corpus. Tracked changes inside a field result stay revisions (the field is kept as a range, #1037). Details below |
 | `.docx` Strict Open XML | 1% | R/W | ✅ (namespace mapping in `xml.rs`) | ❌ | ~60% | 2–4 | one fixture | Writing Strict is rare |
 | `.docm` / `.dotx` / `.dotm` | 3% | R/W | ✅ | ✅ | ~65% | incl. above | `macro_packages.rs` | Macros and signatures kept on save (#172); macros never run |
 | `.doc` Word 97-2003 (and `.dot`) | 8% | R/W | 🟡 | ❌ | ~60% | 25–40 | `crates/docbin/src/tests.rs`, `tests/drawing.rs` | Spec-based reader ([MS-DOC]): text, formatting, styles, sections, headers/footers, tables, lists, notes, fields, bookmarks; inline and floating pictures (PNG, JPEG, DIB, TIFF, EMF, WMF; Macintosh PICT as a sized placeholder) with crop, alt text, position and wrap; basic shapes, lines, groups and text boxes ([MS-ODRAW]). Table cell shading from every SHD record (`sprmTDefTableShd`, `sprmTDefTableShdRaw` and their 2nd/3rd ranges, with the Word 97 `Shd80` as fallback; a clear pattern shows its background colour); the row-end mark is not a cell, and each table has its own grid and properties (#1380). Horizontally merged rows stored as fewer, wider cells come with #1123. Freeform shapes, z-order and Word 6/95 files are dropped or refused. Password-protected files (XOR obfuscation, RC4, RC4 CryptoAPI) open after a password prompt, from the public specs; not yet tried on a file Word wrote (AES-encrypted ones are refused). No writer. DIB conversion caps BMP bytes (header included) and encoded PNG at the supplied BLIP byte limit, and uses it as the decoder's allocation limit; a BMP fallback is kept if it fits (related #1334 and #1554). |
@@ -218,6 +218,7 @@ attributes inside stories and style or list definitions; a regenerated theme. Te
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-15 | trivial | Upstream #2275/#2267 audited and missing DOCX on/off and measure parsing fixes added after fail-first package fixtures; no real-world corpus claim |
+| 2026-10-16 | trivial | Phase 7U.9: one Word-created synthetic DOCX single-run text edit preserved through save/reopen and package allowlist; Word reopened output without a repair warning; formatting edits remain guarded and broad corpus remains unavailable |
 | 2026-10-15 | trivial | `insert.pageNumber` keeps existing header/footer content and PAGE fields on save/reopen; synthetic DOCX checks only |
 | 2026-10-13 | trivial | A cell's explicit top vertical alignment (`w:vAlign w:val="top"`) is kept on read and write and beats a table style that centres or bottom-aligns (#1288) |
 | 2026-10-14 | trivial | Row table border exceptions survive DOCX saves |

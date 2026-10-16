@@ -1,8 +1,9 @@
 # Word 365 interoperability benchmark
 
-**Status: one local-only Word reference pair created; a controlled text edit and package-preserving
-DOCX round-trip pass within the narrow guarded-edit envelope. Word reopen remains unverified, and the
-WordCraft visual comparison is diagnostic only, not an acceptance result.**
+**Status: one local-only Word reference pair created; a single-run text edit and package-preserving
+DOCX round-trip pass within the narrow guarded-edit envelope. The WordCraft-saved file reopened in
+Word for Mac without a repair warning during visual inspection. Formatting edits remain safely
+blocked; the visual comparison is diagnostic only, not an acceptance result.**
 This report does not infer Office provenance from OOXML shape, filenames, metadata, or passing
 WordCraft tests.
 
@@ -110,10 +111,11 @@ that a permitted change is correct, or certify that Word can edit the result. Ad
 Keep the original archive immutable; output is always a separate path. Reports contain package part
 names and hashes, not text, but part names can still disclose document structure.
 
-To finish the application-level pass, open a WordCraft-saved DOCX in the recorded Microsoft Word
-build, note any repair/recovery warning, save a copy from Word, reopen that copy in WordCraft and
-compare its package report. A WordCraft-saved DOCX now exists from the controlled edit, but this
-Microsoft Word reopen stage has not been run. The one-page raster diagnostic above was run, but
+The WordCraft-saved DOCX was opened in the recorded Microsoft Word build and visually inspected.
+Word displayed the edited document without a repair/recovery warning; it showed one page and retained
+the inserted sentence, heading, mixed formatting, and multilingual paragraph. The file was not saved
+or modified in Word, so a Word-save/reopen-back-in-WordCraft cycle remains untested. The one-page
+raster diagnostic above was run, but
 text-anchor and object-edge measurements were not. The planned acceptance tolerances are exact page
 count, text-anchor p95 displacement ≤3 pt and figure/table/equation edge displacement ≤3 pt; raster
 similarity is diagnostic only because font rasterizers differ. These remain protocol targets, not
@@ -122,12 +124,12 @@ achieved results.
 ## Capability and evidence matrix
 
 “Implemented” describes a constrained WordCraft path. “Internal tests” means synthetic Rust tests;
-it does not imply a broad Word-generated corpus. Word verification requires opening and inspecting a
-WordCraft-saved case in the actual application, which has not happened in this benchmark.
+it does not imply a broad Word-generated corpus. Word verification here is limited to opening and
+visually inspecting one WordCraft-saved synthetic case in the actual application.
 
 | Scientific/document feature | Implemented in WordCraft | Internal regression evidence | Word-generated input tested | Verified in Word 365 | Current scope/limitations |
 |---|---|---|---|---|---|
-| Basic typography and paragraph styles | Partial | Yes | One synthetic Word-generated case opened; save blocked | No | One-page diagnostic only; no round-trip or acceptance-level visual validation |
+| Basic typography and paragraph styles | Partial | Yes | One synthetic Word-generated case; single-run text edit saved and reopened | Yes, visual reopen only | Format-only edits are refused by the preservation guard; no Word-side save or acceptance-level visual validation |
 | Equations and numbering | Partial | Yes | No | No | OMML/model coverage and numbering tests; complex imported structures are preservation-guarded |
 | Citations and bibliography | Partial | Yes | No | No | WordCraft citations plus preservation tests for manager fields; no live Zotero/Mendeley/Word check |
 | Tables, figures and captions | Partial | Yes | No | No | Editing, pagination and OOXML preservation tests; floating-object fidelity is not independently compared |
@@ -200,10 +202,10 @@ Hosted evidence for this baseline:
 These hosted successes verify their respective commits and workflows; they are not one full
 cross-platform run on `9336c20`. This Phase 7U.6 update adds one local-only Word-generated synthetic
 styles/typography DOCX and a Word-exported PDF. It is not an authorized external real-world document.
-The source opened in WordCraft and a PDF comparison was run for diagnostics, but the guarded DOCX
-save rejected the no-edit round trip. Word reopen of a WordCraft-saved DOCX, controlled edits,
-structural comparison and acceptance-level visual analysis were therefore not run. The other four
-manifest categories remain blocked rather than being represented by synthetic fixtures.
+The source opened in WordCraft; Phase 7U.9 subsequently verified one guarded single-run text edit,
+package comparison, WordCraft reopen/resave and a visual reopen in Word. Formatting edits remain
+refused, and acceptance-level visual analysis was not run. The other four manifest categories remain
+blocked rather than being represented by synthetic fixtures.
 
 Phase 7E added the explicit-policy raster comparator (`cargo xtask visual compare`) and a synthetic
 CLI performance harness. Its 2026-10-12 smoke run covered 45 pages, 8 tables, 8 workbook-backed
@@ -224,11 +226,11 @@ represent Microsoft Word output.
 
 - Local Microsoft Word-generated synthetic DOCX/reference PDF pairs: **1**; authorized external
   real-world cases: **0**; four of five planned corpus categories remain blocked.
-- The local source opened in WordCraft and its PDF was raster-compared diagnostically; the unchanged
-  DOCX save was rejected by the preservation guard, so package comparison and controlled edits were
-  not run.
-- Opening a WordCraft-saved DOCX in Word and checking repair warnings/editability: **not run** because
-  WordCraft did not produce an output DOCX.
+- The local source opened in WordCraft and its PDF was raster-compared diagnostically. A directly
+  mapped single-run text insertion passed package comparison and WordCraft reopen/resave; formatting-
+  only and mixed-format edits were safely refused.
+- Opening the saved output in Word for Mac: **visually inspected, no repair/recovery warning**. Word
+  did not save the file; a Word-side save/reopen cycle remains untested.
 - The one-page raster comparison is diagnostic only; acceptance-level visual measurements: **not
   run**.
 - WordCraft package fingerprint/allowlist utility: added with unit tests; no external corpus has yet
@@ -239,6 +241,39 @@ represent Microsoft Word output.
 The next evidence-producing step requires a consented, redistributable Word-created corpus and a
 Windows/macOS environment that can run the actual target application. Until those exist, improvements
 can be proven internally but not certified as Word 365 interoperability.
+
+## Phase 7U.9 follow-up (2026-10-16)
+
+On macOS arm64, controlled edits were attempted against the authorized, purpose-created Word sample.
+The guard rejected formatting-only editing and replacing text in a paragraph with multiple differently
+formatted runs; both refusals are intentional because the writer cannot prove those edits preserve the
+original run structure. A single-run body paragraph accepted a text insertion. The source stayed
+unchanged; after save, package comparison passed with only `word/document.xml` changed. A second
+WordCraft open/save cycle retained the insertion and passed the same package allowlist. The existing
+`formatting_structure_settings_and_object_edits_fail_safely` regression covers the guarded refusal;
+no production code change was justified.
+
+The saved output was opened and visually inspected in Microsoft Word for Mac 16.114 (26101123) on
+macOS 27 arm64. Word showed one page, the inserted text and the original visible formatting, with no
+repair/recovery warning. Word was not used to edit or save the file, so Word-side save/reopen remains
+untested. These assets and comparison outputs remain in ignored local storage; no private hashes,
+metadata, screenshots or documents are published.
+
+The Arabic PDF extraction regressions `right_to_left_text_extracts_in_logical_order` and
+`arabic_pdf_text_mapping_preserves_logical_source_characters` pass. Extraction of the authorized
+sample retained the source Arabic characters in logical order (with bidi control characters around
+the run). Comparison with Word's PDF exposed a different mapping in Word's output, not a demonstrated
+WordCraft mapping defect. No PDF code change was made.
+
+Windows ARM64 workflow [38893268625](https://github.com/Shabirahmad427/wordcraft/actions/runs/38893268625)
+verified cross-compilation, ARM64 MSI installation, PE architecture, CLI version, and uninstall. It
+did not run the GUI or validate editing, rendering, clipboard, DOCX save/reopen, or PDF export.
+Independent Intel Mac and Windows ARM64 GUI behavior remain unverified.
+
+This remains one synthetic Word-created sample, not an external real-world corpus. Formatting edits,
+Word-side save/reopen, and acceptance-level visual comparison remain unverified; no Microsoft Word
+parity claim is made. Issues #2276, #2253, #2246, #2259 and #2278 retain their previously documented
+native-verification limitations.
 
 ## Phase 7U.8 follow-up (2026-10-16)
 

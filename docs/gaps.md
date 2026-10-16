@@ -1,6 +1,6 @@
 # Where WordCraft falls short of Word
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (Phase 7U.4 reproduces and fixes the zoom slider oscillation; typing/black-page reports remain unverified on the reporters' hardware) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-16 · **Change:** minor (Phase 7U.9 validates one narrow Word-created synthetic DOCX text edit and Word reopen; broad corpus remains unavailable) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.114
 
 > **Printing update:** 2026-10-12 · direct desktop printing through craft-print; details below.
 
@@ -31,8 +31,11 @@ cross-application drawing paste remains unverified. Do not call #2276 fully reso
 requested native Windows GUI check passes.
 
 DOCX measure units including EMU now parse case-insensitively, and standard on/off values are
-trimmed and case-folded in the reader. The fixes are pinned by synthetic DOCX fixtures. They do not
-reduce the real-world DOCX corpus gap or change the readiness estimate.
+trimmed and case-folded in the reader. The fixes are pinned by synthetic DOCX fixtures. A separate
+purpose-created synthetic document saved from Word for Mac now has one verified single-run text edit,
+package comparison, WordCraft reopen/save, and Word reopen without a repair warning. Formatting edits
+remain refused by the preservation guard. This is not an external real-world corpus and does not
+change the readiness estimate.
 
 Document renaming: desktop renaming requires a filesystem that supports hard links (exFAT/FAT drives and some network shares refuse it). Behaviour: [UI parity](ui-parity.md).
 
@@ -40,7 +43,7 @@ Document renaming: desktop renaming requires a filesystem that supports hard lin
 
 | # | Gap | B | Evidence | Impact | Hours | Doc |
 |---|---|---|---|---|---|---|
-| 1 | **DOCX never tested on real-world files.** No corpus of files from Word, Google Docs, LibreOffice and Pages has been opened, rendered and round-tripped and compared with Word page by page | B | No corpus in the repo; `crates/docx/tests` are synthetic fixtures (including omitted/empty paragraph defaults and imported TOC range preservation); "DOCX fidelity corpus: not started" since 2026-10-06. Field reports fixed one by one: a cover page's theme-coloured shapes (#611), freeforms inside groups and text-box margins and Resize to fit (#743), cover-page positions relative to the page and freeforms drawn back to their start (#743), Word's text watermark in headers, read and written (#1290), VML freeform rule lines in headers, and `flowChartOr` drawn with its spokes (#1644) | Everyone: the files people receive are the files that break | 30–50 | [file-format-parity.md](file-format-parity.md) |
+| 1 | **DOCX not tested on an external real-world corpus.** No authorized corpus from Word, Google Docs, LibreOffice and Pages has been opened, rendered and compared page by page | B | One purpose-created synthetic DOCX saved from Word for Mac has a narrow single-run text edit/save/reopen and package comparison pass; the output opened in Word without a repair warning. Formatting edits remain guarded/refused. No authorized external real-world documents have been tested. Field reports fixed one by one: a cover page's theme-coloured shapes (#611), freeforms inside groups and text-box margins and Resize to fit (#743), cover-page positions relative to the page and freeforms drawn back to their start (#743), Word's text watermark in headers, read and written (#1290), VML freeform rule lines in headers, and `flowChartOr` drawn with its spokes (#1644) | Everyone: the files people receive are the files that break | 30–50 | [file-format-parity.md](file-format-parity.md) |
 | 3 | **Crashes and freezes in the field**: startup crash on Intel UHD Graphics (#170, open), a crash on macOS 12.7.6 Intel (#979, open) (lag on GPUs without a DirectX 12 driver fixed, #316; 32-bit Windows exited at launch because DirectX 12 graphics pipeline creation failed, now OpenGL), freezes (#59 Thai fonts and #31 font selector, both open; #77 closed), broken shape tool (#142, open); the Windows 11 no-write-without-admin (#218) and unmovable images (#82) reports are closed (pictures and shapes in Behind Text drag through the text over them, #1313); memory growth on every font change fixed (#848: the font list no longer loads each family it previews) | B | 197 open issues (2026-10-12), among them the crash and freeze reports #170, #979, #59 and #31 | Anyone hit loses work or trust; the never-crash standard covers panics, not hangs or GPU driver faults | 20–30 | [target-app-parity.md](target-app-parity.md) (Stability) |
 | 4 | **Pagination differs from Word**: Aptos has no metric-matched substitute; legacy compatibility options only partially covered; no page-by-page comparison harness | B | Legacy same-style cell spacing preserved for measured modes 11/12/14, with mode 15 and non-cell controls; Contextual spacing corrected in body/header probes and repeated table-cell runs; [layout-parity.md](layout-parity.md); [typing-parity.md](typing-parity.md) Known gaps; stray labels on page-break-only list paragraphs fixed multi-paragraph field-code blank lines fixed | Page counts and line breaks differ, which matters for forms, legal and academic work | 30–50 + owner (font) | [layout-parity.md](layout-parity.md) |
 | 2 | **Remaining native ink forms are dropped on open and lost on save, silently**; OLE objects show only their picture | B | Drawing-level native ink, its optional picture fallback, and direct run-level content parts are preserved; ink nested in groups/canvases remains unsupported. Drawing canvases are read and written (#344); group shapes (`wpg`) read and written (#267). Charts and SmartArt are drawn (#292) and, with OLE objects, written back with all their parts on save (#319) | Documents with diagrams drawn in Word or pen notes lose content without warning | 4–8 to preserve remaining native ink forms; 45–70 to render and edit charts and SmartArt (#13) | [file-format-parity.md](file-format-parity.md) |
