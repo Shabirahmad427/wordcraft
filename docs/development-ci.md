@@ -52,10 +52,31 @@ dispatchable for focused diagnostics. Their ordinary PR/main triggers were remov
 duplicating FAST with 10–37 minute full suites. Packaging lint remains path-triggered on PRs and
 main because it usually completes in seconds. FreeBSD and Windows ARM64 also retain nightly runs.
 
+## Phase 7U.15 timing results
+
 At baseline `fe4d4024`, hosted runs took 12m18s for Document regressions, 22m49s for Native packages,
-36m55s for Printing, 35m41s for FreeBSD, 14m27s for Windows ARM64, and 24s for Packaging lint. FAST
-and STANDARD after this change are measured from their new run links in the Phase 7U.15 report;
-time targets are goals, not CI timeouts. These samples are GitHub-hosted durations, not local build
-times. Branch protection was not enabled on `main` when this workflow change was made, so there were
-no required status-check names to rename. Release gating is enforced by the release workflow's
+36m55s for Printing, 35m41s for FreeBSD, 14m27s for Windows ARM64, and 24s for Packaging lint. These
+heavy workflows used to run automatically for relevant PRs or main pushes, so normal development
+could wait on the slowest suite.
+
+On implementation commit `bb6badf6`, FAST completed on hosted Linux in 2m34s, including Linux build
+dependency setup, restore and package test/lint work ([run 39057385547](https://github.com/Shabirahmad427/wordcraft/actions/runs/39057385547)).
+Packaging lint took 35s ([run 39057385591](https://github.com/Shabirahmad427/wordcraft/actions/runs/39057385591)).
+Local warm measurements were 2.77s for FAST and 1m15s for STANDARD. Hosted STANDARD took 30m38s on
+its first cold run inside FULL, then 9m56s on a repeated run with the warmed cache
+([run 39059921266](https://github.com/Shabirahmad427/wordcraft/actions/runs/39059921266)). The warm
+STANDARD result meets the ten-minute goal by only four seconds, so runner variance may put it over.
+The cold STANDARD run is the clearest cache miss/build bottleneck and should be treated as first-run
+cost, not typical warm feedback.
+
+FULL passed in 31m29s ([run 39057595497](https://github.com/Shabirahmad427/wordcraft/actions/runs/39057595497));
+all constituent jobs passed, including Linux/macOS/Windows document and printing suites, DEB/DMG/MSI
+installation plus GUI checks, FreeBSD, and Windows ARM64. The slowest job was FreeBSD at 31m25s;
+the first cold STANDARD run took 30m38s. On that FULL run, native package jobs took 12m, 19m and 21m
+for Linux, macOS and Windows respectively. These samples are GitHub-hosted durations, not local
+build times. They confirm that FULL remains a release-scale wait while FAST gives routine feedback
+within its target.
+
+Branch protection was not enabled on `main` when this workflow change was made, so there were no
+required status-check names to rename. Release gating is enforced by the release workflow's
 dependency on the FULL reusable workflow.
