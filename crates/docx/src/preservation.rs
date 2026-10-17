@@ -6,7 +6,7 @@ use crate::{
     preserved_xml::{self as xml, CT, Element, R, REL, RS, error, qualified},
 };
 use std::{collections::BTreeSet, sync::Arc};
-use wordcraft_doc::{Block, Document};
+use wordcraft_doc::{Block, Document, Paragraph};
 const SOURCE: &str = "wordcraft:packageSource.v1";
 const BASE: &str = "wordcraft:packageBaseline.v1";
 const MODEL: &str = "wordcraft:packageModel.v1";
@@ -486,6 +486,70 @@ struct GraphicSizeEdit {
     old_h: f32,
     new_w: f32,
     new_h: f32,
+    picture: bool,
+}
+
+fn paired_paragraphs<'a>(
+    current: &'a [std::sync::Arc<Block>],
+    baseline: &'a [std::sync::Arc<Block>],
+    out: &mut Vec<(&'a Paragraph, &'a Paragraph)>,
+) -> Result<(), DocxError> {
+    if current.len() != baseline.len() {
+        return Err(error("structural editing of a guarded DOCX is unsupported; the original package is preserved"));
+    }
+    for (now, before) in current.iter().zip(baseline) {
+        match (now.as_ref(), before.as_ref()) {
+            (Block::Para(now), Block::Para(before)) => out.push((now, before)),
+            (Block::Table(now), Block::Table(before)) => {
+                if now.rows.len() != before.rows.len() {
+                    return Err(error("table structure editing cannot be preserved safely in this DOCX"));
+                }
+                for (now_row, before_row) in now.rows.iter().zip(&before.rows) {
+                    if now_row.cells.len() != before_row.cells.len() {
+                        return Err(error("table structure editing cannot be preserved safely in this DOCX"));
+                    }
+                    for (now_cell, before_cell) in now_row.cells.iter().zip(&before_row.cells) {
+                        paired_paragraphs(&now_cell.blocks, &before_cell.blocks, out)?;
+                    }
+                }
+            }
+            _ => return Err(error("table and paragraph structure changed; the original package is preserved")),
+        }
+    }
+    Ok(())
+}
+
+fn replace_paragraphs(blocks: &mut [std::sync::Arc<Block>], index: &mut usize, replacements: &[(usize, Paragraph)], replacement_index: &mut usize) {
+    for block in blocks {
+        match std::sync::Arc::make_mut(block) {
+            Block::Para(paragraph) => {
+                if let Some((wanted, replacement)) = replacements.get(*replacement_index)
+                    && *index == *wanted
+                {
+                    *paragraph = replacement.clone();
+                    *replacement_index += 1;
+                }
+                *index += 1;
+            }
+            Block::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        replace_paragraphs(&mut cell.blocks, index, replacements, replacement_index);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn paragraph_count(blocks: &[std::sync::Arc<Block>]) -> usize {
+    blocks
+        .iter()
+        .map(|block| match block.as_ref() {
+            Block::Para(_) => 1,
+            Block::Table(table) => table.rows.iter().flat_map(|row| &row.cells).map(|cell| paragraph_count(&cell.blocks)).sum(),
+        })
+        .sum()
 }
 
 /// Names document-model fields that differ after an edit is normalized against the imported
@@ -531,21 +595,18 @@ fn edits(
     baseline: &Document,
 ) -> Result<(Vec<TextEdit>, Vec<RunFormatEdit>, Vec<MarkFormatEdit>, Vec<StyleEdit>, Vec<GraphicSizeEdit>), DocxError> {
     let mut normalized = doc.clone();
-    if normalized.body.len() != baseline.body.len() {
-        return Err(error("structural editing of a guarded DOCX is unsupported; the original package is preserved"));
-    }
+    let mut paragraphs = Vec::new();
+    paired_paragraphs(&doc.body, &baseline.body, &mut paragraphs)?;
     let mut edits = Vec::new();
     let mut format_edits = Vec::new();
     let mut mark_edits = Vec::new();
     let mut style_edits = Vec::new();
     let mut graphic_sizes = Vec::new();
-    for (index, (current, original)) in doc.body.iter().zip(&baseline.body).enumerate() {
+    let mut normalized_paragraphs = Vec::new();
+    for (index, (current, original)) in paragraphs.into_iter().enumerate() {
         if current == original {
             continue;
         }
-        let (Some(current), Some(original)) = (current.as_para(), original.as_para()) else {
-            return Err(error("table/object editing cannot be preserved safely in this DOCX"));
-        };
         if current.text == original.text && current.objects == original.objects && current.section == original.section {
             let mut paragraph = current.clone();
             let style = paragraph.props.style.take();
@@ -621,7 +682,7 @@ fn edits(
                     return Err(error("formatted paragraph text length changed"));
                 }
                 if changed_style || changed_format || current.mark != original.mark {
-                    *normalized.body.get_mut(index).ok_or_else(|| error("paragraph index"))? = Arc::new(Block::Para(original.clone()));
+                    normalized_paragraphs.push((index, original.clone()));
                     continue;
                 }
             }
@@ -634,7 +695,14 @@ fn edits(
                     (wordcraft_doc::InlineObject::Graphic { w, h, .. }, wordcraft_doc::InlineObject::Graphic { w: old_w, h: old_h, .. })
                         if w != old_w || h != old_h =>
                     {
-                        size_edits.push(GraphicSizeEdit { old_w: *old_w, old_h: *old_h, new_w: *w, new_h: *h });
+                        size_edits.push(GraphicSizeEdit { old_w: *old_w, old_h: *old_h, new_w: *w, new_h: *h, picture: false });
+                        *w = *old_w;
+                        *h = *old_h;
+                    }
+                    (wordcraft_doc::InlineObject::Image { w, h, .. }, wordcraft_doc::InlineObject::Image { w: old_w, h: old_h, .. })
+                        if w != old_w || h != old_h =>
+                    {
+                        size_edits.push(GraphicSizeEdit { old_w: *old_w, old_h: *old_h, new_w: *w, new_h: *h, picture: true });
                         *w = *old_w;
                         *h = *old_h;
                     }
@@ -644,7 +712,7 @@ fn edits(
         }
         if !size_edits.is_empty() && size_only == *original {
             graphic_sizes.extend(size_edits);
-            *normalized.body.get_mut(index).ok_or_else(|| error("paragraph index"))? = Arc::new(Block::Para(original.clone()));
+            normalized_paragraphs.push((index, original.clone()));
             continue;
         }
         let prefix = original.text.chars().zip(current.text.chars()).take_while(|(a, b)| a == b).map(|(a, _)| a.len_utf8()).sum::<usize>();
@@ -677,7 +745,13 @@ fn edits(
         let mut replacement = anchor.to_string();
         replacement.replace_range(prefix..old_end, added);
         edits.push(TextEdit { index, anchor: anchor.to_string(), replacement });
-        *normalized.body.get_mut(index).ok_or_else(|| error("paragraph index"))? = Arc::new(Block::Para(original.clone()));
+        normalized_paragraphs.push((index, original.clone()));
+    }
+    let mut index = 0;
+    let mut replacement_index = 0;
+    replace_paragraphs(&mut normalized.body, &mut index, &normalized_paragraphs, &mut replacement_index);
+    if replacement_index != normalized_paragraphs.len() {
+        return Err(error("paragraph index"));
     }
     // The preservation envelope is storage metadata, not an edit to the imported document.
     for key in [SOURCE, BASE, MODEL] {
@@ -838,8 +912,21 @@ fn text_slot<'a>(nodes: &'a [Element], para: &Element) -> Option<&'a Element> {
 fn map_blocks(nodes: &[Element], parent: &Element, protected: bool, blocks: &mut Vec<Option<usize>>) -> Result<(), DocxError> {
     for index in &parent.children {
         let node = nodes.get(*index).ok_or_else(|| error("source block index"))?;
-        if node.word("p") || node.word("tbl") {
+        if node.word("p") {
             blocks.push((!protected).then_some(*index));
+        } else if node.word("tbl") {
+            for row_index in &node.children {
+                let row = nodes.get(*row_index).ok_or_else(|| error("source table row index"))?;
+                if !row.word("tr") {
+                    continue;
+                }
+                for cell_index in &row.children {
+                    let cell = nodes.get(*cell_index).ok_or_else(|| error("source table cell index"))?;
+                    if cell.word("tc") {
+                        map_blocks(nodes, cell, protected, blocks)?;
+                    }
+                }
+            }
         } else if node.word("sdt") {
             if let Some(content) = node.children.iter().filter_map(|i| nodes.get(*i)).find(|n| n.word("sdtContent")) {
                 map_blocks(nodes, content, true, blocks)?;
@@ -991,32 +1078,55 @@ fn patch_run_property(bytes: &[u8], nodes: &[Element], run_index: usize, propert
 
 fn patch_paragraph_style(bytes: &[u8], nodes: &[Element], paragraph_index: usize, edit: &StyleEdit) -> Result<Splice, DocxError> {
     let paragraph = nodes.get(paragraph_index).ok_or_else(|| error("source paragraph index"))?;
-    let ppr = paragraph
-        .children
-        .iter()
-        .filter_map(|index| nodes.get(*index))
-        .find(|child| child.word("pPr"))
-        .ok_or_else(|| error("paragraph style has no mapped source properties"))?;
+    if !paragraph.word("p") {
+        return Err(error("paragraph style source mapping is ambiguous"));
+    }
+    let name = property_element(bytes, paragraph)?;
+    let prefix = name
+        .split_once(':')
+        .map(|(prefix, _)| prefix)
+        .filter(|prefix| !prefix.is_empty())
+        .ok_or_else(|| error("paragraph style edit needs an explicit source namespace prefix"))?;
+    let replacement = format!("<{prefix}:pStyle {prefix}:val=\"{}\"/>", crate::xml::esc(&edit.style));
+    let ppr = paragraph.children.iter().filter_map(|index| nodes.get(*index)).find(|child| child.word("pPr"));
+    let Some(ppr) = ppr else {
+        if edit.previous.is_some() {
+            return Err(error("paragraph style source does not match the imported baseline"));
+        }
+        let source = std::str::from_utf8(bytes).map_err(|e| error(e.to_string()))?;
+        let opening_end = source
+            .get(paragraph.span.start..paragraph.span.end)
+            .and_then(|part| part.find('>').map(|offset| paragraph.span.start + offset + 1))
+            .ok_or_else(|| error("paragraph opening tag boundary"))?;
+        return Ok(Splice { start: opening_end, end: opening_end, replacement: format!("<{prefix}:pPr>{replacement}</{prefix}:pPr>") });
+    };
     let mut styles = ppr.children.iter().filter_map(|index| nodes.get(*index)).filter(|child| child.word("pStyle"));
-    let style = styles.next().ok_or_else(|| error("paragraph style reference is absent from source OOXML"))?;
-    if styles.next().is_some() || style.attrs.len() != 1 || !style.children.is_empty() {
+    let style = styles.next();
+    if styles.next().is_some() {
+        return Err(error("paragraph style source mapping is ambiguous"));
+    }
+    let Some(style) = style else {
+        if edit.previous.is_some() {
+            return Err(error("paragraph style reference is absent from source OOXML"));
+        }
+        if ppr.empty {
+            return Ok(Splice { start: ppr.span.start, end: ppr.span.end, replacement: format!("<{prefix}:pPr>{replacement}</{prefix}:pPr>") });
+        }
+        let source = std::str::from_utf8(bytes).map_err(|e| error(e.to_string()))?;
+        let opening_end = source
+            .get(ppr.span.start..ppr.span.end)
+            .and_then(|part| part.find('>').map(|offset| ppr.span.start + offset + 1))
+            .ok_or_else(|| error("paragraph properties opening tag boundary"))?;
+        return Ok(Splice { start: opening_end, end: opening_end, replacement });
+    };
+    if style.attrs.len() != 1 || !style.children.is_empty() {
         return Err(error("paragraph style source mapping is ambiguous"));
     }
     let value = style.attrs.get(&qualified(xml::W, "val")).ok_or_else(|| error("paragraph style value is absent"))?;
     if edit.previous.as_deref() != Some(value.as_str()) {
         return Err(error("paragraph style source does not match the imported baseline"));
     }
-    let name = property_element(bytes, style)?;
-    let prefix = name
-        .split_once(':')
-        .map(|(prefix, _)| prefix)
-        .filter(|prefix| !prefix.is_empty())
-        .ok_or_else(|| error("paragraph style edit needs an explicit source namespace prefix"))?;
-    Ok(Splice {
-        start: style.span.start,
-        end: style.span.end,
-        replacement: format!("<{prefix}:pStyle {prefix}:val=\"{}\"/>", crate::xml::esc(&edit.style)),
-    })
+    Ok(Splice { start: style.span.start, end: style.span.end, replacement })
 }
 
 fn patch_paragraph_mark(bytes: &[u8], nodes: &[Element], paragraph_index: usize, edits: &[MarkFormatEdit]) -> Result<Splice, DocxError> {
@@ -1075,8 +1185,17 @@ fn patch_text(
         .ok_or_else(|| error("missing document body"))?;
     let mut blocks = Vec::new();
     map_blocks(&nodes, body, false, &mut blocks)?;
+    let terminal_section_properties = body.children.last().and_then(|index| nodes.get(*index)).is_some_and(|node| node.word("sectPr"));
+    if terminal_section_properties && blocks.len().checked_add(1) == Some(expected_blocks) {
+        // Some readers provide an empty terminal paragraph when a table is the last body block;
+        // it has no source paragraph to splice into, so retain an unmapped protected slot.
+        blocks.push(None);
+    }
     if blocks.len() != expected_blocks {
-        return Err(error("source/model block mapping is ambiguous; this edit cannot be preserved safely"));
+        return Err(error(format!(
+            "source/model paragraph mapping is ambiguous ({} source paragraphs, {expected_blocks} model paragraphs); this edit cannot be preserved safely",
+            blocks.len()
+        )));
     }
     let mut replacements = Vec::new();
     for edit in edits {
@@ -1157,6 +1276,106 @@ fn patch_text(
     output.extend_from_slice(bytes.get(position..).ok_or_else(|| error("invalid text splice tail"))?);
     Ok(output)
 }
+const WP: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+const A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const PIC: &str = "http://schemas.openxmlformats.org/drawingml/2006/picture";
+
+fn direct_children(nodes: &[Element], parent: &Element, namespace: &str, local: &str) -> Vec<usize> {
+    parent
+        .children
+        .iter()
+        .filter_map(|index| nodes.get(*index).map(|node| (*index, node)))
+        .filter(|(_, node)| node.is(namespace, local))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+fn contains_picture(nodes: &[Element], index: usize) -> bool {
+    let Some(node) = nodes.get(index) else { return false };
+    node.is(PIC, "pic") || node.children.iter().any(|child| contains_picture(nodes, *child))
+}
+
+fn picture_size_splices(bytes: &[u8], edit: GraphicSizeEdit) -> Result<Vec<(usize, usize, String)>, DocxError> {
+    let nodes = xml::inspect(bytes)?;
+    let old_w = crate::units::emu(edit.old_w);
+    let old_h = crate::units::emu(edit.old_h);
+    let mut candidates = Vec::new();
+    for (frame_index, frame) in nodes.iter().enumerate().filter(|(_, node)| node.is(WP, "inline") || node.is(WP, "anchor")) {
+        let extents = direct_children(&nodes, frame, WP, "extent");
+        if extents.len() != 1 {
+            continue;
+        }
+        let extent = nodes.get(extents[0]).ok_or_else(|| error("picture frame extent index"))?;
+        if extent.attrs.get(&qualified("", "cx")) == Some(&old_w)
+            && extent.attrs.get(&qualified("", "cy")) == Some(&old_h)
+            && contains_picture(&nodes, frame_index)
+        {
+            candidates.push((frame_index, extents[0]));
+        }
+    }
+    if candidates.len() != 1 {
+        return Err(error("picture frame size does not map to one unique source drawing"));
+    }
+    let (frame_index, frame_extent) = candidates[0];
+    let frame = nodes.get(frame_index).ok_or_else(|| error("picture frame index"))?;
+    let frame_extent = nodes.get(frame_extent).ok_or_else(|| error("picture extent index"))?;
+    let mut extent_indices = vec![frame_extent];
+    let mut pictures = Vec::new();
+    let mut pending = frame.children.clone();
+    while let Some(index) = pending.pop() {
+        let node = nodes.get(index).ok_or_else(|| error("picture descendant index"))?;
+        if node.is(PIC, "pic") {
+            pictures.push(node);
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    if pictures.len() != 1 {
+        return Err(error("picture drawing has an ambiguous source mapping"));
+    }
+    let properties = direct_children(&nodes, pictures[0], PIC, "spPr");
+    if properties.len() > 1 {
+        return Err(error("picture shape properties are ambiguous"));
+    }
+    if let Some(properties) = properties.first().and_then(|index| nodes.get(*index)) {
+        let transforms = direct_children(&nodes, properties, A, "xfrm");
+        if transforms.len() > 1 {
+            return Err(error("picture transform is ambiguous"));
+        }
+        if let Some(transform) = transforms.first().and_then(|index| nodes.get(*index)) {
+            let extents = direct_children(&nodes, transform, A, "ext");
+            if extents.len() != 1 {
+                return Err(error("picture transform extent is missing or ambiguous"));
+            }
+            let extent = nodes.get(extents[0]).ok_or_else(|| error("picture transform extent index"))?;
+            if extent.attrs.get(&qualified("", "cx")) != Some(&old_w) || extent.attrs.get(&qualified("", "cy")) != Some(&old_h) {
+                return Err(error("picture frame and shape extents do not match the imported dimensions"));
+            }
+            extent_indices.push(extent);
+        }
+    }
+
+    let source = std::str::from_utf8(bytes).map_err(|e| error(e.to_string()))?;
+    let mut splices = Vec::new();
+    for extent in extent_indices {
+        let opening_end = source
+            .get(extent.span.start..extent.span.end)
+            .and_then(|part| part.find('>').map(|offset| extent.span.start + offset + 1))
+            .ok_or_else(|| error("picture extent tag boundary"))?;
+        let mut opening = source.get(extent.span.start..opening_end).ok_or_else(|| error("picture extent source range"))?.to_owned();
+        for (axis, old, new) in [("cx", old_w.as_str(), crate::units::emu(edit.new_w)), ("cy", old_h.as_str(), crate::units::emu(edit.new_h))] {
+            let double = format!("{axis}=\"{old}\"");
+            let single = format!("{axis}='{old}'");
+            if opening.matches(&double).count() + opening.matches(&single).count() != 1 {
+                return Err(error("picture extent source mapping is ambiguous"));
+            }
+            opening = opening.replacen(&double, &format!("{axis}=\"{new}\""), 1);
+            opening = opening.replacen(&single, &format!("{axis}='{new}'"), 1);
+        }
+        splices.push((extent.span.start, opening_end, opening));
+    }
+    Ok(splices)
+}
+
 /// Resize one parsed chart frame only when the source contains exactly its native and fallback
 /// DrawingML extents and both still match the imported model dimensions.
 fn patch_graphic_extents(bytes: &[u8], edits: &[GraphicSizeEdit]) -> Result<Vec<u8>, DocxError> {
@@ -1167,6 +1386,20 @@ fn patch_graphic_extents(bytes: &[u8], edits: &[GraphicSizeEdit]) -> Result<Vec<
         return Err(error("resizing multiple graphics in a guarded DOCX is unsupported"));
     }
     let edit = edits[0];
+    if edit.picture {
+        let source = std::str::from_utf8(bytes).map_err(|e| error(e.to_string()))?;
+        let mut splices = picture_size_splices(bytes, edit)?;
+        splices.sort_by_key(|(start, _, _)| *start);
+        let mut output = Vec::new();
+        let mut position = 0;
+        for (start, end, replacement) in splices {
+            output.extend_from_slice(source.get(position..start).ok_or_else(|| error("picture extent splice range"))?.as_bytes());
+            output.extend_from_slice(replacement.as_bytes());
+            position = end;
+        }
+        output.extend_from_slice(source.get(position..).ok_or_else(|| error("picture extent splice tail"))?.as_bytes());
+        return Ok(output);
+    }
     let nodes = xml::inspect(bytes)?;
     let extents: Vec<_> =
         nodes.iter().filter(|node| node.is("http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing", "extent")).collect();
@@ -1284,7 +1517,10 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
     }
     let mut entries: Vec<_> = pkg.entries().map(|(path, bytes)| (path.to_string(), bytes.to_vec())).collect();
     let main_data = pkg.get(&main).ok_or_else(|| error("missing source story"))?;
-    let patched = patch_graphic_extents(&patch_text(main_data, &edits, &format_edits, &mark_edits, &style_edits, model.body.len())?, &graphic_sizes)?;
+    let patched = patch_graphic_extents(
+        &patch_text(main_data, &edits, &format_edits, &mark_edits, &style_edits, paragraph_count(&model.body))?,
+        &graphic_sizes,
+    )?;
     let (_, bytes) = entries.iter_mut().find(|(path, _)| path.eq_ignore_ascii_case(&main)).ok_or_else(|| error("missing output source story"))?;
     *bytes = patched;
     if requested != original_flavor {

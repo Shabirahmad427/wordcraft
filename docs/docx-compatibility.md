@@ -1,5 +1,16 @@
 # DOCX preservation contract and verification
 
+## Phase 7U.13 guarded formatting
+
+Guarded imported DOCX files now accept safe run and paragraph formatting changes in paragraphs
+inside existing table cells, including selections spanning multiple runs and cells. A paragraph
+style can be inserted when the original paragraph has no explicit style. Existing table structure
+must remain unchanged; row, cell, and other structural edits still fail safely. Resizing a simple
+imported inline picture updates both its WordprocessingML frame extent and DrawingML picture
+transform, after checking that the two source sizes agree. Unsupported or ambiguous drawings remain
+rejected. Regression fixtures check undo/redo, unmodified package-part identity, and DOCX save and
+reopen. These are synthetic package tests, not Microsoft Word interoperability results.
+
 The reproducible package-integrity benchmark and current Word-reference evidence are tracked in
 [the Word 365 interoperability report](word365-interoperability.md). Current benchmark fixtures
 are synthetic; package-preservation results are not Microsoft Word rendering or editability

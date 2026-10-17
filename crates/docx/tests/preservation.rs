@@ -20,6 +20,21 @@ fn mixed_format_fixture() -> Vec<u8> {
     archive(&files)
 }
 
+fn picture_fixture() -> Vec<u8> {
+    let mut files = fixture();
+    let picture = r#"<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><wp:extent cx="1270000" cy="635000"/><wp:docPr id="18" name="Synthetic picture"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="pictureRel"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1270000" cy="635000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+    replace(&mut files, "word/document.xml", "<w:sectPr>", &format!("{picture}<w:sectPr>"));
+    replace(
+        &mut files,
+        "word/_rels/document.xml.rels",
+        "</Relationships>",
+        &format!(r#"<Relationship Id="pictureRel" Type="{OFFICE}image" Target="media/picture.png"/></Relationships>"#),
+    );
+    replace(&mut files, "[Content_Types].xml", "</Types>", r#"<Default Extension="png" ContentType="image/png"/></Types>"#);
+    files.insert("word/media/picture.png".into(), b"synthetic image bytes".to_vec());
+    archive(&files)
+}
+
 fn source_with_explicit_normal_style() -> Vec<u8> {
     let mut files = fixture();
     let source = String::from_utf8(files.get("word/document.xml").unwrap().clone()).unwrap();
@@ -215,6 +230,95 @@ fn changing_to_an_existing_paragraph_style_preserves_unknown_package_parts() {
     assert_only_document_xml_changed(&source, &saved);
     let reopened = wordcraft_docx::read(&saved).unwrap();
     assert_eq!(reopened.para(StoryRef::Body, &Path::top(0)).unwrap().props.style.as_deref(), Some("Heading1"));
+}
+
+#[test]
+fn guarded_picture_resize_updates_frame_and_picture_extents_only() {
+    let source = picture_fixture();
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    let mut found = false;
+    for block in &mut doc.body {
+        let wordcraft_doc::Block::Para(paragraph) = Arc::make_mut(block) else { continue };
+        for object in &mut paragraph.objects {
+            if let wordcraft_doc::InlineObject::Image { w, h, .. } = object {
+                assert_eq!((*w, *h), (100.0, 50.0));
+                *w = 144.0;
+                *h = 72.0;
+                found = true;
+            }
+        }
+    }
+    assert!(found, "fixture picture was not imported");
+
+    let saved = wordcraft_docx::write(&doc).unwrap();
+    assert_only_document_xml_changed(&source, &saved);
+    let files = unpack(&saved);
+    let xml = String::from_utf8(files.get("word/document.xml").unwrap().clone()).unwrap();
+    assert!(xml.contains("<wp:extent cx=\"1828800\" cy=\"914400\"/>"), "{xml}");
+    assert!(xml.contains("<a:ext cx=\"1828800\" cy=\"914400\"/>"), "{xml}");
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    let dimensions = reopened
+        .body
+        .iter()
+        .filter_map(|block| block.as_para())
+        .flat_map(|paragraph| &paragraph.objects)
+        .find_map(|object| if let wordcraft_doc::InlineObject::Image { w, h, .. } = object { Some((*w, *h)) } else { None });
+    assert_eq!(dimensions, Some((144.0, 72.0)));
+}
+
+#[test]
+fn guarded_picture_resize_rejects_mismatched_picture_shape_extent() {
+    let mut files = unpack(&picture_fixture());
+    replace(&mut files, "word/document.xml", "<a:ext cx=\"1270000\" cy=\"635000\"/>", "<a:ext cx=\"1270000\" cy=\"635001\"/>");
+    let source = archive(&files);
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    for block in &mut doc.body {
+        let wordcraft_doc::Block::Para(paragraph) = Arc::make_mut(block) else { continue };
+        if let Some(wordcraft_doc::InlineObject::Image { w, h, .. }) = paragraph.objects.first_mut() {
+            *w = 144.0;
+            *h = 72.0;
+            break;
+        }
+    }
+    assert!(wordcraft_docx::write(&doc).is_err(), "mismatched picture geometry must stay guarded");
+}
+
+#[test]
+fn guarded_table_cell_format_and_style_preserve_package_and_reopen() {
+    let source = table_fixture();
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    assert!(doc.styles.styles.iter().any(|style| style.id == "Heading1"));
+    let table_index = doc.body.iter().position(|block| block.as_table().is_some()).expect("synthetic table imported");
+    let wordcraft_doc::Block::Table(table) = Arc::make_mut(&mut doc.body[table_index]) else { panic!("table index changed") };
+    let wordcraft_doc::Block::Para(paragraph) = Arc::make_mut(&mut table.rows[0].cells[0].blocks[0]) else {
+        panic!("first cell block is a paragraph")
+    };
+    paragraph.format(2, 9, &|props| props.bold = Some(true)).unwrap();
+    let wordcraft_doc::Block::Para(second) = Arc::make_mut(&mut table.rows[0].cells[0].blocks[1]) else { panic!("second cell block is a paragraph") };
+    second.props.style = Some("Heading1".into());
+
+    let saved = wordcraft_docx::write(&doc).unwrap();
+    assert_only_document_xml_changed(&source, &saved);
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    let table = reopened.body.iter().find_map(|block| block.as_table()).expect("saved table reopened");
+    let first = table.rows[0].cells[0].blocks[0].as_para().unwrap();
+    assert_eq!(first.text, "Cell alpha");
+    for offset in 2..9 {
+        assert_eq!(first.props_of_char(offset).bold, Some(true), "bold mismatch at cell offset {offset}");
+    }
+    assert_eq!(first.props_of_char(1).bold, None);
+    assert_eq!(first.props_of_char(9).bold, None);
+    let second = table.rows[0].cells[0].blocks[1].as_para().unwrap();
+    assert_eq!(second.props.style.as_deref(), Some("Heading1"));
+}
+
+#[test]
+fn guarded_table_structure_edits_remain_rejected() {
+    let mut doc = wordcraft_docx::read(&table_fixture()).unwrap();
+    let table_index = doc.body.iter().position(|block| block.as_table().is_some()).expect("synthetic table imported");
+    let wordcraft_doc::Block::Table(table) = Arc::make_mut(&mut doc.body[table_index]) else { panic!("table index changed") };
+    table.rows[0].cells[0].blocks.pop();
+    assert!(wordcraft_docx::write(&doc).is_err(), "changing a table's paragraph structure must stay guarded");
 }
 #[test]
 fn bound_control_edit_is_blocked_even_when_outside_text_is_identical() {

@@ -1,7 +1,7 @@
 //! Engine save, Undo and durable recovery must carry guarded package state together.
 #[path = "../../docx/tests/common/preservation.rs"]
 mod fixtures;
-use fixtures::{archive, fixture, replace, unpack};
+use fixtures::{archive, fixture, replace, table_fixture, unpack};
 use serde_json::json;
 use wordcraft_engine::{
     Session,
@@ -57,6 +57,48 @@ fn guarded_text_save_undo_and_recovery_preserve_inert_parts_and_bindings() {
             wordcraft_render::render_page(&reopened.doc, b, 1.0, &options).to_straight()
         );
     }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn guarded_table_format_across_paragraphs_is_undoable_and_round_trips() {
+    use wordcraft_engine::doc::{Path, Pos};
+
+    let directory = std::env::temp_dir().join(format!("wordcraft-guarded-table-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.docx");
+    let output = directory.join("edited.docx");
+    let bytes = table_fixture();
+    std::fs::write(&source, &bytes).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source})).unwrap();
+    let table_index = session.doc.body.iter().position(|block| block.as_table().is_some()).unwrap();
+    let first = Pos { story: StoryRef::Body, path: Path(vec![table_index as u32, 0, 0, 0]), off: 2 };
+    let second = Pos { story: StoryRef::Body, path: Path(vec![table_index as u32, 0, 0, 1]), off: 6 };
+    session.run("select.range", &json!({"anchor": first, "focus": second})).unwrap();
+    let before = session.doc.clone();
+    session.run("format.bold", &json!({})).unwrap();
+    let formatted = session.doc.clone();
+    assert_ne!(formatted, before, "formatting changed the selected table text");
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(session.doc, before, "Undo restores the imported table formatting");
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(session.doc, formatted, "Redo restores the table formatting");
+    session.run("file.save", &json!({"path": output})).unwrap();
+
+    let saved = std::fs::read(&output).unwrap();
+    for (path, data) in unpack(&bytes) {
+        if path != "word/document.xml" {
+            assert_eq!(unpack(&saved).get(&path), Some(&data), "changed package part {path}");
+        }
+    }
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": output})).unwrap();
+    let table = reopened.doc.body.iter().find_map(|block| block.as_table()).unwrap();
+    let first = table.rows[0].cells[0].blocks[0].as_para().unwrap();
+    let second = table.rows[0].cells[0].blocks[1].as_para().unwrap();
+    assert!((2..9).all(|offset| first.props_of_char(offset).bold == Some(true)));
+    assert!((0..6).all(|offset| second.props_of_char(offset).bold == Some(true)));
     std::fs::remove_dir_all(directory).unwrap();
 }
 

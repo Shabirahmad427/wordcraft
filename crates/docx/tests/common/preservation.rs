@@ -82,3 +82,11 @@ pub fn fixture() -> BTreeMap<String, Vec<u8>> {
     files.insert("word/numbering-extra.xml".into(),br#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:future="urn:wordcraft:future"><w:abstractNum w:abstractNumId="999" future:extension="keep"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/><future:counter value="keep"/></w:lvl></w:abstractNum></w:numbering>"#.to_vec());
     files
 }
+
+#[allow(dead_code)]
+pub fn table_fixture() -> Vec<u8> {
+    let mut files = fixture();
+    let table = r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">Cell </w:t></w:r><w:r><w:t>alpha</w:t></w:r></w:p><w:p><w:r><w:t>Second paragraph</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    replace(&mut files, "word/document.xml", "<w:sectPr>", &format!("{table}<w:sectPr>"));
+    archive(&files)
+}
