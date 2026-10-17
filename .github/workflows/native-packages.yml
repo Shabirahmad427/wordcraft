@@ -4,16 +4,13 @@ name: Native packages
 run-name: Native packages — ${{ inputs.platform && inputs.platform != 'all' && format('PARTIAL {0}', inputs.platform) || 'all platforms' }} — ${{ github.sha }}
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    paths:
-      - 'Cargo*'
-      - 'crates/**'
-      - 'apps/wordcraft/**'
-      - 'apps/wordcraft-cli/**'
-      - 'packaging/**'
-      - '.github/workflows/native-packages.yml'
+  workflow_call:
+    inputs:
+      platform:
+        description: All platforms required for FULL validation
+        type: string
+        required: false
+        default: all
   workflow_dispatch:
     inputs:
       platform:

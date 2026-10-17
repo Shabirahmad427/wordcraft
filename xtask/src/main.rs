@@ -24,6 +24,10 @@ commands:
   assets          check that every icon/image/font/asset is attributed in ATTRIBUTION.md
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
+  fast [--base REV] [--plan]
+                  fmt plus tests and focused Clippy for changed workspace packages
+  standard        run the complete Linux Rust workspace CI gates (same as ci)
+  full            dispatch the GitHub-hosted Linux/macOS/Windows and additional-platform suite
   ci              fmt --check, clippy -D warnings, test, assets, layers, wasm (stops at first failure)
   corpus [--download]
                   show where test corpora live; --download fetches PngSuite into corpus/pngsuite
@@ -56,6 +60,9 @@ fn main() -> ExitCode {
         Some("layers") => cmd_layers(),
         Some("wasm") => cmd_wasm(),
         Some("ci") => cmd_ci(),
+        Some("fast") => cmd_fast(&rest),
+        Some("standard") => cmd_ci(),
+        Some("full") => cmd_full(),
         Some("corpus") => cmd_corpus(rest.contains(&"--download")),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("parity") => parity::run(&root()),
@@ -95,6 +102,121 @@ fn run(mut cmd: Command, what: &str) -> Result<(), String> {
     eprintln!("$ {what}");
     let status = cmd.status().map_err(|e| format!("{what}: failed to spawn: {e}"))?;
     if status.success() { Ok(()) } else { Err(format!("{what}: exited with {status}")) }
+}
+
+fn git_names(args: &[&str]) -> Result<Vec<String>, String> {
+    let out = Command::new("git").current_dir(root()).args(args).output().map_err(|e| format!("git: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).lines().filter(|s| !s.is_empty()).map(str::to_owned).collect())
+}
+
+fn changed_paths(base: Option<&str>) -> Result<Vec<String>, String> {
+    let mut changed = if let Some(base) = base.filter(|s| !s.chars().all(|c| c == '0')) {
+        git_names(&["diff", "--name-only", &format!("{base}...HEAD")])?
+    } else {
+        Vec::new()
+    };
+    // Include staged, unstaged, and untracked local edits even when a base ref was supplied.
+    changed.extend(git_names(&["diff", "--name-only", "HEAD"])?);
+    changed.extend(git_names(&["ls-files", "--others", "--exclude-standard"])?);
+    changed.sort();
+    changed.dedup();
+    Ok(changed)
+}
+
+fn changed_packages(root: &Path, paths: &[String], metadata: &serde_json::Value) -> Result<Vec<String>, String> {
+    let packages = metadata["packages"].as_array().ok_or("cargo metadata omitted packages")?;
+    let members: std::collections::BTreeSet<&str> = metadata["workspace_members"]
+        .as_array()
+        .ok_or("cargo metadata omitted workspace_members")?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let root_manifest = PathBuf::from(root).join("Cargo.toml");
+    let workspace_change = paths.iter().any(|p| p == "Cargo.toml" || p == "Cargo.lock");
+    let mut selected = std::collections::BTreeSet::new();
+    for package in packages {
+        let id = package["id"].as_str().ok_or("cargo metadata package omitted id")?;
+        if !members.contains(id) {
+            continue;
+        }
+        let name = package["name"].as_str().ok_or("cargo metadata package omitted name")?;
+        let manifest = package["manifest_path"].as_str().ok_or("cargo metadata package omitted manifest_path")?;
+        if workspace_change {
+            selected.insert(name.to_owned());
+            continue;
+        }
+        let manifest = PathBuf::from(manifest);
+        let package_root = manifest.parent().ok_or("package manifest has no parent")?;
+        if paths.iter().any(|path| {
+            let candidate = root.join(path);
+            candidate.starts_with(package_root) || (package_root == root && candidate == root_manifest)
+        }) {
+            selected.insert(name.to_owned());
+        }
+    }
+    Ok(selected.into_iter().collect())
+}
+
+fn cmd_fast(args: &[&str]) -> Result<(), String> {
+    let mut base = None;
+    let mut plan = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i] {
+            "--base" => {
+                i += 1;
+                base = Some(*args.get(i).ok_or("usage: cargo xtask fast [--base REV] [--plan]")?);
+            }
+            "--plan" => plan = true,
+            _ => return Err(format!("unknown fast option `{}`\nusage: cargo xtask fast [--base REV] [--plan]", args[i])),
+        }
+        i += 1;
+    }
+    let paths = changed_paths(base)?;
+    let selected = changed_packages(&root(), &paths, &metadata()?)?;
+    if plan {
+        println!("FAST plan: fmt check, then tests and focused Clippy for {} changed package(s).", selected.len());
+        for package in &selected {
+            println!("  cargo test --locked -p {package}");
+            println!("  cargo clippy --locked -p {package} --all-targets -- -D warnings");
+        }
+        if selected.is_empty() {
+            println!("  no Rust package changes; no package build needed");
+        }
+        return Ok(());
+    }
+    let mut fmt = cargo();
+    fmt.args(["fmt", "--all", "--", "--check"]);
+    run(fmt, "cargo fmt --all -- --check")?;
+    for package in &selected {
+        let mut test = cargo();
+        test.args(["test", "--locked", "-p", package]);
+        run(test, &format!("cargo test --locked -p {package}"))?;
+        let mut clippy = cargo();
+        clippy.args(["clippy", "--locked", "-p", package, "--all-targets", "--", "-D", "warnings"]);
+        run(clippy, &format!("cargo clippy --locked -p {package} --all-targets -- -D warnings"))?;
+    }
+    if selected.is_empty() {
+        println!("FAST passed: formatting is clean; no changed workspace packages needed compilation.");
+    } else {
+        println!("FAST passed for {} changed workspace package(s).", selected.len());
+    }
+    Ok(())
+}
+
+fn cmd_full() -> Result<(), String> {
+    let branch = git_names(&["branch", "--show-current"])?.into_iter().next().unwrap_or_default();
+    if branch.is_empty() {
+        return Err("FULL dispatch requires a named Git branch; check out the branch to validate".into());
+    }
+    let mut gh = Command::new("gh");
+    gh.current_dir(root()).args(["workflow", "run", ".github/workflows/full-validation.yml", "--ref", &branch]);
+    run(gh, &format!("gh workflow run .github/workflows/full-validation.yml --ref {branch}"))?;
+    println!("FULL validation dispatched for {branch}. Track it with `gh run list --branch {branch}`.");
+    Ok(())
 }
 
 pub fn metadata() -> Result<serde_json::Value, String> {
@@ -256,4 +378,34 @@ Tests that use a corpus skip cleanly when it is absent.
     let n = std::fs::read_dir(&dest).map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "png")).count()).unwrap_or(0);
     println!("PngSuite: {n} PNG files in {}", dest.display());
     if n == 0 { Err("no PNG files extracted".into()) } else { Ok(()) }
+}
+
+#[cfg(test)]
+mod fast_tests {
+    use super::changed_packages;
+    use std::path::Path;
+
+    fn metadata() -> serde_json::Value {
+        serde_json::json!({
+            "workspace_members": ["a-id", "b-id"],
+            "packages": [
+                {"id":"a-id", "name":"a", "manifest_path":"/repo/crates/a/Cargo.toml"},
+                {"id":"b-id", "name":"b", "manifest_path":"/repo/apps/b/Cargo.toml"}
+            ]
+        })
+    }
+
+    #[test]
+    fn fast_selects_only_packages_containing_changed_files() {
+        let selected = changed_packages(Path::new("/repo"), &["crates/a/src/lib.rs".into()], &metadata()).unwrap();
+        assert_eq!(selected, ["a"]);
+    }
+
+    #[test]
+    fn workspace_manifest_and_lock_changes_select_every_package() {
+        for path in ["Cargo.toml", "Cargo.lock"] {
+            let selected = changed_packages(Path::new("/repo"), &[path.into()], &metadata()).unwrap();
+            assert_eq!(selected, ["a", "b"]);
+        }
+    }
 }

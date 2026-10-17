@@ -2,49 +2,7 @@
 name: Document regressions
 
 on:
-  pull_request:
-    paths:
-      - 'Cargo*'
-      - 'apps/wordcraft-cli/**'
-      - 'assets/app-icon/**'
-      - 'assets/fonts/**'
-      - 'crates/doc/**'
-      - 'crates/docx/**'
-      - 'crates/engine/**'
-      - 'crates/fonts/**'
-      - 'crates/layout/**'
-      - 'crates/render/**'
-      - 'crates/pdf/**'
-      - 'xtask/**'
-      - 'scripts/benchmark-synthetic-documents.sh'
-      - 'scripts/render-visual-fixture.sh'
-      - 'scripts/run-performance-suite.sh'
-      - 'scripts/run-visual-regression.sh'
-      - 'tests/visual/**'
-      - 'ATTRIBUTION.md'
-      - '.github/workflows/document-regressions.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'Cargo*'
-      - 'apps/wordcraft-cli/**'
-      - 'assets/app-icon/**'
-      - 'assets/fonts/**'
-      - 'crates/doc/**'
-      - 'crates/docx/**'
-      - 'crates/engine/**'
-      - 'crates/fonts/**'
-      - 'crates/layout/**'
-      - 'crates/render/**'
-      - 'crates/pdf/**'
-      - 'xtask/**'
-      - 'scripts/benchmark-synthetic-documents.sh'
-      - 'scripts/render-visual-fixture.sh'
-      - 'scripts/run-performance-suite.sh'
-      - 'scripts/run-visual-regression.sh'
-      - 'tests/visual/**'
-      - 'ATTRIBUTION.md'
-      - '.github/workflows/document-regressions.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -52,7 +10,7 @@ permissions:
 
 concurrency:
   group: document-regressions-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   shared-core:

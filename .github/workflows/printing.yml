@@ -1,23 +1,8 @@
-# Exercise the native print host and all UI tests on PRs; the broad FreeBSD/ARM64 gates
-# stay on their existing nightly/release schedule.
+# Exercise native print and UI tests as part of FULL validation or by manual dispatch.
 name: Printing
 
 on:
-  pull_request:
-    paths:
-      - 'Cargo*'
-      - 'apps/wordcraft/**'
-      - 'apps/wordcraft-web/**'
-      - 'crates/ui-egui/**'
-      - '.github/workflows/printing.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'Cargo*'
-      - 'apps/wordcraft/**'
-      - 'apps/wordcraft-web/**'
-      - 'crates/ui-egui/**'
-      - '.github/workflows/printing.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -25,7 +10,7 @@ permissions:
 
 concurrency:
   group: printing-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   native:

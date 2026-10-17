@@ -3,8 +3,9 @@
 name: Packaging lint
 
 on:
+  workflow_call:
   push:
-    branches: [main, release]
+    branches: [main]
     paths: [".github/workflows/**", "packaging/**", "assets/app-icon/**"]
   pull_request:
     paths: [".github/workflows/**", "packaging/**", "assets/app-icon/**"]
@@ -15,7 +16,7 @@ permissions:
 
 concurrency:
   group: packaging-lint-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   lint:

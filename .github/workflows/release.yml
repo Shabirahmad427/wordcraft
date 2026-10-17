@@ -18,7 +18,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  full-validation:
+    uses: ./.github/workflows/full-validation.yml
+
   release:
+    needs: full-validation
     if: github.ref == 'refs/heads/release'
     permissions:
       contents: write

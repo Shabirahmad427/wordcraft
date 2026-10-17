@@ -205,8 +205,10 @@ covers every target starting with it (`wordcraft*=debug`). The logger is
 | L6 | `wordcraft-ui-egui` | the Word-style front end (swappable) |
 | apps | `wordcraft`, `wordcraft-cli`, `wordcraft-web` | desktop, command line, browser |
 
-`cargo xtask ci` runs formatting, clippy, ~800 tests, the asset-attribution check, the layering
-check and the wasm build. Contributor and agent instructions: [AGENTS.md](AGENTS.md).
+`cargo xtask fast` runs formatting plus tests and focused Clippy for changed Rust packages;
+`cargo xtask standard` runs the full Linux workspace CI gates; `cargo xtask full` dispatches hosted
+Linux, macOS, Windows, FreeBSD and Windows ARM64 validation. See [Development CI](docs/development-ci.md)
+for coverage and limitations. Contributor and agent instructions: [AGENTS.md](AGENTS.md).
 
 ## Roadmap
 

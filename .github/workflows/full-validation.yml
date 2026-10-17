@@ -1,0 +1,38 @@
+# Release gate and manually requested full validation. Every platform suite must finish.
+name: FULL validation
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-validation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  standard:
+    name: STANDARD Linux workspace gates
+    uses: ./.github/workflows/standard.yml
+  documents:
+    name: Document, GUI, rendering and PDF regressions
+    uses: ./.github/workflows/document-regressions.yml
+  printing:
+    name: Printing and native UI checks
+    uses: ./.github/workflows/printing.yml
+  packaging-lint:
+    name: Packaging lint
+    uses: ./.github/workflows/packaging-lint.yml
+  native-packages:
+    name: Linux DEB, macOS DMG and Windows MSI
+    uses: ./.github/workflows/native-packages.yml
+    with:
+      platform: all
+  freebsd:
+    name: FreeBSD build and tests
+    uses: ./.github/workflows/freebsd.yml
+  windows-arm64:
+    name: Windows ARM64 install test
+    uses: ./.github/workflows/windows-arm64.yml
