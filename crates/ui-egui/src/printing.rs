@@ -180,6 +180,13 @@ pub fn settings(state: &mut State, params: &serde_json::Value, discover: Option<
         "busy":state.busy(),"discovering":state.discovering(),"ready":state.ready(),"status":status,"detail":detail}))
 }
 
+const SPOOLED: &str = "Print job submitted: spooled {count} sheet(s)";
+
+/// The sheet count of the Windows backend's English receipt `spooled N sheet(s)`.
+fn spooled_sheets(receipt: &str) -> Option<usize> {
+    receipt.trim().strip_prefix("spooled ")?.strip_suffix(" sheet(s)")?.parse().ok()
+}
+
 pub fn feedback(message: &Feedback, translate: impl Fn(&str) -> String) -> String {
     match message {
         Feedback::FindingPrinters => translate("Finding printers…"),
@@ -187,6 +194,10 @@ pub fn feedback(message: &Feedback, translate: impl Fn(&str) -> String) -> Strin
         Feedback::DiscoveryFailed => translate("Printer discovery failed."),
         Feedback::Submitting => translate("Submitting print job…"),
         Feedback::Submitted(receipt) if receipt.trim().is_empty() => translate("Print job submitted."),
+        Feedback::Submitted(receipt) if spooled_sheets(receipt).is_some_and(|_| translate(SPOOLED) != SPOOLED) => {
+            let count = spooled_sheets(receipt).unwrap_or_default();
+            translate(SPOOLED).replace("{count}", &count.to_string())
+        }
         Feedback::Submitted(receipt) => translate("Print job submitted: {receipt}").replace("{receipt}", receipt),
         Feedback::Failed(error) => translate("Print failed: {error}").replace("{error}", error),
         Feedback::WorkerStopped => translate("Print failed: the printing worker stopped."),

@@ -81,7 +81,7 @@ pub fn show(app: &mut WordApp, ui: &mut egui::Ui, state: &mut DialogState) -> bo
         }
         if ui.add_enabled(original, egui::Button::new(crate::tl!("Save Original Package"))).clicked() {
             let _ = app.ask_file(
-                crate::FileDialogRequest::Save { name: format!("original-recovered.{original_extension}") },
+                crate::FileDialogRequest::Save { name: format!("original-recovered.{original_extension}"), dir: None },
                 crate::file_dialogs::AfterPick::RecoveryOriginal { id: state.selected.clone() },
             );
         }

@@ -6388,6 +6388,7 @@ name = "wordcraft"
 version = "0.9.0"
 dependencies = [
  "arboard",
+ "chrono",
  "clipboard-win",
  "craft-print",
  "dispatch2",
@@ -6439,6 +6440,7 @@ version = "0.9.0"
 name = "wordcraft-doc"
 version = "0.9.0"
 dependencies = [
+ "base64 0.22.1",
  "proptest",
  "serde",
  "serde_json",
@@ -6452,6 +6454,7 @@ name = "wordcraft-docbin"
 version = "0.9.0"
 dependencies = [
  "cfb",
+ "chrono",
  "image",
  "log",
  "miniz_oxide 0.8.9",
@@ -6470,6 +6473,7 @@ dependencies = [
  "aes",
  "base64 0.22.1",
  "cfb",
+ "chrono",
  "getrandom 0.3.4",
  "hmac",
  "image",
@@ -6493,6 +6497,7 @@ name = "wordcraft-engine"
 version = "0.9.0"
 dependencies = [
  "cfb",
+ "chrono",
  "encoding_rs",
  "getrandom 0.3.4",
  "image",
@@ -6536,6 +6541,7 @@ version = "0.9.0"
 dependencies = [
  "cfb",
  "chardetng",
+ "chrono",
  "encoding_rs",
  "image",
  "js-sys",
@@ -6571,6 +6577,7 @@ dependencies = [
  "wordcraft-doc",
  "wordcraft-fonts",
  "wordcraft-geom",
+ "wordcraft-metafile",
  "wordcraft-proof",
 ]
 
@@ -6598,6 +6605,7 @@ dependencies = [
 name = "wordcraft-pdf"
 version = "0.9.0"
 dependencies = [
+ "chrono",
  "craft-pdf",
  "hayro-cmap",
  "hayro-interpret",

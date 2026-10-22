@@ -165,6 +165,15 @@ mod tests {
         assert!((inches - 7.2).abs() < 1e-5, "{inches}");
         assert_eq!(line_multiple("junk"), None);
         assert_eq!(line_multiple(""), None);
+        assert_eq!(measure("12700emu", 20.0), Some(1.0));
+        assert_eq!(measure("25400EMU", 20.0), Some(2.0));
+        assert_eq!(measure("1IN", 20.0), Some(72.0));
+        assert_eq!(measure("12PT", 2.0), Some(12.0));
+        assert_eq!(measure("2.54CM", 20.0), Some(72.0));
+        assert_eq!(measure("25.4MM", 20.0), Some(72.0));
+        assert_eq!(measure("10PX", 20.0), Some(7.5));
+        assert_eq!(measure("1e2pt", 20.0), Some(100.0));
+        assert_eq!(measure("1e+2pt", 20.0), Some(100.0));
         assert_eq!(int("12.6"), Some(13));
         assert_eq!(u32_of("-5"), Some(0));
     }
