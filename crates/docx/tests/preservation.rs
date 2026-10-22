@@ -62,6 +62,72 @@ fn assert_only_document_xml_changed(source: &[u8], saved: &[u8]) {
         }
     }
 }
+
+fn story_fixture() -> Vec<u8> {
+    use wordcraft_doc::{PartKind, SectionProps, para_block};
+    let mut d = Document::from_text("Body text");
+    let header = d.add_part(PartKind::Header, vec![para_block(wordcraft_doc::Paragraph::with_text("Header label", Default::default()))]);
+    let footer = d.add_part(PartKind::Footer, vec![para_block(wordcraft_doc::Paragraph::with_text("Page ", Default::default()))]);
+    let note = d.add_part(PartKind::Footnote, vec![para_block(wordcraft_doc::Paragraph::with_text("Note text", Default::default()))]);
+    d.insert_object(
+        &Pos::body(0, "Body text".len()),
+        wordcraft_doc::InlineObject::NoteRef { kind: wordcraft_doc::para::NoteKind::Footnote, id: note, custom: String::new() },
+        &Default::default(),
+    )
+    .unwrap();
+    let mut section = SectionProps::default();
+    section.headers.default = Some(header);
+    section.footers.default = Some(footer);
+    d.last_section = section;
+    let native = wordcraft_docx::write(&d).unwrap();
+    let mut files = unpack(&native);
+    replace(&mut files, "word/document.xml", "<w:document ", "<w:document xmlns:future=\"urn:test\" future:keep=\"yes\" ");
+    let _ = header;
+    archive(&files)
+}
+
+fn insert_part(doc: &mut Document, id: u32, text: &str) {
+    let story = StoryRef::Part(id);
+    let para = doc.para(story, &Path::top(0)).unwrap();
+    let off = if para.text.starts_with('\u{fffc}') { '\u{fffc}'.len_utf8() } else { 0 };
+    let props = para.props_of_char(off).clone();
+    doc.insert_text(&Pos { story, path: Path::top(0), off }, text, &props).unwrap();
+}
+
+#[test]
+fn guarded_header_and_footnote_text_edits_preserve_source_parts_and_reopen() {
+    use wordcraft_doc::PartKind;
+    let source = story_fixture();
+    let mut doc = wordcraft_docx::read(&source).unwrap();
+    let header = *doc.parts.iter().find(|(_, p)| p.kind == PartKind::Header).unwrap().0;
+    let note = *doc.parts.iter().find(|(_, p)| p.kind == PartKind::Footnote).unwrap().0;
+    insert_part(&mut doc, header, "Updated ");
+    insert_part(&mut doc, note, "Edited ");
+    let saved = wordcraft_docx::write(&doc).unwrap();
+    let before = unpack(&source);
+    let after = unpack(&saved);
+    assert_eq!(before.keys().collect::<Vec<_>>(), after.keys().collect::<Vec<_>>());
+    assert_ne!(before.get("word/header1.xml"), after.get("word/header1.xml"));
+    assert_ne!(before.get("word/footnotes.xml"), after.get("word/footnotes.xml"));
+    for (path, bytes) in before {
+        if path != "word/header1.xml" && path != "word/footnotes.xml" {
+            assert_eq!(after.get(&path), Some(&bytes), "unrelated part changed: {path}");
+        }
+    }
+    let reopened = wordcraft_docx::read(&saved).unwrap();
+    assert!(
+        reopened
+            .parts
+            .values()
+            .any(|p| p.kind == PartKind::Header && p.blocks.iter().any(|b| b.as_para().is_some_and(|p| p.text == "Updated Header label")))
+    );
+    assert!(
+        reopened
+            .parts
+            .values()
+            .any(|p| p.kind == PartKind::Footnote && p.blocks.iter().any(|b| b.as_para().is_some_and(|p| p.text.ends_with("Edited Note text"))))
+    );
+}
 #[test]
 fn original_package_and_inert_embedded_content_survive_noop_exactly() {
     let files = fixture();

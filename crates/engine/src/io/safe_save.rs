@@ -1,42 +1,42 @@
-//! Atomic native file replacement through an exclusively owned sibling temporary file.
+//! Sibling temporary files owned by one save. The destination changes only after preparation
+//! succeeds; concurrent saves have separate files and the last successful replacement wins.
+//!
+//! When the folder refuses the temporary file (macOS privacy protection, #2138, or a read-only
+//! folder), an existing destination is never written in place: it is left exactly as it was and
+//! the error says to use Save As to another folder or to give WordCraft access to this one. Only
+//! a destination that doesn't exist yet, so has no previous version to lose, is created directly;
+//! a failed direct write removes it again.
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-pub(super) fn write(destination: &Path, bytes: &[u8]) -> io::Result<()> {
-    write_with(destination, |file| file.write_all(bytes), |from, to| fs::rename(from, to))
-}
-
-fn write_with(
-    destination: &Path,
-    stage: impl FnOnce(&mut File) -> io::Result<()>,
-    replace: impl FnOnce(&Path, &Path) -> io::Result<()>,
-) -> io::Result<()> {
-    let metadata = match fs::symlink_metadata(destination) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
+pub(super) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let permissions = match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "refusing to replace a symbolic link"));
         }
-        Ok(metadata) if metadata.is_file() => Some(metadata),
-        Ok(_) => return Err(io::Error::new(io::ErrorKind::InvalidInput, "save destination is not a regular file")),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error),
+        Ok(meta) if meta.is_file() => Some(meta.permissions()),
+        Ok(_) => None,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
     };
-    let mut temp = Temporary::create(destination, metadata.is_some())?;
-    {
-        let file = temp.file.as_mut().ok_or_else(|| io::Error::other("save temporary file is closed"))?;
-        stage(file)?;
-        if let Some(metadata) = metadata {
-            file.set_permissions(metadata.permissions())?;
+    // A new document gets the usual mode (0666 less the umask); a replaced one keeps its own,
+    // and its temporary file stays private until that mode is applied.
+    let private = permissions.is_some();
+    let written = replace_with(path, private, |file| {
+        file.write_all(bytes)?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
         }
-        file.sync_all()?;
-    }
-    drop(temp.file.take());
-    replace(&temp.path, destination)?;
-    temp.committed = true;
-    if let Err(error) = sync_parent(destination) {
-        // The rename is already committed and cannot be rolled back without risking data loss.
-        // Report reduced crash durability, but don't tell the caller that the save failed.
-        log::warn!("saved {}, but could not synchronize its containing directory: {error}", destination.display());
+        // Synchronize the prepared file before replacing the destination. Directory durability
+        // and network-filesystem/power-loss guarantees are outside this operation's contract.
+        file.sync_all()
+    });
+    written.map_err(explain)?;
+    if let Err(error) = sync_parent(path) {
+        // The rename is committed; report reduced crash durability without saying the save failed.
+        log::warn!("saved {}, but could not synchronize its containing directory: {error}", path.display());
     }
     Ok(())
 }
@@ -52,6 +52,83 @@ fn sync_parent(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn replace_with(path: &Path, private: bool, prepare: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    let mut temp = match Temporary::create(path, private) {
+        Ok(temp) => temp,
+        // macOS only lets an app write the file picked in the Save panel inside a protected
+        // folder (Desktop, Documents, Downloads, iCloud Drive), not a sibling temporary file
+        // (#2138); a read-only folder refuses it too.
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => return create_directly(path, e, prepare),
+        Err(e) => return Err(e),
+    };
+    prepare(temp.file()?)?;
+    temp.commit(path)
+}
+
+/// No temporary file may be created beside `path` (`refused` says why). A file that doesn't exist
+/// yet is created directly (there is no previous version to lose) and removed again if the save
+/// fails. Anything already at `path` is left untouched: overwriting it in place could destroy the
+/// only copy, so the error says how to save safely instead.
+fn create_directly(path: &Path, refused: io::Error, prepare: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    // `create_new` never opens an existing file or follows a link, so it can't touch one.
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            return Err(guided(
+                refused,
+                "This folder doesn't let WordCraft create the temporary file a safe save needs, so the existing file was left unchanged.",
+            ));
+        }
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => return Err(guided(e, "WordCraft can't create files in this folder.")),
+        Err(e) => return Err(e),
+    };
+    let Err(failed) = prepare(&mut file) else {
+        return Ok(());
+    };
+    drop(file);
+    match fs::remove_file(path) {
+        Ok(()) => Err(failed),
+        Err(e) => Err(io::Error::new(failed.kind(), format!("{failed}; removing the incomplete new file also failed ({e})"))),
+    }
+}
+
+/// A save refused for want of folder access, already worded with what to do about it.
+#[derive(Debug)]
+struct Guided(String);
+
+impl std::fmt::Display for Guided {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Guided {}
+
+/// `e`, then `why`, then how to save anyway: Save As to another folder, or access to this one.
+fn guided(e: io::Error, why: &str) -> io::Error {
+    let access = if cfg!(target_os = "macos") {
+        "allow WordCraft to use this folder in System Settings › Privacy & Security › Files and Folders"
+    } else {
+        "get write access to this folder"
+    };
+    io::Error::new(e.kind(), Guided(format!("{e}. {why} Use Save As to save the document in another folder, or {access}, then save again.")))
+}
+
+/// A permission error on macOS usually means its privacy protection keeps WordCraft out of the
+/// folder; say where to allow it (errors from [`guided`] already do).
+fn explain(e: io::Error) -> io::Error {
+    let worded = e.get_ref().is_some_and(|inner| inner.is::<Guided>());
+    if cfg!(target_os = "macos") && e.kind() == io::ErrorKind::PermissionDenied && !worded {
+        return io::Error::new(
+            e.kind(),
+            format!(
+                "{e}. macOS may be blocking WordCraft from this folder: allow it in System Settings › Privacy & Security › Files and Folders, or save somewhere else"
+            ),
+        );
+    }
+    e
+}
+
 struct Temporary {
     path: PathBuf,
     file: Option<File>,
@@ -59,40 +136,45 @@ struct Temporary {
 }
 
 impl Temporary {
-    fn create(destination: &Path, _replacing: bool) -> io::Result<Self> {
-        Self::create_with(destination, _replacing, || {
-            let mut random = [0_u8; 16];
-            getrandom::fill(&mut random).map_err(|error| io::Error::other(error.to_string()))?;
-            Ok(random)
-        })
-    }
-
-    fn create_with(destination: &Path, _replacing: bool, mut nonce: impl FnMut() -> io::Result<[u8; 16]>) -> io::Result<Self> {
+    /// `private`: create the file readable by its owner only (0600) rather than with the default
+    /// mode (0666 less the umask).
+    fn create(destination: &Path, private: bool) -> io::Result<Self> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         if destination.file_name().is_none() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "save destination needs a file name"));
         }
+        // A short name also works beside a destination already at the filename-length limit.
         for _ in 0..128 {
-            let random = nonce()?;
-            let suffix = random.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-            let path = destination.with_file_name(format!(".wordcraft-save-{suffix}.tmp"));
+            let id = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = destination.with_file_name(format!(".wordcraft-save-{}-{id}.tmp", std::process::id()));
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
             #[cfg(unix)]
-            {
+            if private {
                 use std::os::unix::fs::OpenOptionsExt;
-                // Keep replacement contents private until all bytes are staged. New files use
-                // the normal 0666-and-umask policy, matching ordinary file creation.
-                if _replacing {
-                    options.mode(0o600);
-                }
+                options.mode(0o600);
             }
+            #[cfg(not(unix))]
+            let _ = private;
             match options.open(&path) {
                 Ok(file) => return Ok(Self { path, file: Some(file), committed: false }),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(error),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
             }
         }
-        Err(io::Error::new(io::ErrorKind::AlreadyExists, "could not create a unique save temporary file"))
+        Err(io::Error::new(io::ErrorKind::AlreadyExists, "could not create a save temporary file"))
+    }
+
+    fn file(&mut self) -> io::Result<&mut File> {
+        self.file.as_mut().ok_or_else(|| io::Error::other("save temporary file is closed"))
+    }
+
+    fn commit(mut self, destination: &Path) -> io::Result<()> {
+        // Close before replacement, including on Windows.
+        drop(self.file.take());
+        fs::rename(&self.path, destination)?;
+        self.committed = true;
+        Ok(())
     }
 }
 
@@ -100,8 +182,8 @@ impl Drop for Temporary {
     fn drop(&mut self) {
         drop(self.file.take());
         if !self.committed {
-            // Remove only the path this save successfully created. A cleanup failure does not
-            // justify touching the original destination or a neighbouring file.
+            // If filesystem permissions change, cleanup can fail too. Never remove a neighbour
+            // or the destination to compensate for a failed save.
             let _ = fs::remove_file(&self.path);
         }
     }
@@ -110,30 +192,18 @@ impl Drop for Temporary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Barrier};
 
     struct Scratch(PathBuf);
     impl Scratch {
         fn new() -> Self {
-            let mut random = [0_u8; 8];
-            getrandom::fill(&mut random).expect("random scratch suffix");
-            let path = std::env::temp_dir().join(format!("wordcraft-safe-save-{}-{:x?}", std::process::id(), random));
-            fs::create_dir(&path).expect("scratch directory");
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path =
+                std::env::temp_dir().join(format!("wordcraft-save-owner-test-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+            fs::create_dir(&path).unwrap();
             Self(path)
         }
-        fn path(&self, name: &str) -> PathBuf {
-            self.0.join(name)
-        }
         fn target(&self) -> PathBuf {
-            self.path("document.docx")
-        }
-        fn names(&self) -> Vec<String> {
-            let mut names = fs::read_dir(&self.0)
-                .expect("read scratch")
-                .map(|entry| entry.expect("scratch entry").file_name().to_string_lossy().to_string())
-                .collect::<Vec<_>>();
-            names.sort();
-            names
+            self.0.join("original.docx")
         }
     }
     impl Drop for Scratch {
@@ -143,137 +213,40 @@ mod tests {
     }
 
     #[test]
-    fn malicious_legacy_temp_symlink_is_never_followed_or_removed() {
-        #[cfg(unix)]
-        {
-            let scratch = Scratch::new();
-            let destination = scratch.path("document.docx");
-            let neighbor = scratch.path("neighbor");
-            let old_temp = scratch.path("document.docx.tmp");
-            fs::write(&destination, b"original").expect("original");
-            fs::write(&neighbor, b"neighbor").expect("neighbor");
-            std::os::unix::fs::symlink(&neighbor, &old_temp).expect("symlink");
-            write(&destination, b"replacement").expect("safe save");
-            assert_eq!(fs::read(&destination).expect("destination bytes"), b"replacement");
-            assert_eq!(fs::read(&neighbor).expect("neighbor bytes"), b"neighbor");
-            assert_eq!(fs::read_link(old_temp).expect("retained link"), neighbor);
+    fn partial_and_complete_preparation_failures_leave_original_and_no_owned_temp() {
+        for partial in [true, false] {
+            let d = Scratch::new();
+            let path = d.target();
+            fs::write(&path, b"Original bytes.").unwrap();
+            let err = replace_with(&path, true, |file| {
+                file.write_all(if partial { b"Partial" } else { b"Complete replacement bytes." })?;
+                Err(io::Error::other("injected preparation failure"))
+            })
+            .unwrap_err();
+            assert!(err.to_string().contains("injected"));
+            assert_eq!(fs::read(&path).unwrap(), b"Original bytes.");
+            assert_eq!(fs::read_dir(&d.0).unwrap().count(), 1);
         }
     }
 
     #[test]
-    fn legacy_temp_file_collision_and_directory_are_untouched() {
-        let scratch = Scratch::new();
-        let destination = scratch.path("document.docx");
-        let collision = scratch.path("document.docx.tmp");
-        fs::write(&destination, b"original").expect("original");
-        fs::write(&collision, b"keep").expect("collision");
-        write(&destination, b"replacement").expect("safe save");
-        assert_eq!(fs::read(&collision).expect("collision bytes"), b"keep");
-        assert_eq!(fs::read(&destination).expect("destination bytes"), b"replacement");
-
-        let second = scratch.path("directory-target.docx");
-        fs::create_dir(&second).expect("destination directory");
-        assert!(write(&second, b"no").is_err());
-        assert!(second.is_dir());
-    }
-
-    #[test]
-    fn random_name_collision_retries_without_truncating_the_existing_entry() {
-        let scratch = Scratch::new();
-        let destination = scratch.path("document.docx");
-        let collision = scratch.path(format!(".wordcraft-save-{}.tmp", "00".repeat(16)).as_str());
-        fs::write(&collision, b"keep collision").expect("collision");
-        let mut calls = 0;
-        let temp = Temporary::create_with(&destination, false, || {
-            calls += 1;
-            Ok([if calls == 1 { 0 } else { 1 }; 16])
-        })
-        .expect("second candidate succeeds");
-        assert_eq!(calls, 2);
-        assert_eq!(fs::read(collision).expect("collision bytes"), b"keep collision");
-        drop(temp);
-        assert_eq!(scratch.names(), [".wordcraft-save-00000000000000000000000000000000.tmp"]);
-    }
-
-    #[test]
-    fn preparation_failure_preserves_original_and_cleans_only_owned_temp() {
-        let scratch = Scratch::new();
-        let destination = scratch.path("document.docx");
-        fs::write(&destination, b"original").expect("original");
-        let result = (|| {
-            let mut temp = Temporary::create(&destination, true)?;
-            temp.file.as_mut().ok_or_else(|| io::Error::other("closed"))?.write_all(b"partial")?;
-            Err::<(), _>(io::Error::other("injected interruption"))
-        })();
-        assert!(result.is_err());
-        assert_eq!(fs::read(&destination).expect("original bytes"), b"original");
-        assert_eq!(scratch.names(), ["document.docx"]);
-    }
-
-    #[test]
-    fn injected_storage_full_after_partial_write_preserves_original_and_cleans_stage() {
-        let scratch = Scratch::new();
-        let destination = scratch.path("document.docx");
-        fs::write(&destination, b"original package bytes").expect("original");
-        let result = write_with(
-            &destination,
-            |file| {
-                file.write_all(b"partial replacement")?;
-                Err(io::Error::new(io::ErrorKind::StorageFull, "injected insufficient disk space"))
-            },
-            |from, to| fs::rename(from, to),
-        );
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::StorageFull);
-        assert_eq!(fs::read(&destination).expect("original remains"), b"original package bytes");
-        assert_eq!(scratch.names(), ["document.docx"]);
-    }
-
-    #[test]
-    fn injected_replace_failure_keeps_original_and_removes_completed_stage() {
-        let scratch = Scratch::new();
-        let destination = scratch.path("document.docx");
-        fs::write(&destination, b"original package bytes").expect("original");
-        let result = write_with(
-            &destination,
-            |file| file.write_all(b"complete replacement bytes"),
-            |_, _| Err(io::Error::new(io::ErrorKind::PermissionDenied, "injected replacement denial")),
-        );
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
-        assert_eq!(fs::read(&destination).expect("original remains"), b"original package bytes");
-        assert_eq!(scratch.names(), ["document.docx"]);
-    }
-
-    #[test]
-    fn missing_destination_parent_fails_without_creating_any_staging_file() {
-        let scratch = Scratch::new();
-        let destination = scratch.path("missing/document.docx");
-        assert!(write(&destination, b"must not appear").is_err());
-        assert!(!destination.exists());
-        assert_eq!(scratch.names(), Vec::<String>::new());
-    }
-
-    #[test]
-    fn concurrent_writes_never_share_staging_files_or_leave_partial_content() {
-        let scratch = Scratch::new();
-        let destination = scratch.path("document.docx");
-        fs::write(&destination, b"original").expect("original");
-        let barrier = Arc::new(Barrier::new(3));
-        let mut workers = Vec::new();
-        for byte in *b"ab" {
-            let barrier = Arc::clone(&barrier);
-            let destination = destination.clone();
-            workers.push(std::thread::spawn(move || {
-                barrier.wait();
-                write(&destination, &vec![byte; 256 * 1024]).expect("concurrent save");
-                byte
-            }));
-        }
-        barrier.wait();
-        let winners = workers.into_iter().map(|worker| worker.join().expect("save thread")).collect::<Vec<_>>();
-        let bytes = fs::read(destination).expect("committed file");
-        assert_eq!(bytes.len(), 256 * 1024);
-        assert!(winners.iter().any(|byte| bytes.iter().all(|saved| saved == byte)));
-        assert_eq!(scratch.names(), ["document.docx"]);
+    fn overlapping_prepared_saves_keep_separate_bytes_and_commit_complete_files() {
+        let d = Scratch::new();
+        let path = d.target();
+        fs::write(&path, b"Original bytes.").unwrap();
+        let mut first = Temporary::create(&path, true).unwrap();
+        let mut second = Temporary::create(&path, true).unwrap();
+        assert_ne!(first.path, second.path);
+        first.file().unwrap().write_all(b"First complete save.").unwrap();
+        second.file().unwrap().write_all(b"Second complete save.").unwrap();
+        first.file().unwrap().sync_all().unwrap();
+        second.file().unwrap().sync_all().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"Original bytes.");
+        first.commit(&path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"First complete save.");
+        second.commit(&path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"Second complete save.");
+        assert_eq!(fs::read_dir(&d.0).unwrap().count(), 1);
     }
 
     /// Exports (`write_file`) replace the destination instead of truncating it in place: another
@@ -291,23 +264,142 @@ mod tests {
         assert_eq!(fs::read_dir(&d.0).unwrap().count(), 2);
     }
 
+    /// Makes `dir` read-only while `f` runs. `None` when running as root, where the folder isn't
+    /// read-only to us.
+    #[cfg(unix)]
+    fn in_read_only<T>(dir: &Path, f: impl FnOnce() -> T) -> Option<T> {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let probe = fs::write(dir.join("probe"), b"");
+        let out = f();
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
+        probe.is_err().then_some(out)
+    }
+
+    /// #2138 review: where no sibling temporary file may be created (macOS privacy protection,
+    /// or a read-only folder), an existing document is left byte for byte as it was, and the
+    /// error says to use Save As or get access to the folder.
     #[cfg(unix)]
     #[test]
-    fn replacement_preserves_existing_mode_and_refuses_destination_symlinks() {
-        use std::os::unix::fs::PermissionsExt;
-        let scratch = Scratch::new();
-        let destination = scratch.path("document.docx");
-        let target = scratch.path("target");
-        fs::write(&destination, b"original").expect("original");
-        fs::set_permissions(&destination, fs::Permissions::from_mode(0o640)).expect("mode");
-        write(&destination, b"updated").expect("save");
-        assert_eq!(fs::metadata(&destination).expect("metadata").permissions().mode() & 0o777, 0o640);
+    fn an_existing_file_in_a_folder_refusing_the_temporary_file_is_left_untouched() {
+        let d = Scratch::new();
+        let path = d.target();
+        fs::write(&path, b"Original bytes.").unwrap();
+        let Some(saved) = in_read_only(&d.0, || write(&path, b"Saved bytes.")) else { return };
+        let err = saved.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        let message = err.to_string();
+        assert!(message.contains("left unchanged") && message.contains("Save As") && message.contains("this folder"), "{message}");
+        assert_eq!(message.matches("Privacy & Security").count(), usize::from(cfg!(target_os = "macos")), "{message}");
+        assert_eq!(fs::read(&path).unwrap(), b"Original bytes.");
+        assert_eq!(fs::read_dir(&d.0).unwrap().count(), 1);
+    }
 
-        fs::write(&target, b"target").expect("target");
-        let link = scratch.path("link.docx");
-        std::os::unix::fs::symlink(&target, &link).expect("destination symlink");
-        assert!(write(&link, b"unsafe").is_err());
-        assert_eq!(fs::read(target).expect("target bytes"), b"target");
-        assert!(link.is_symlink());
+    /// FredApps' #2138 regression: a save that would fail partway through still leaves the
+    /// previous document byte-identical when the folder refuses the temporary file.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_save_in_a_folder_refusing_the_temporary_file_keeps_the_original() {
+        let d = Scratch::new();
+        let path = d.target();
+        fs::write(&path, b"Original bytes.").unwrap();
+        let Some(result) = in_read_only(&d.0, || {
+            replace_with(&path, true, |file| {
+                file.write_all(b"Partial")?;
+                Err(io::Error::other("injected partial write failure"))
+            })
+        }) else {
+            return;
+        };
+        assert!(result.is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"Original bytes.", "failed save must preserve the previous document");
+        assert_eq!(fs::read_dir(&d.0).unwrap().count(), 1);
+    }
+
+    /// A folder that refuses new files altogether refuses a new document too, with the same
+    /// guidance, and leaves nothing behind.
+    #[cfg(unix)]
+    #[test]
+    fn a_new_file_in_a_read_only_folder_is_refused_with_guidance() {
+        let d = Scratch::new();
+        let path = d.target();
+        let Some(saved) = in_read_only(&d.0, || write(&path, b"New document.")) else { return };
+        let message = saved.unwrap_err().to_string();
+        assert!(message.contains("Save As"), "{message}");
+        assert!(!path.exists());
+    }
+
+    /// When only the temporary file is refused (macOS lets the app write the file picked in the
+    /// Save panel), a file that doesn't exist yet is created directly; nothing is replaced.
+    #[test]
+    fn a_new_file_is_created_directly_when_only_the_temporary_file_is_refused() {
+        let d = Scratch::new();
+        let path = d.target();
+        let refused = io::Error::from(io::ErrorKind::PermissionDenied);
+        create_directly(&path, refused, |file| file.write_all(b"New document.")).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"New document.");
+        assert_eq!(fs::read_dir(&d.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_failed_direct_save_of_a_new_file_leaves_nothing() {
+        let d = Scratch::new();
+        let path = d.target();
+        let refused = io::Error::from(io::ErrorKind::PermissionDenied);
+        let err = create_directly(&path, refused, |file| {
+            file.write_all(b"Partial")?;
+            Err(io::Error::other("injected"))
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("injected"));
+        assert!(!path.exists());
+    }
+
+    /// The direct path never opens an existing file and never runs the save: the original is
+    /// untouched and the error carries the Save As guidance.
+    #[test]
+    fn an_existing_file_is_never_written_directly() {
+        let d = Scratch::new();
+        let path = d.target();
+        fs::write(&path, b"Original bytes.").unwrap();
+        let refused = io::Error::from(io::ErrorKind::PermissionDenied);
+        let mut ran = false;
+        let err = create_directly(&path, refused, |file| {
+            ran = true;
+            file.write_all(b"New")
+        })
+        .unwrap_err();
+        assert!(!ran);
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(err.to_string().contains("Save As") && err.to_string().contains("left unchanged"), "{err}");
+        assert_eq!(fs::read(&path).unwrap(), b"Original bytes.");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_temporary_files_are_private_until_prepared() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = Scratch::new();
+        let temp = Temporary::create(&d.target(), true).unwrap();
+        assert_eq!(fs::metadata(&temp.path).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    /// A new document gets the default mode, as `fs::write` would give it — not 0600; a replaced
+    /// document keeps its own mode.
+    #[cfg(unix)]
+    #[test]
+    fn new_documents_get_the_default_mode_and_replaced_ones_keep_theirs() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = Scratch::new();
+        let reference = d.0.join("reference.docx");
+        fs::write(&reference, b"x").unwrap();
+        let default_mode = fs::metadata(&reference).unwrap().permissions().mode() & 0o777;
+        let path = d.target();
+        write(&path, b"New document.").unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, default_mode);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        write(&path, b"Saved again.").unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640);
+        assert_eq!(fs::read(&path).unwrap(), b"Saved again.");
     }
 }

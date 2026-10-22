@@ -103,6 +103,103 @@ fn guarded_table_format_across_paragraphs_is_undoable_and_round_trips() {
 }
 
 #[test]
+fn guarded_header_and_footnote_edits_undo_redo_and_save_without_changing_fields() {
+    use wordcraft_engine::doc::{InlineObject, PartKind, Path, Pos, SectionProps, para_block};
+    let directory = std::env::temp_dir().join(format!("wordcraft-guarded-stories-{}", unique_id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.docx");
+    let output = directory.join("edited.docx");
+    let mut d = Document::from_text("Body text");
+    let mut header_para = wordcraft_engine::doc::Paragraph::with_text("Header label ", Default::default());
+    header_para
+        .insert_object(
+            13,
+            InlineObject::Field { instr: "PAGE".into(), result: "1".into(), locked: false, dirty: false, code: false, form: String::new() },
+            &Default::default(),
+        )
+        .unwrap();
+    let header = d.add_part(PartKind::Header, vec![para_block(header_para)]);
+    let mut footer_para = wordcraft_engine::doc::Paragraph::with_text("Page ", Default::default());
+    footer_para
+        .insert_object(
+            5,
+            InlineObject::Field { instr: "PAGE".into(), result: "1".into(), locked: false, dirty: false, code: false, form: String::new() },
+            &Default::default(),
+        )
+        .unwrap();
+    let footer = d.add_part(PartKind::Footer, vec![para_block(footer_para)]);
+    let note = d.add_part(PartKind::Footnote, vec![para_block(wordcraft_engine::doc::Paragraph::with_text("Note text", Default::default()))]);
+    d.insert_object(
+        &Pos::body(0, "Body text".len()),
+        InlineObject::NoteRef { kind: wordcraft_engine::doc::para::NoteKind::Footnote, id: note, custom: String::new() },
+        &Default::default(),
+    )
+    .unwrap();
+    let mut section = SectionProps::default();
+    section.headers.default = Some(header);
+    section.footers.default = Some(footer);
+    d.last_section = section;
+    let mut files = unpack(&wordcraft_docx::write(&d).unwrap());
+    replace(&mut files, "word/document.xml", "<w:document ", "<w:document xmlns:future=\"urn:test\" future:keep=\"yes\" ");
+    let bytes = archive(&files);
+    std::fs::write(&source, &bytes).unwrap();
+    let mut session = Session::new(Document::new());
+    session.run("file.open", &json!({"path": source})).unwrap();
+    let part = |kind| *session.doc.parts.iter().find(|(_, p)| p.kind == kind).unwrap().0;
+    let header_id = part(PartKind::Header);
+    let note_id = part(PartKind::Footnote);
+    let before = session.doc.clone();
+    let header_pos = Pos { story: StoryRef::Part(header_id), path: Path::top(0), off: 0 };
+    session.run("caret.set", &json!({"pos": header_pos})).unwrap();
+    session.run("text.insert", &json!({"text":"Updated "})).unwrap();
+    let after_header = session.doc.clone();
+    session.run("edit.undo", &json!({})).unwrap();
+    assert_eq!(session.doc, before);
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(session.doc, after_header);
+    let note_len = session.doc.para(StoryRef::Part(note_id), &Path::top(0)).unwrap().len();
+    let note_pos = Pos { story: StoryRef::Part(note_id), path: Path::top(0), off: note_len };
+    session.run("caret.set", &json!({"pos": note_pos})).unwrap();
+    session.run("text.insert", &json!({"text":"Edited "})).unwrap();
+    let edited = session.doc.clone();
+    session.run("edit.undo", &json!({})).unwrap();
+    session.run("edit.redo", &json!({})).unwrap();
+    assert_eq!(session.doc, edited);
+    session.run("file.save", &json!({"path": output})).unwrap();
+    let saved = std::fs::read(&output).unwrap();
+    let old = unpack(&bytes);
+    let new = unpack(&saved);
+    assert_ne!(old.get("word/header1.xml"), new.get("word/header1.xml"));
+    assert_ne!(old.get("word/footnotes.xml"), new.get("word/footnotes.xml"));
+    assert_eq!(old.get("word/footer1.xml"), new.get("word/footer1.xml"));
+    let saved_header = std::str::from_utf8(new.get("word/header1.xml").unwrap()).unwrap();
+    assert!(saved_header.contains("fldChar") && saved_header.contains("PAGE"), "page field markup was not retained: {saved_header}");
+    assert_eq!(old.get("word/_rels/document.xml.rels"), new.get("word/_rels/document.xml.rels"));
+    for (path, data) in &old {
+        if !["word/header1.xml", "word/footnotes.xml"].contains(&path.as_str()) {
+            assert_eq!(new.get(path), Some(data), "unrelated part changed: {path}");
+        }
+    }
+    let mut reopened = Session::new(Document::new());
+    reopened.run("file.open", &json!({"path": output})).unwrap();
+    assert!(
+        reopened
+            .doc
+            .parts
+            .values()
+            .any(|p| p.kind == PartKind::Header && p.blocks.iter().any(|b| b.as_para().is_some_and(|p| p.text.starts_with("Updated Header label "))))
+    );
+    assert!(
+        reopened
+            .doc
+            .parts
+            .values()
+            .any(|p| p.kind == PartKind::Footnote && p.blocks.iter().any(|b| b.as_para().is_some_and(|p| p.text.ends_with("Note textEdited "))))
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn guarded_no_edit_save_restores_imported_zoom_and_round_trips_unchanged() {
     let directory = std::env::temp_dir().join(format!("wordcraft-guarded-zoom-{}", unique_id()));
     std::fs::create_dir_all(&directory).unwrap();

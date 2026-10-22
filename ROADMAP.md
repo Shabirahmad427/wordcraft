@@ -1,322 +1,10 @@
 # WordCraft roadmap
 
-## Phase 7U.11 — guarded DOCX selection formatting (2026-10-16)
-
-Added decoded-text-to-source-byte mapping that handles Unicode and XML entities, then splits only
-simple directly mapped text runs while retaining the original run markup and all other package
-parts. Selection formatting now supports direct bold/italic (including complex-script variants),
-and safe paragraph-mark bold insertion; ambiguous paragraph marks and runs containing wrappers,
-bookmarks, fields or other non-text structures remain guarded. Regressions cover selections across
-mixed runs, Unicode/entity offsets, package-part preservation, save/reopen and engine undo/redo.
-The authorized local Word sample accepted a substring italic edit; WordCraft reopen and the existing
-package allowlist passed. A follow-up reopened the saved output, retained the expected document text,
-exported PDF and passed the package allowlist with only `word/document.xml` changed. Microsoft Word
-save/reopen was not run. `cargo xtask ci` passed; hosted Linux/macOS/Windows and FreeBSD workflows
-are pending the final commit. No installed app changed.
-
-## Phase 7U.9 — Word-created DOCX controlled edit and reopen (2026-10-16)
-
-On the authorized, purpose-created Word for Mac sample, a directly mapped single-run body-text
-insertion saved and survived WordCraft reopen/resave; package comparison found only the allowed
-`word/document.xml` change. The preservation guard safely refused formatting-only and mixed-format
-paragraph edits, so no production fix was justified. Microsoft Word for Mac reopened the saved
-output without a repair warning and displayed the inserted text and existing formatting. Arabic PDF
-logical-order/source-character regressions pass; no WordCraft PDF mapping defect was demonstrated.
-Windows ARM64 CI covered cross-compilation, MSI install, architecture, CLI version and uninstall,
-but not GUI runtime or document editing. One synthetic case does not close the external real-world
-DOCX corpus gap; see [the interoperability report](docs/word365-interoperability.md). No installed
-application was modified.
-
-## Phase 7U.10 — guarded formatting preservation (2026-10-16)
-
-Added narrowly scoped OOXML splices and synthetic regressions for bold/italic changes to an entire
-mapped source run and switching to an existing paragraph style; unrelated package parts remain
-byte-identical. The authorized Word-created sample still refuses selection-based formatting: its
-command path changes run boundaries (and a whole-paragraph selection also changes the paragraph
-mark), which cannot yet be mapped safely. The guard remains intact for those edits. The requested
-WordCraft → Word save/reopen cycle was not performed in this session. The post-merge `cargo xtask
-ci` run passed all six gates, including 582 passing workspace tests (two ignored); see
-[interoperability evidence](docs/word365-interoperability.md). An earlier pre-merge run encountered
-a WGPU “No adapter found” error, which did not recur after merging upstream. No applications were
-updated.
-
-The upstream `storytold/wordcraft` main commits fetched on 2026-10-16 were merged at `336a74f3`.
-This brings the branch current with the fetched upstream tip, including the shared PDF writer and
-Nix workflow, while retaining fork-only PDF tests. Targeted PDF (44 tests) and DOCX tests passed.
-
-## Pinned upstream integration (validated)
-
-The October 15 integration starts from fork commit `426331fa` and pins upstream
-`fd0bb2fb1ec081e3eddc4d01917637fef0cafdfe`. Before merging, the fork was 155 commits ahead
-and 35 behind. The application remains version 0.7.0. Conflict resolution retains the fork's
-native print adapters, bounded rich clipboard publication, source styles/media and layout
-diagnostics while incorporating upstream document, proofing, recovery, UI and localization work.
-The merge also fixes recovery-test lock timing, adds missing content-type manifests to the
-date-field DOCX fixtures, and completes the new Croatian and Swedish catalog entries. All six
-local CI gates pass. On the follow-up structured clipboard commit `85f03acb`, hosted Printing
-([run 38822700466](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700466)), Document
-regressions ([run 38822700393](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700393)),
-Packaging lint ([run 38822711168](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822711168))
-and the complete Linux/macOS/Windows Native packages matrix
-([run 38822700316](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700316)) passed.
-The package matrix covers Linux DEB, Apple Silicon DMG and Windows x64 MSI same-version replacement,
-preserved user data, installed-app editing/save/PDF/quit and uninstall. Existing workstation
-installations remain unchanged.
-
-## Phase 7U.1 — Critical upstream bug integration (synthetic checks passed; native checks pending)
-
-Adapted upstream PR #2251 so top/bottom page-number insertion retains the original header/footer
-blocks and avoids duplicating simple or range PAGE fields, including fields in table cells. The
-regressions cover formatting, intentional empty paragraphs, selection, undo/redo, and two DOCX
-round trips. Issue #2246 was separately tested against existing and synthetic imported DOCX
-content without reproducing the reported deletion; the focused harness regression was rerun and
-passed on this checkout, including DOCX save/reopen. The macOS IME path treats preedit as temporary
-and commits once; focused event-sequence tests pass, but physical Portuguese keyboard composition
-has not been verified. Hosted OS workflows passed on the subsequent commit. No installed 0.7.0 copy
-or Word readiness estimate changed.
-
-## Phase 7U.2 — Structured clipboard for selected drawings (validation passed)
-
-Copying selected drawings now places a bounded, self-contained WordCraft DOCX payload in the HTML
-clipboard representation while retaining ordinary HTML for other applications. Paste restores the
-editable drawing fragment, remaps shape identifiers and preserves internal connector links. Hosted
-Printing, Document regressions, Packaging lint and all Linux/macOS/Windows native package jobs pass
-on `85f03acb`. Native Windows GUI drawing copy/paste and confirmation that object Copy replaces
-prior clipboard contents remain unverified; hosted Windows clipboard adapter tests do not exercise
-WordCraft GUI selection. Cross-application drawing paste and physical Portuguese keyboard
-composition also remain unverified. Existing installations remain unchanged.
-
-## Phase 7U.3 — DOCX on/off and measure parsing (local validation passed)
-
-Audited upstream PRs [#2275](https://github.com/storytold/wordcraft/pull/2275) and
-[#2267](https://github.com/storytold/wordcraft/pull/2267). Their corrections were absent in this
-fork and both defects reproduced through minimal DOCX package fixtures before code changes. The
-DOCX reader now handles standard on/off values case-insensitively with surrounding whitespace and
-parses mixed-case measure units including EMU without consuming the unit's initial `e` as an
-exponent. Added package-boundary regressions for run formatting, automatic spacing, table look,
-protection, unequal-column widths and EMU spacing. `cargo xtask ci` and targeted tests pass locally.
-On implementation commit `099cbd5f`, Printing ([run 38826430092](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826430092)),
-Document regressions ([run 38826404239](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826404239)),
-Native packages ([run 38826404171](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826404171)) and
-Packaging lint ([run 38826437523](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826437523))
-all passed with Linux, macOS and Windows jobs successful. Existing installations remain unchanged;
-no claim is made for #2276, #2253 or #2246.
-
-## Phase 7U.4 — Responsiveness, rendering and zoom reliability (validation in progress)
-
-The status-bar zoom slider defect from #2256 was reproduced with a held-pointer UI event sequence:
-the zoom label resized as its digits changed, moving the slider track beneath the stationary pointer
-and alternating the value between 90% and 95%. A fixed-width readout keeps the track stationary;
-the 30-frame held-at-95% regression passes. On the Apple Silicon M4 macOS host, an existing release
-UI probe measured 4.0/8.2/10.0 ms median key frames before and 4.0/8.3/10.0 ms after on deterministic
-3-, 35- and 140-page ordinary-prose DOCX files; no typing-performance improvement is claimed. The
-reporter's ~50 ms delay (#2259) was not reproduced on this headless harness. #2278
-was also not reproduced; no trigger was supplied and the reporter's Ubuntu/Intel HD 4600 graphics
-are unavailable here. Native surface/device-loss scenarios and hosted three-OS validation remain
-pending. Neither existing Ubuntu nor macOS installation was modified.
-
-Phase 7T.2 validation passed on commit `a2718489` in [the full native package run](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634643684): Linux DEB, Apple Silicon macOS DMG and Windows x64 MSI jobs all passed, with no skipped platform. Each ran package creation, fresh installation, same-version replacement, isolated preference/recovery preservation, native edit/save/PDF/quit, and package removal. The Windows ARM64 package/install/CLI check also passed, without GUI-runtime coverage. The separate [Printing](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634652720), [Document regressions](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634656901) and [Packaging lint](https://github.com/Shabirahmad427/wordcraft/actions/runs/38634644071) workflows passed. The package jobs took 28m47s Linux, 32m24s macOS and 20m51s Windows. Cold 0.7.0 baseline builds took 9m15s Linux and 10m macOS; Windows restored its baseline MSI cache in 2s. Inspection found that Rust cache omitted workspace crates by default; cache keys now opt into workspace-crate caching. This cache change is being validated on the final commit. Intel Mac hardware, Windows ARM64 GUI runtime, signing/notarization claims, and updates to the existing workstations remain unverified/not performed.
-
-
-## Phase 7T — Native installation and desktop integration (in progress)
-
-- Audited existing Linux AppImage/DEB/RPM/tarball/Flatpak, macOS DMG and Windows MSI/portable packaging. The Linux packager's comma-separated format argument produced no packages for the RISC-V release job; it now accepts and validates both comma- and space-separated lists. Release package checks now fail on missing artifacts or a failed AppImage version run.
-- A real local Apple Silicon DMG exposed a signed-app defect: HFS `makehybrid` added FinderInfo attributes to bundle files, so the app copied from the DMG failed strict code-signature verification. The packager now clears those attributes in a writable image and verifies the final mounted DMG. The corrected DMG and installed copy passed strict verification. The local artifact is ad-hoc signed and not notarized.
-- The app copied from that DMG passed both isolated native smokes: editing, bold text, table, Undo/Redo, DOCX save/reopen, PDF export, LaunchServices Open With, recovery checkpoint and normal `app.quit`. Corrected native package run 38502639179 passed installed Linux DEB, macOS DMG and Windows x64 MSI workflows, including Linux headless Weston startup/recovery/quit. The Windows GUI step timed out once after queuing text, then passed on retry; its cause is unknown, so Phase 7T remains in progress along with the documented platform integration gaps. See [native installation](docs/native-installation.md).
-- A local universal DMG verified and ran both architecture slices. Its x86_64 CLI and native GUI smoke passed under Rosetta on Apple Silicon; no Intel Mac hardware was available. Local dirty-checkout packages now mark their base commit with `-dirty` so they are not mistaken for exact clean-commit artifacts.
-- Integrated upstream's released WordCraft 0.7.0 (`fc419188`) into the existing fork history based on 0.6.1. The earlier package workflow exercised a 0.6.1-to-0.7.0 upgrade from fork commit `9270097`; that historical test is superseded for the current upstream integration by the explicitly requested 0.7.0 same-version replacement check below. All six local CI gates pass after fixing merge regressions in mirrored indents, canvas focus handoff and checked DOCX sniffing. Hosted package validation is pending; Phase 7T remains in progress.
-- Rebased package validation on the fork's actual 0.7.0 baseline: upstream `main` has no release newer than 0.7.0, so the workflow checks same-version package replacement from baseline commit `aeb37dfb272bae6480ea57b299f709f8012cb3e9`; it does not call this a version upgrade. Windows run [38619307562](https://github.com/Shabirahmad427/wordcraft/actions/runs/38619307562) passed MSI replacement, preference/recovery preservation, native edit/save/PDF/quit and uninstall. Its preserved-profile smoke verifies the expected startup recovery chooser and quits normally; separate fresh-profile smokes cover editing. Linux/macOS package jobs were skipped in the Windows-only dispatch. Baseline MSI compilation took 12m43s on a cache miss; the baseline MSI and Rust target caches were saved. All six local CI gates, hosted Printing, Document Regressions and Packaging lint passed on merge `c2342ba`; Phase 7T remains in progress pending current-baseline package checks on Linux/macOS and the other documented installation gaps.
-
-## Phase 7S — Native desktop smoke across Linux, macOS and Windows (complete)
-
-- Printing run 38476284508 passed the native GUI workflow on Linux, macOS and Windows. It verified native window and editor focus, Unicode and bold text, Insert › Table, typing in a table cell, Undo/Redo, DOCX save/reopen, PDF export and normal `app.quit` shutdown. Linux used Xvfb/Openbox/software GL, macOS used LaunchServices on Apple Silicon, and Windows used its DirectX 12 software adapter.
-- The Linux/Windows table-selection failure came from a hard-coded point in the inter-row gap. The UI now reports rendered hit bounds through `ui.inspect` and the harness clicks the actual cell center. Windows also exposed a timing race in the old immediate Undo assertion; bounded document-state polling now waits for Undo/Redo.
-- The three runner profiles were isolated. The native smoke verified no preferences, recovery store, logs or user fonts were created in its no-preferences profile; separate recovery-shutdown checks used temporary data only. All six local CI gates and Apple Silicon release GUI/CLI builds and version commands passed. Native desktop evidence is separate from headless egui tests and offscreen rendering.
-- Detailed runner evidence and remaining platform-level coverage gaps are listed in [desktop GUI validation](docs/desktop-testing.md) and [platform support](docs/platform-support.md). No Phase 7T work was started.
-
-## Phase 7R — Desktop GUI, ribbon and editing validation (2026-10-13)
-
-- Audited the six requested ribbon areas with 2× offscreen screenshots on Apple Silicon macOS. Home, Insert, Layout, References, Review and View rendered; Home style samples were visible. Existing pixel assertions cover built-in/custom style previews in light/dark and 1×/2× rendering.
-- A real macOS app window launched, but its normal profile opened the recovery chooser with existing recovery entries. To avoid touching that user state, no recovery entry was opened or discarded and the native-window editing workflow stopped there. No physical mouse/keyboard, Word 365 comparison, or complete native edit/save/reopen/PDF workflow is claimed. An isolated headless egui event run exercised Unicode typing, bold, Undo/Redo, Insert › Table, a 2×2 grid selection and cell typing.
-- Reproduced a focus defect in the Insert › Table size grid: it inserted the table but bypassed the ribbon helper that restores document focus, so immediate typing into the first cell was ignored. The picker now uses that helper. `dialogs::tests::table_grid_selection_requests_document_focus` failed before the fix and passes afterward; the headless UI event run confirms all four cells accept typed text and Cmd+Z/Cmd+Shift+Z removes/restores the last cell's text.
-- See [desktop GUI validation](docs/desktop-testing.md) for the platform evidence matrix and a synthetic-only Word comparison protocol. Hosted Linux/macOS/Windows suites are test/build evidence, not interactive desktop GUI evidence.
-- `cargo xtask ci` passed all six local gates, including workspace tests. Native macOS arm64 `cargo build --release -p wordcraft -p wordcraft-cli` and the CLI `--version` smoke passed. Hosted [Printing run 38438412430](https://github.com/Shabirahmad427/wordcraft/actions/runs/38438412430) passed on Ubuntu, macOS and Windows, including app/UI tests on all three and OS clipboard adapter tests on macOS/Windows plus Linux Xvfb. Hosted [Document regressions run 38438424704](https://github.com/Shabirahmad427/wordcraft/actions/runs/38438424704) passed DOCX/session tests on all three, native macOS/Windows CLI smoke, Linux GUI/CLI release and smoke, visual regression and advisory performance. These hosted jobs are not interactive desktop-window validation; the local macOS app stopped at the recovery chooser without touching existing entries.
-
-## Phase 7Q — Native clipboard validation and bounded import (2026-10-13)
-
-- Audited keyboard, ribbon, and context-menu Copy/Cut through the shared selection fragment, HTML/plain-text serialization, native host publication, paste retrieval, shared HTML import, insertion, and Undo/Redo. Existing cross-platform transport was already implemented through arboard; no duplicate transport implementation was added.
-- Added an opt-in native clipboard adapter regression that publishes synthetic Unicode-rich text and a merged-cell table, reads HTML and Unicode text back from the operating system, then verifies the shared importer and engine preserve emphasis and table span. Hosted [Printing run 38429584697](https://github.com/Shabirahmad427/wordcraft/actions/runs/38429584697) passed the native adapter round-trip on macOS, Windows, and Linux X11 under Xvfb, plus the broader app/UI suites on all three OSes. Ordinary local test runs do not modify the developer clipboard. This exercises same-process adapter runtime on disposable runners, not cross-application clipboard exchange, full GUI operation, or Word interoperability.
-- Added a UI regression proving that failed rich clipboard publication emits egui's plain-text clipboard command. Existing parser and engine checks cover unsafe links, skipped scripts/styles, HTML size rejection before parse/insert, malformed CF_HTML offset fallback, no external image fetching, and plain-text fallback.
-- Closed a verified shared-core gap: normal Paste and Keep Text Only accepted external plain-text values above the 16 MiB bound. All external paste variants now reject oversized text before document insertion; the regression checks content remains unchanged.
-- Hosted native tests reproduced a Linux X11 ownership defect: the short-lived `arboard::Clipboard` used for Copy was dropped before any clipboard manager claimed its contents, so the next read saw no text. The app now retains the publisher on its UI thread for the process lifetime; the Xvfb regression runs without a clipboard manager to keep this case deterministic. A separate macOS run found the HTML importer may append an empty paragraph after a table, so the round-trip assertion now checks copied content and structure without depending on that trailing paragraph.
-- `arboard` 3.6.1 exposes HTML/text only as owned strings; its native getters do not accept a size limit. WordCraft rejects HTML above 16 MiB before parsing and insertion, but the adapter may allocate an oversized clipboard payload first. This residual allocation limit is documented; no unnecessary per-platform clipboard reader was introduced. See [clipboard security and validation](docs/clipboard-security.md).
-- Native clipboard runtime status is reported separately from shared-core tests, adapter tests, GUI runtime and Microsoft Word testing in [editing workflow regressions](docs/editing-workflows.md). Microsoft Word 365 exchange has not been performed.
-- On native Apple Silicon macOS, `cargo xtask ci` passed all six gates and `cargo build --release -p wordcraft -p wordcraft-cli` plus `wordcraft-cli --version` passed. Hosted [Document regressions run 38431156638](https://github.com/Shabirahmad427/wordcraft/actions/runs/38431156638) passed Linux GUI/CLI release build, Linux/macOS/Windows document suites and CLI smokes, visual regression and advisory performance. Hosted [Printing run 38429584697](https://github.com/Shabirahmad427/wordcraft/actions/runs/38429584697) passed the native clipboard adapter tests and broader app/UI tests on Linux, macOS and Windows. These compiled and tested the Linux GUI but did not launch it; no native macOS/Windows GUI window or Word 365 exchange was tested.
-
-## Phase 7P — Rich clipboard and inter-application editing (2026-10-13)
-
-- Native desktop Copy now publishes the selected fragment as HTML with plain text as the fallback, using the same arboard API on Linux, macOS and Windows. HTML is generated in shared Rust from the structured internal fragment and source document style/media context; table rows, cells, spans and supported inline formatting use the existing semantic HTML exporter. Payloads over the existing 16 MiB paste bound fall back to plain text. The internal `Fragment` clipboard remains the source for WordCraft-to-WordCraft paste.
-- Added regressions for selected Unicode/emphasized text and HTML escaping, copied table fragments, HTML import round-trip, and the UI's rich-clipboard host callback. Existing bounded HTML import sanitizes links, skips scripts/styles and does not load external image resources without an explicit image loader. Inline images are represented as data URIs when available in the selected fragment's document media.
-- `cargo xtask ci` passes all six gates on native Apple Silicon macOS (fmt, Clippy, workspace tests, asset attribution, layering and WASM). `cargo build --release -p wordcraft -p wordcraft-cli` and `wordcraft-cli --version` pass for `aarch64-apple-darwin`. Hosted [Document regressions run 38399971728](https://github.com/Shabirahmad427/wordcraft/actions/runs/38399971728) passed all six jobs: DOCX/session tests and native CLI smoke on Linux, macOS and Windows; Linux GUI/CLI release build and CLI smoke; visual regression; and advisory performance. Hosted [Printing run 38399971666](https://github.com/Shabirahmad427/wordcraft/actions/runs/38399971666) passed the Linux, macOS and Windows native app/UI test jobs. This is platform build and test evidence, not a system clipboard transport smoke: actual OS clipboard transport has not been exercised, and no Word 365 clipboard test has been performed. The manual protocol and limits are in [editing workflow regressions](docs/editing-workflows.md).
-
-## Phase 7O — structured table selection and clipboard (2026-10-13)
-
-- Reproduced a shared-core regression: Copy ignored an active whole-cell `CellRange` and serialized only paragraph runs, so selecting one cell, a row, or a column lost the table structure. The new cell-fragment builder clips the source table to the selected cells in order and retains row/cell/table properties, cell contents, nested blocks, and text-box stories. It pads omitted grid gaps exposed by horizontal merges, preserves merges on complete-table copies, and clears dangling vertical-merge links in clipped copies.
-- Added fail-first engine coverage for single-cell, row, and multi-row column selection, blank-document and in-place paste, rich text and borders, horizontal/vertical merge clipping, adjacent content, Undo/Redo, DOCX reopen, and PDF export. The prior Phase 7N whole-table cross-container copy regression remains covered.
-- Internal WordCraft clipboard fragments now preserve table structure. Native Copy still publishes plain text through egui; native Paste can import HTML/RTF when the platform clipboard provides them. Structured table data is not yet exported to the OS clipboard, so external applications receive flattened text. No platform-specific table logic or Word clipboard-format compatibility is claimed. Nested cell blocks are copied by model cloning but do not yet have dedicated round-trip fixtures.
-- All six local `cargo xtask ci` gates pass on Apple Silicon macOS, including workspace tests, assets, layers and WASM checks. The native Apple Silicon GUI/CLI release build and CLI version smokes pass. Hosted [Document regressions run 38394565623](https://github.com/Shabirahmad427/wordcraft/actions/runs/38394565623) passed all six jobs: DOCX/session tests and native CLI smoke on Linux, macOS and Windows; Linux GUI/CLI release build and CLI smoke; visual regression; and advisory performance. The Linux GUI was built but not launched, and no Windows/macOS GUI runtime smoke was performed. The `.git/refs/remotes/origin/main` lock attempt failed because the execution environment restricts writes to `.git`, despite the ref and parent directories being user-owned with modes 0644/0755 and no ACL; no ownership or permission changes were made. The successful elevated fast-forward push updated the tracking ref without changing permissions. See [editing workflow regressions](docs/editing-workflows.md).
-
-## Phase 7N — editing workflow reliability (2026-10-13)
-
-- Reproduced a shared range-copy defect: when a selection began in a table cell and continued into the following body paragraph, `Document::copy_blocks` flattened the table cells into ordinary paragraphs. The copied fragment lost its rows and cells. Copy now retains a table as a table when the selection covers the whole table; partial ranges whose endpoints are inside the table retain their prior text-only behavior.
-- Added document and engine regressions for the multi-container copy, rich table paste, Unicode, cell formatting, repeated Undo/Redo, DOCX save/reopen and PDF export. The regression checks actual table structure and saved output, not only selection or command state.
-- All six local `cargo xtask ci` gates pass on Apple Silicon macOS, including workspace tests, assets, layering and WASM checks. The native Apple Silicon GUI/CLI release build and CLI version smokes pass. Hosted [Document regressions run 38390805361](https://github.com/Shabirahmad427/wordcraft/actions/runs/38390805361) passed all six jobs on `29d5bf8`: DOCX/session suites and native CLI smoke on Linux, macOS and Windows; Linux GUI/CLI release build and CLI smoke; bundled-font visual regression; and advisory performance. These hosted checks build/test the GUI target but do not launch a desktop GUI. No native Linux or Windows GUI runtime evidence is claimed.
-- Scope limits: partial-cell selections that cross table boundaries are still flattened, and guarded imported DOCX packages continue to reject edits that cannot be safely spliced while preserving unsupported OOXML. No Microsoft Word 365 compatibility claim is made.
-
-## Phase 7M — Theme rebinding and OOXML style preservation (2026-10-13)
-
-- Reproduced stale theme values: DOCX import flattened `w:asciiTheme`/`w:hAnsiTheme` and `w:themeColor` into fixed values, so later theme changes could not rebind inherited styles. The shared document model now retains those selectors (including color mapping and tint/shade), rebinds styles and direct run formatting on theme changes, and serializes theme selectors back to DOCX. Explicit font/color properties remain fixed; Undo/Redo restores the prior theme and resolved values.
-- Added synthetic regressions for inherited theme-linked style values, tint/shade, explicit overrides, style inheritance, DOCX save/reopen, and engine theme Undo/Redo. Unsupported `styles.xml` extensions remain in the original package through safe text edits; style edits that would regenerate protected XML fail clearly instead of deleting it.
-- All six `cargo xtask ci` gates and the workspace tests pass on native Apple Silicon macOS. Native Apple Silicon GUI/CLI release builds and version smokes pass. Hosted Linux/macOS/Windows checks are pending. The current package-preservation contract still blocks theme/style edits on guarded imports when safe package-level XML merging is unavailable; no arbitrary OOXML preservation or Word 365 compatibility is claimed.
-
-## Phase 7L — Styles, formatting and DOCX round-trip reliability (2026-10-13)
-
-- Audited the shared `StyleSheet` inheritance resolver, DOCX style import/export, style application command, selected formatting state and PDF exporter. Existing code resolves paragraph chains, character styles, direct overrides, and imported theme fonts/colors; this phase adds end-to-end synthetic coverage for those modeled cases.
-- Reproduced a shared-core defect: applying a paragraph style to a partial text selection cleared direct font, size and color from every run in that paragraph. The regression failed before the change. `para.style` now clears those properties only in the selected range (and preserves the paragraph mark for a non-collapsed selection); unrelated character formatting survives. The test checks selection state, Undo/Redo, DOCX save/reopen and PDF export.
-- Added coverage for applying Normal, No Spacing, Title, Subtitle and Heading 1–3; Emphasis and Strong application with Undo/Redo; and imported custom paragraph/character style inheritance, theme font/color resolution, direct overrides and DOCX round-trip. These checks cover modeled OOXML properties only. Unmodeled style extensions and theme bindings after a later theme edit remain limitations; synthetic fixtures are not Word 365 compatibility evidence.
-- All six `cargo xtask ci` gates passed on native Apple Silicon macOS (including workspace tests, asset attribution, layering and WASM checks). Native Apple Silicon release GUI/CLI builds and both version smokes passed. Hosted Document Regressions run [38381805292](https://github.com/Shabirahmad427/wordcraft/actions/runs/38381805292) passed all six jobs on code commit `864135f`: DOCX/engine/layout/PDF/recovery/save tests and native CLI smoke on Linux, macOS and Windows; Linux GUI/CLI release build; bundled-font visual regression; and advisory performance. The native GUI was built on Apple Silicon macOS and in the hosted Linux release job; no native Linux or Windows GUI screenshot/runtime smoke was performed. No Word 365 compatibility is implied, and unmodeled style extensions or dynamic rebinding after theme changes remain outside this test scope.
-
-## Phase 7K — Styles gallery preview rendering (2026-10-13)
-
-- Reproduced blank Home gallery previews on the native Apple Silicon Mac at 2× scale. The layout engine placed preview text at y=36 pt because preview-only sections retained the default 36 pt header distance; the 30 pt raster viewport clipped the full sample line. Setting unused preview header/footer distances to zero fixes the shared raster path. A pixel regression failed before the fix with zero ink pixels and passes after it. Cross-check of [upstream `previews.rs` at `159b84f`](https://github.com/storytold/wordcraft/blob/159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0/crates/ui-egui/src/previews.rs) found the same geometry and no corresponding fix there.
-- Character styles in the gallery now style the sample run; paragraph styles continue to style the paragraph. Preview images are invalidated when the font database changes, so newly installed fonts replace cached fallback renderings. The Styles pane itself is a text list without sample tiles; Manage Styles previews use this same corrected snippet renderer.
-- Regression coverage checks Normal, No Spacing, Headings 1–3, Title, Subtitle, Emphasis, Strong and a custom paragraph style with a missing font. Pixel assertions run at 1×/2× and light/dark page modes and confirm style definitions stay unchanged. macOS GPU screenshot inspection shows readable samples and labels in the Home ribbon. Hosted Printing run [38377649990](https://github.com/Shabirahmad427/wordcraft/actions/runs/38377649990) passed on Ubuntu, macOS and Windows, including native UI tests. Document Regressions run [38377680035](https://github.com/Shabirahmad427/wordcraft/actions/runs/38377680035) passed Linux/macOS/Windows DOCX-session tests and CLI smoke, Linux GUI/CLI release, bundled-font visual regression and advisory performance. Native Windows/Linux GUI screenshot checks are not available locally.
-
-## Phase 7J — recovery, safe saving and fault tolerance (2026-10-13)
-
-- Added deterministic native-save fault injection for partial staging followed by storage exhaustion and replacement denial. Both cases assert byte-for-byte preservation of the prior destination and removal of only the current save's temporary file. Missing destination parents and existing symlink/temp safety, concurrent writes, invalid DOCX input and unsupported OOXML preservation are also covered by the shared engine suites.
-- Reproduced a recovery status defect: directory synchronization failure after the archive's atomic rename made `publish` return an error even though the snapshot was already committed. The regression failed before the fix. Publication now reports the committed result and logs the reduced durability; corrupt-archive restore also has a regression asserting the open document and undo history remain unchanged.
-- All six local `cargo xtask ci` gates passed on Apple Silicon macOS; workspace tests passed, and native Apple Silicon GUI/CLI release builds and version smokes passed. Hosted Document Regressions run [38373039874](https://github.com/Shabirahmad427/wordcraft/actions/runs/38373039874) passed all six jobs: DOCX/session/save/recovery tests on Ubuntu, macOS and Windows; Linux GUI/CLI release build and CLI smoke; bundled-font visual regression; and advisory performance. Windows also passed its native CLI smoke. This verifies the common failure-injection tests on three hosted OS runners, not real disk-full, ACL, power-loss or physical-device failure behavior. No Windows or macOS GUI release build was run in this phase.
-
-## Phase 7I — shared layout and PDF regression (2026-10-12)
-
-- Added synthetic DOCX import/layout/PDF assertions for paper and margins, page count, extracted text, images and fonts, table/notes/equation/column/vertical-text preservation, plus a saved-edit PDF check. The suite parses PDFs with an independent reader and avoids binary cross-OS comparisons. Coverage and limits: [cross-platform layout regressions](docs/cross-platform-layout-regressions.md).
-- Reproduced an off-page header image with no clipping diagnostic, then fixed shared `layout` overflow analysis to inspect floating objects in header/footer and other non-body stories. The minimal test failed before the fix and passes afterward.
-- The hosted Document regressions matrix passed all six jobs on `11b646e`: native DOCX/engine/layout/PDF tests on Linux, macOS and Windows; Linux GUI/CLI release build; bundled-font visual regression; advisory performance. Printing and Packaging lint also passed (runs 38322248198 and 38322248628). All six local `cargo xtask ci` gates passed (2,101 passed, 2 ignored); native Apple Silicon GUI/CLI release builds and version smokes passed. The headless macOS window screenshot smoke passed with GPU access. No Word 365, Windows ARM64 runtime or macOS Intel runtime claim follows from these checks.
-
-## Cross-platform shared-core audit (2026-10-12)
-
-- Audited the shared Rust document path and hosted regression coverage from fork commit `9d023894`; the five ranked remaining gaps are in [the cross-platform audit](docs/cross-platform-audit-2026-10-12.md). The Word 365 reference corpus still has zero verified pairs, so no new application-level compatibility claim is made.
-- DOCX export now validates every completed package and rejects XML-forbidden model characters instead of silently dropping them. Synthetic regression covers all four Word package flavors. Document Regressions now requests shared DOCX/engine tests on Linux, macOS and Windows and a Linux GUI/CLI release build; hosted results remain to be verified.
-- The native macOS gate exposed a font-sensitive two-column footnote test fixture; its anchor was moved within column two and the test passes with both bundled-only and system-font resolution. No layout algorithm or parity claim changed.
-- Hosted [Document Regressions run 38320170798](https://github.com/Shabirahmad427/wordcraft/actions/runs/38320170798) passed all six jobs for `3a480b9`, including native shared-core suites on Ubuntu/macOS/Windows and Linux GUI/CLI release build and CLI smoke. [Packaging lint 38320171307](https://github.com/Shabirahmad427/wordcraft/actions/runs/38320171307) passed. No Word 365 application comparison or Windows ARM64/macOS Intel runtime result was obtained in this arc.
-
-## Phase 7E — visual regression and performance evidence (2026-10-12)
-
-- Added bounded PNG comparison, complete numbered-page set comparison, page geometry/count assertions, changed-pixel bounds and red-highlighted diagnostic images. The reviewed two-page baseline is a synthetic academic document rendered with bundled open fonts; comparison reports never overwrite expected images.
-- Added repeatable 45-page and 133-page synthetic academic workloads with three-run median/MAD summaries for generation, load/layout, all-page rasterization and PDF export, plus peak process RSS. CI retains diagnostics and performance artifacts without timing-based failure thresholds. See [performance benchmark methodology and results](docs/performance-benchmarks.md).
-- Final validation: `cargo xtask ci` passed all six gates (fmt, Clippy, tests, assets, layers and WASM); the final workspace run passed **2,097 tests, 0 failed, 2 ignored**. Linux GUI/CLI release builds and Windows GNU/macOS ARM64 release compile checks passed. The first CI rerun caught two Clippy issues (fixed); the next caught an incomplete performance-test fixture (fixed); an added advisory-regression test initially needed an explicit Rust type (fixed); the final full rerun passed. No missing native library or unresolved cross-symbol error remained.
-- Visual tests remain synthetic and deterministic within their configured environment; no Word-derived baseline exists. Word 365 reference comparisons remain blocked (zero consented, provenance-verified files). Issue #963 remains open and unverified: the reporter's source file and exact steps are unavailable; generated UI/CLI fixtures continue to pass without establishing the reporter's root cause.
-- Phase 7E.2 adds complete numbered-page comparisons with strict page-count/dimension checks, bounded per-pixel tolerances, changed-pixel bounding boxes and reviewable diff PNGs. Checked-in Linux goldens cover a two-page synthetic academic layout; `WORDCRAFT_FONT_DIRS` isolates these runs to bundled open fonts. Baselines are never changed by tests.
-- Performance reporting now rasterizes every page in the 45-page and larger 133-page synthetic documents and records median, MAD, min/max and peak RSS with an environment manifest. CI stores raw and summarized artifacts but never fails on timing. `cargo xtask perf compare` highlights ≥25% deltas and refuses to call runs comparable when OS, toolchain, processor count, workload scale/repeats or font setup differ.
-- Printing workflow run [38310906468](https://github.com/Shabirahmad427/wordcraft/actions/runs/38310906468) for base commit `f71d779` completed successfully on Linux, Windows and macOS, including the Linux browser-compatibility step. The new regression workflow later passed on the 7E.2 head; cross-platform applicability is recorded below.
-- The committed goldens matched both pages exactly within the explicit policy. Bundled-font performance runs measured 45 pages (2,568 words) and 133 pages (7,600 words); local medians and spread are recorded in the benchmark report. Both Windows GNU and Apple Silicon CLI release compile checks passed. No native Windows/macOS runtime or physical printer test was performed.
-
-## Phase 7G — Word 365 interoperability readiness check (2026-10-12)
-
-- Verified the fetched fork `main` at `9336c2008da5a9009bfaa066d3f917a2c416fbda`. All six local `cargo xtask ci` gates passed (2,097 passed, 0 failed, 2 ignored); Linux GUI/CLI release builds and Windows GNU/macOS ARM64 release-mode CLI checks passed.
-- Hosted Document Regressions (run 38316357991) and Packaging lint (38316358241) passed on `9336c20`. The latest available Printing success (38310906468) is on `f71d779`; FreeBSD (38306533331) and Windows ARM64 (38306533411) passed on `6535bb2`. Those workflows were not triggered by the later regression-only changes, so these results are not attributed to `9336c20`.
-- Genuine Microsoft Word-generated DOCX/PDF corpus remains unavailable and the benchmark is blocked: no source documents were accessed or processed. The provenance manifest and package fingerprint/allowlist protocol are ready, but Word repair warnings, editability and reference-PDF visual comparisons remain untested. Details: [Word 365 interoperability report](docs/word365-interoperability.md).
-
-## v0.6.1 stabilization — integrity issue follow-up (2026-10-12)
-
-- Reproduced issue #965 with a synthetic CLI sequence and changed image insertion so scripted commands leave the caret after the inserted picture; interactive insertion and clipboard paste continue to select it. Regression verifies the picture survives follow-up typing and DOCX save/reopen.
-- Reproduced issue #966 with a synthetic keep-with-next heading and widow-controlled long paragraph. Release-PDF verification exposed a missing paragraph-after gap in the fit calculation; the lookahead now reserves the two-line minimum plus the effective paragraph gap. A rebuilt CLI PDF and regression verify the heading and body begin on the same page.
-- Fixed issue #916's empty cross-reference UI route by opening a target picker for headings, bookmarks, figures, tables and equations. The form routes insertion through the existing REF/PAGEREF engine command. The arbitrary SEQ field report is not independently verified.
-- Added a Zotero bridge boundary regression for #898; the synthetic field remains balanced through following typing and DOCX round-trip, but the actual desktop plugin sequence remains unverified. Issue #963 remains unresolved pending a safe reproducer; standalone synthetic image and text-direction tests pass.
-- Added real-process CLI and app-open regressions using synthetic DOCX files. The CLI path edits, saves, reopens, rasterizes and exports a multipage document; inline and floating images are asserted in actual PNG pixels, and the original DOCX bytes stay unchanged. The UI `file.open` path renders an embedded image and vertical text box; the vertical word's raster bounds and layout direction are checked, and its page PNG matches `file.exportPng` byte for byte. GUI visual review used the headless app window on this synthetic fixture. These tests pass but do not reproduce the reporter's unavailable source document, so upstream #963 remains unresolved/unverified.
-- The opening-path audit found that GUI launch arguments, File → Open, recent/drop/picker opens use `file.open` and `open_path_with_source`; CLI used `open_path` and discarded `SourcePackage`. CLI now uses the source-preserving loader, with a regression checking exact original package bytes. GUI and CLI use the same DOCX importer; page rendering and PDF export use the same layout but distinct raster/vector output paths.
-- All six `cargo xtask ci` gates passed. The exact `cargo test --workspace -- --quiet` recount is **2,086 passed, 0 failed, 2 ignored across 61 suites**. The same invocation at starting commit `f1da26b` gave **2,083 passed, 0 failed, 2 ignored across 60 suites**; the increase is three discovered tests (the CLI pipeline test at `aa3846f`, plus two regressions here). The earlier 1,991 figure was a partial-log counting error, not a Cargo failure or target/feature difference. Linux GUI/CLI release builds and release-mode `cargo check` for Windows GNU/macOS Apple Silicon passed. Native Windows/macOS linking is unavailable because MinGW's DLL tools and the Apple SDK/linker are absent. Hosted checks on `aa3846fac2ee264edd1fed9bb26f30e8c40f8367`: Printing and Packaging lint passed, Windows ARM64 passed, FreeBSD was still running at last check. Upstream main remains at `159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0`. No Word 365 compatibility claim is made.
-- Installed Linux binaries were rebuilt from code commit `6535bb260c8e150ae0669f6be61dd57cac4ba588`: `~/.local/bin/wordcraft` reports `0.6.1 (6535bb26)` and `~/.local/bin/wordcraft-cli` reports `0.6.1`. The replaced binaries are backed up at `~/.local/bin/backups/6535bb2/wordcraft` and `~/.local/bin/backups/6535bb2/wordcraft-cli`. The latest main commit is a documentation-only interoperability note after that code commit.
-- Hosted checks for code commit `6535bb260c8e150ae0669f6be61dd57cac4ba588`: Printing run `38306437369`, Packaging lint run `38306533734`, and Windows ARM64 run `38306533411` completed successfully. FreeBSD run `38306533331` remained in progress at 2026-10-12 21:04 UTC; it was not marked failed or canceled. The later documentation commits change no code and did not trigger additional hosted checks.
-- Detailed issue-by-issue evidence and remaining gaps: [October 12 upstream audit](docs/upstream-audit-2026-10-12.md).
-
-## Upstream synchronization and integrity audit (2026-10-12)
-
-- Merged upstream `storytold/wordcraft` main at `159b84f54c74e9e82fb3109b758ae7dd6f4e3ab0` (v0.6.1), 181 commits after common base `46d5e99b3e82828f95ec87da92b2e1fc1db03b78`, into fork commit `1d7daa4098e85c9cf928696623ba38868deb8e02`. Backup branch: `backup/pre-upstream-sync-2026-10-12-1d7daa4`; merge commit: `d976573cd452dd821beb90466b7a2cdc7ae34e18`.
-- Reconciled upstream APIs with fork save/recovery, custom XML, chart package preservation, printing and layout features. Added tests for merged package validation and bibliography/custom XML name collisions; restored native ink preservation and rejected over-budget markup safely. Verification and 57 merge-resolution file details are in [the October 12 upstream audit](docs/upstream-audit-2026-10-12.md).
-- Issues #965, #963, #898, #966 and #916 remain open upstream. #933/#934/#935/#940/#923 are merged and included; #943 is closed unmerged and was not applied. Local CI and Linux release builds pass; hosted Packaging lint passed, with FreeBSD, Windows ARM64 and printing still running at last query. The installed binary remains `0.5.0 (dev)`; the validated source build is `0.6.1`. The issue/PR review, hosted run IDs and remaining gaps are in [the October 12 upstream audit](docs/upstream-audit-2026-10-12.md). Do not claim Word 365 compatibility.
-- The genuine Word 365 benchmark remains blocked. No private DOCX files were opened or processed.
-
 **Stage: alpha** · next: beta, ~15 points (60% → 75% ready for real work) and ~150–230 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** trivial (VML freeforms read and kept on save; previously trivial: progress log: consistent preferred cell widths; previously trivial: multi-paragraph field instructions no longer add blank lines; previously trivial: page-break-only list paragraphs hide their labels; previously trivial: progress log: grouped `flowChartOr` shapes draw their circle and crossing spokes; previously trivial: progress log: copies keep their formatting in other programs, #1523; previously trivial: progress log: privacy options on save, #1062; previously trivial: progress log: equation pictures in theme colours on Windows, #1002; previously trivial: symbol fonts, #776; previously trivial: the save prompt answers from the keyboard, #861; previously trivial: table column and row markers on the rulers, #700; previously trivial: table borders and the resize handle drag on the page, #217; previously trivial: formatting revisions landed, #41; previously trivial: Draw tab ink, #307, and Draw Table and Eraser, #303, landed: catalog 402/434; previously minor: readiness table with hours per audience; full number back to the additive weighted sum, 60%; mainstream and essentials numbers added; alpha gate checked; previously major: full re-measure against Word for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
-
-## Word 365 interoperability benchmark (2026-10-12)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** Full Linux/macOS/Windows package matrix passed on a2718489; workspace-crate cache update pending final validation · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
-
-
-- Added `cargo xtask interop inspect` and `cargo xtask interop compare` for bounded DOCX package fingerprints and explicit per-case changed-part allowlists. The contract flags removed, added, or changed package parts outside the manifest; it reports hashes and package metadata without claiming semantic validity.
-- Added a reproducible case manifest template and protocol in [the interoperability report](docs/word365-interoperability.md). It separates synthetic fixtures from Word-generated references and records a feature/evidence matrix and defect severity scheme.
-- The first execution attempt is **blocked**: no user-selected DOCX files have verified provenance and permission for processing; Word and Wine are unavailable in this Linux environment. The manifest has five blocked document classes, with no benchmark results reported. Word visual/editability/repair checks remain pending. Existing internal fixtures are synthetic only. Hosted FreeBSD/Windows ARM64 checks and independent visual comparisons are not yet verified for this benchmark commit.
-
-## GitHub Actions hardening (2026-10-11)
-
-- Replaced the four externally called reusable workflows with local, reviewable snapshots based on `craft-common-actions@8f081ff5db115de44313c9db09415c359bf2ca01`; all nested action references are now full immutable SHAs. Removed the nested `install-linux-deps@main` path and kept its package setup while calling the pinned, checksum-verifying nfpm action directly.
-- Changed workflow permissions to read-only by default. Only the release-publishing job receives `contents: write`, and only on the `release` branch. Pull-request and scheduled workflows do not receive release secrets or write permissions.
-- Default nfpm, Trunk and actionlint downloads have pinned SHA-256 checks. Rust `stable`, FreeBSD's rustup bootstrap, WiX/NuGet package bytes, OS repositories and hosted runner images remain mutable dependencies; see [security notes](docs/save-security.md). The source review is focused, not an independent supply-chain audit.
-- PyYAML parsing, actionlint 1.7.12, full-SHA existence checks, all six `cargo xtask ci` gates, Linux GUI/CLI release builds, and release-mode Windows GNU/macOS target checks passed. GitHub Packaging lint passed on the fork after fixing its ShellCheck finding. FreeBSD and Windows ARM64 runs on the same commit are still in progress; native release publishing was not triggered. This update has no Rust-source changes.
-
-## Error-bar editing (2026-10-12)
-
-- Extended chart inspection and the existing `chart.editData` transaction to edit only already-present fixed magnitudes and asymmetric custom numeric literals (`c:numLit`) with complete, exact per-point coverage. Scatter X/Y definitions are independent. Formula references, unsupported value types, duplicate/malformed definitions and mismatched arrays remain read-only with diagnostics.
-- The Chart Design dialog stages edits locally and routes Apply through the single chart transaction; Cancel makes no command call. Error-bar-only edits splice numeric values in chart XML without changing embedded XLSX values, chart caches, direction, caps, axis identifiers or unrelated XML. The engine's existing package replacement provides one Undo/redo action and recovery/save/reopen compatibility; preview/PDF refresh uses the current shared chart renderer.
-- Added synthetic mapper/transaction tests and UI request tests, plus engine coverage for rendering, Undo/redo, recovery, save/reopen and PDF export. Microsoft Word/Excel interoperability and custom formula-range mapping remain unverified/outstanding.
-
-## Upstream integration and security reports #678/#679 (2026-10-11)
-
-- Integrated upstream `main` at `2ffba93b5189410a415970be179dcf481092d756` (19 commits after the previous common commit) into fork base `f17dbb3e08c3534412f0f34d8b687f5ec707bf69`. The merge preserves chart package transactions, recovery, DOCX preservation and fork workflow hardening; compatibility follow-ups retain package-backed chart serialization while enabling upstream's model-only chart creation, linked text boxes and document-grid behavior.
-- Security report #678: no-path control rendering and screenshots now return PNG bytes inline; MCP UI tools consume them directly and no longer create/read fixed temporary paths. Explicit-path writes continue through the atomic writer.
-- Security report #679: HTML/Markdown import/export and Ctrl/Command-click navigation use shared scheme validation. Unsafe executable/local schemes, including control-character-obfuscated JavaScript, are dropped as links while visible text remains.
-- Added regression tests for unsafe URL schemes, import/export behavior, inline screenshot output and the MCP bridge's no-path calls. Local validation and hosted check results are recorded in [the current upstream audit](docs/upstream-audit-2026-10-11.md) after completion. Upstream issues #678/#679 remain open; their status is independent of fork mitigation. Issue #685 (Excel workbooks for newly created charts) remains out of scope and unresolved.
-- Open PRs #647, #626 and #617 remain unmerged; they were not auto-applied. No Microsoft Word/Excel interoperability claim is made.
-
-## Issue #685 — editable workbooks for inserted charts (2026-10-11)
-
-- Newly inserted charts now serialize chart caches as worksheet references and add a matching embedded XLSX worksheet with series names, category labels and numeric values. Scatter charts store each series' paired X/Y datasets in separate columns. Complete finite datasets must pass the existing validated mapper before writing; sparse datasets keep blank workbook cells and aligned caches, and the existing mapper explicitly classifies them read-only.
-- After save and reopen, generated charts retain their package-backed chart/workbook relationship and expose the existing Chart Design → Edit Chart Data workflow. Edits still flow only through `chart.editData` and its atomic synchronized cache/workbook transaction. Package-backed imported charts remain on their guarded preservation path.
-- Nameless series, empty datasets, invalid scatter X values and multi-series pie/doughnut input fail explicitly during chart writing rather than creating malformed relationships. Sparse/missing numeric values remain renderable and package-backed but are intentionally read-only under the existing numeric-only edit contract. Synthetic round-trip and mapper tests cover all current chart families; independent Microsoft Word/Excel application verification remains outstanding.
-
-## Chart-axis scaling and number formats (2026-10-11)
-
-- Extended the existing `chart.editData` transaction and Chart Design dialog with Auto/Manual minimum and maximum bounds and safe General, integer, decimal, percentage and scientific number formats. The chart parser already used these OOXML fields in its shared preview/PDF renderer; axis-only edits now feed that same path and do not change embedded XLSX data.
-- Controls are exposed only for uniquely resolved numeric value axes. Scatter charts distinguish X and Y; category axes are explicitly read-only. Logarithmic, reversed, malformed, duplicate and ambiguous axes reject edits. Unsupported existing custom number formats are preserved and not rewritten. Explicit major tick intervals remain unsupported because layout does not yet model `c:majorUnit` accurately.
-- Synthetic package, UI, engine, Undo/redo, recovery and save/reopen regressions were added. `cargo xtask ci` passed all six gates; Linux GUI/CLI release builds passed. The prior base commit `8aa01db` has successful hosted FreeBSD and Windows ARM64 checks; this new commit will receive its own hosted runs after push. No independent Word/Excel comparison was available; this is not a claim of application parity.
-
-## Chart-series formatting (2026-10-11)
-
-- Extended the same `chart.editData` command and Chart Design dialog with safe RGB series colors for validated bar/column, line, area, scatter, pie and doughnut structures, plus explicit line-width edits for line/scatter series. Scatter marker fills are editable when represented by one unambiguous simple RGB fill; pie/doughnut colors are editable only when `varyColors` is explicitly off. Changes splice only existing color/width attributes, preserve other OOXML formatting, and leave chart caches and embedded XLSX parts unchanged. Preview and PDF use the existing chart renderer.
-- Theme/gradient/transformed/implicit colors, ambiguous styles, varied pie slices and lines without one explicit width remain read-only. At this point, data labels were not yet represented end-to-end; later added below. Error bars have no rendering model. Synthetic package, family coverage, UI, rendering, engine Undo/redo, recovery, save/reopen and PDF tests were added. No independent Word/Excel comparison is available.
-
-## Scatter marker formatting (2026-10-11)
-
-- Added safe scatter marker editing to the existing Chart Design → Edit Chart Data workflow: explicit symbol, size and independent simple RGB fill. Supported symbols are circle, dot, square, triangle, diamond, star, plus, x, dash and none. Marker changes use the validated atomic chart transaction and are one Undo/recovery operation; they preserve unrelated chart XML and leave chart caches and embedded XLSX bytes unchanged.
-- New scatter charts now serialize explicit circle/5 pt marker settings. Imported charts without per-series markers keep a renderer fallback based on `c:scatterStyle`; WordCraft does not invent OOXML marker nodes when editing those imported charts. Unsupported or ambiguous marker structures remain read-only. Rendering uses vector marker geometry shared by preview and PDF.
-- `cargo xtask ci` passed all six gates. Standalone workspace tests passed **1502 tests, 0 failures, 1 ignored**; Linux GUI/CLI release builds and release checks for Windows GNU and macOS Apple Silicon passed. Hosted FreeBSD and Windows ARM64 runs both succeeded on `4b6f0f743fa4635caf8ff70a5d4780f33dad9f81`, the latest available hosted run during this audit; they do not include the marker changes from this task. Error bars remain unaudited beyond noting the absent rendering model; data labels, line dash editing and vector-PDF text verification remain future work. No independent Microsoft Word/Excel reference comparison was available.
-
-## Data-label editing and rendering (2026-10-12)
-
-- Extended the existing chart snapshot, `chart.editData` transaction and Chart Design dialog to edit explicit per-series value/category/series-name visibility and supported label positions for bar/column, line, area, pie, doughnut and scatter charts. The transaction changes only existing simple label `@val` attributes; it does not add label XML or alter chart caches or embedded XLSX data. Rendering uses cached values/categories and the same vector display list for preview and PDF.
-- Per-point custom labels, deleted labels, duplicate/unknown data-label structures and unsupported/missing properties remain preserved and read-only. Existing label styling, custom number-format and separator XML survive unchanged; preview currently uses default text styling/separation, and dense labels may clip. Only synthetic fixtures were available; no independent Word/Excel reference output was tested. Dash patterns and error bars remain unsupported.
-
-## Upstream synchronization (2026-10-11)
-
-- Integrated upstream `storytold/wordcraft` main through `dba6e66` (25 commits since shared base `e4b7d15`). The update adds configurable ribbon/Quick Access Toolbar and keyboard shortcuts, field-code commands, object contour/wrap-side behavior, drawing group/rotation fixes, equation and citation fixes, `.doc` and text-format import/export fixes, mail-merge fields, spelling vocabulary, interface sizing, Russian/Turkish localization, and CLI closed-output handling.
-- The merge retains fork-specific DOCX package guards and custom XML preservation, recovery, atomic saves, pagination, print adapters, academic editing, and chart/XLSX mapping and transactions. The validated editable chart subset now also includes simple scatter datasets with embedded workbook X/Y ranges; more complex scatter structures remain read-only.
-- Upstream's open PRs were reviewed but not merged. Synthetic tests and local builds are not independent Microsoft Word/Excel compatibility verification.
-- Merge commit: `f01498726e1a2421f72a8a21ebff646573f74d42`. `cargo xtask ci`: all six gates passed; workspace tests: **1,266 passed, 0 failed, 1 ignored**. Linux GUI/CLI release builds and release-mode `x86_64-pc-windows-gnu` / `aarch64-apple-darwin` compile checks passed. See [the upstream audit](docs/upstream-audit-2026-10-11.md) for open PRs/issues and residual risk.
-
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** Full Linux/macOS/Windows package matrix passed on a2718489; workspace-crate cache update pending final validation · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** trivial (progress log: caret inside ligatures, #1974; previously trivial: text typed into a content control takes the control's formatting; localized placeholder styles recognised; previously trivial: forms protection keeps its content controls: no inserting, Properties or Remove Content Control; previously trivial: long navigation headings wrap onto further lines within the pane, #3015; previously trivial: clearing a no-match font query keeps the recent heading visible, #2068; previously trivial: a word after a slash wraps whole, like Word, #2963; previously trivial: progress log: a header-cell picture watermark sits behind the text, #1775; previously trivial: symbols keep their font when the text font changes, #2036; previously trivial: opening a DOCX no longer copies its pictures; previously trivial: Add Font imports every selected font file, #1789); previously trivial (RTF export writes sections (gap 19); previously trivial: ODT export writes sections (gap 19); previously trivial: Read Aloud speaks each sentence in its own language, #1843; previously trivial: hint-reliant CJK outlines; previously trivial: Ctrl+wheel zoom no longer scrolls the document, #1743; previously trivial: progress log: Turkish case mapping in AutoCorrect, #1923; previously trivial: a mouse drag on a table leaves the view where it is, #1738; previously trivial: progress log: Hebrew field results and smart quotes, #1670; previously trivial: Backspace removes a selected table, rows or columns, #1844; previously trivial: progress log: mixed Hebrew/Latin text keeps its order in Word, #1543; previously trivial: progress log: web typing in non-Latin text no longer repeats, #1480; previously trivial: progress log: font family caches bounded and math font lookups follow font changes, #1354; previously trivial: `-->` AutoCorrect replacement, #2223; previously trivial: numbered headings, #1793; previously trivial: Navigation Find exposes Results, #2096; previously trivial: progress log: Columns on selected text, #2024; previously trivial: progress log: legacy outline, shadow, emboss and imprint text effects drawn, #2534; previously trivial: progress log: Indonesian proofing, #498; previously trivial: progress log: DOCX glossary documents (building blocks); previously trivial: progress log: Read Mode keeps the keyboard and shows whole, unobscured columns, #1772); previously trivial: progress log: font list entries of tall-ascent fonts no longer cut off, #2570); previously trivial: progress log: Split Cells and Convert Text to Table dialogs follow the Word check, #2592; previously trivial: a new source's Tag is made like Word's, three letters of the author and two digits of the year with a number added when taken, and an edit keeps the Tag, #2094; previously trivial: Web Layout fills the window width, #1876; previously trivial: progress log: Different First Page headers reachable from page 1, #2826; previously trivial: Language dialog keeps inherited proofing language and no-proof choices (#2717); previously trivial: progress log: web preferences kept between visits, #2132; previously trivial: progress log: undrawable private-use list bullets show the level's default bullet, #1683; previously trivial: progress log: `w:eastAsianLayout` kept on save; previously trivial: table style editor formats every part, #714); previously trivial: VML freeforms read and kept on save; previously trivial: progress log: consistent preferred cell widths; previously trivial: multi-paragraph field instructions no longer add blank lines; previously trivial: page-break-only list paragraphs hide their labels; previously trivial: progress log: grouped `flowChartOr` shapes draw their circle and crossing spokes; previously trivial: progress log: copies keep their formatting in other programs, #1523; previously trivial: progress log: privacy options on save, #1062; previously trivial: progress log: equation pictures in theme colours on Windows, #1002; previously trivial: symbol fonts, #776; previously trivial: the save prompt answers from the keyboard, #861; previously trivial: table column and row markers on the rulers, #700; previously trivial: table borders and the resize handle drag on the page, #217; previously trivial: formatting revisions landed, #41; previously trivial: Draw tab ink, #307, and Draw Table and Eraser, #303, landed: catalog 402/434; previously minor: readiness table with hours per audience; full number back to the additive weighted sum, 60%; mainstream and essentials numbers added; alpha gate checked; previously major: full re-measure against Word for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-18 · **Change:** trivial (long navigation headings wrap onto further lines within the pane, #3015; previously trivial: clearing a no-match font query keeps the recent heading visible, #2068; previously trivial: a word after a slash wraps whole, like Word, #2963; previously trivial: RTF export writes sections (gap 19); previously trivial: ODT export writes sections (gap 19); previously trivial: progress log: pasted blockquotes are indented paragraphs, #1270; previously trivial: progress log: print-area strings translated in every catalog; previously trivial: progress log: comments readable in the dark theme, #2045; previously trivial: progress log: ODT sections, #1379; previously trivial: progress log: table deletes, Change Case and Unlink Fields respect Track Changes and locked content controls, #1329; previously trivial: progress log: rounded rectangle corners, #1476; previously trivial: progress log: Save As type list, #1399; previously trivial: progress log: privacy options on save, #1062; previously trivial: progress log: equation pictures in theme colours on Windows, #1002; previously trivial: symbol fonts, #776; previously trivial: the save prompt answers from the keyboard, #861; previously trivial: table column and row markers on the rulers, #700; previously trivial: table borders and the resize handle drag on the page, #217; previously trivial: formatting revisions landed, #41; previously trivial: Draw tab ink, #307, and Draw Table and Eraser, #303, landed: catalog 402/434; previously minor: readiness table with hours per audience; full number back to the additive weighted sum, 60%; mainstream and essentials numbers added; alpha gate checked; previously major: full re-measure against Word for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Printing update:** 2026-10-12 · direct desktop printing through craft-print; details below.
 
 WordCraft aims for complete parity with Microsoft Word, then goes further on speed, openness and
 agent control. This page is the summary; the assessment is
@@ -326,34 +14,8 @@ agent control. This page is the summary; the assessment is
 
 ## Headline numbers (2026-10-10)
 
-## Alpha
-
-**What we mean by alpha:** someone can write, format and review real documents every day, open
-the .docx files they receive and send back files Word opens cleanly, on every desktop platform
-from a signed download, without losing work.
-
-| Alpha requirement | State |
-|---|---|
-| Editing, formatting, styles, lists, tables, headers/footers, references, review | done (first versions, tested) |
-| Pagination fidelity: wrap, row splitting, hyphenation, drop caps, line numbers, borders | done this arc |
-| Comments in margin balloons, track changes | done |
-| Never-crash standard (no panics, hostile-param fuzzing, panic guard) | done |
-| Autosave and crash recovery | AutoSave plus separate native recovery snapshots, restart restore/discard/text comparison; Linux crash tests pass, Windows/macOS power-loss verification outstanding |
-| **DOCX fidelity against a corpus of real-world files** (open, render, round-trip, fix) | Synthetic preservation regressions started; independent real-world corpus verification still missing |
-| Long footnotes that continue onto later pages | landed (40% page-area cap; continuation pages keep remaining lines visible). Multicolumn pagination now reserves note space page-wide and reflows earlier columns. Equivalent in-memory and DOCX-reopened notes match pixels when the in-memory story includes its OOXML self-reference mark. Word behavior, page-specific note styles and custom continuation separators remain unverified |
-| Balanced multicolumn layout | safe final-page paragraph balancing landed; complex-content and multi-page balancing remain open |
-| Print preview and desktop printing | shared-layout preview; Linux/macOS use CUPS, Windows PrintTicket/Windows.Data.Pdf adapter compile-checks; no physical printer verified, Windows app-level cancellation unavailable |
-| Signed builds for macOS, Windows, Linux, FreeBSD and web | pipeline written; **needs the GitHub remote and release secrets from the owner** |
-| Real app icon / mascot art | placeholder; **needs owner art** |
-
-So: alpha is roughly **85% of the way**, with about **20–25 hours** of agent work left, plus two
-owner actions (push to `github.com/storytold/wordcraft` and enable the release secrets, and supply
-  the icon art).
-
-## Parity by area
-
-| Area | Status | Parity |
-|---|---|---|
+| Number | Value | Kind |
+| --- | --- | --- |
 | Ribbon/menu catalog coverage | **487 / 502 (97.0%)** | measured (`cargo xtask parity` → [`docs/parity-checklist.md`](docs/parity-checklist.md)) |
 | **Feature breadth** (weighted, incl. dialog options, styles, languages beyond the ribbon) | **~80%** | estimated |
 | **Ready for real work** (full target) | **~60%** (55–63%) | estimated, additive weighted sum over the dimensions |
@@ -381,12 +43,10 @@ discounts and the user evidence (120 issues from outside users, 4 praise, 0 "swi
 
 **Why alpha:** the core workflows (write, format, styles, lists, tables, references, review, mail
 merge, open and save .docx) work end to end and ship as signed builds on every desktop platform
-and the web. **Why not beta:** DOCX has not been independently tested on a real-world corpus;
-unsupported package parts are guarded and preserved, but several features lack rendering or editing
-depth; pagination differs from Word (no Aptos-metric font or complex column balancing); formatting
-revisions remain incomplete; there is open field evidence of a startup crash and several hangs;
-desktop printing relies on the system PDF viewer instead of WordCraft printer controls. Gaps #1–#7
-in [`docs/gaps.md`](docs/gaps.md)
+and the web. **Why not beta:** DOCX has never been tested on real-world files; charts, SmartArt and
+OLE objects are dropped silently; pagination differs from Word (no Aptos-metric font, no column
+balancing or footnote continuation); content controls are lost; there is open field evidence of
+a startup crash and several hangs; no native printing. Gaps #1–#7 in [`docs/gaps.md`](docs/gaps.md)
 are the beta list. All six core workflows pass the
 [alpha gate](docs/roadmap.md#alpha-gate-core-workflows) end to end on macOS, with save and reopen;
 the two partial ones (real-world .docx, printing) complete, roughly.
@@ -411,62 +71,32 @@ the two partial ones (real-world .docx, printing) complete, roughly.
 
 | Area | Parity | Hours |
 |---|---|---|
-| M0 | Skeleton + vertical slice (model, layout, render, engine, Word-style UI, CLI, MCP, web) | **done** |
-| M1 | DOCX I/O | **done** (first version; corpus testing next) |
-| M2 | Home tab complete | **done** |
-| M3 | Insert tab | mostly done (chart/SmartArt rendering is partial; icons/3D missing) |
-| M4 | Layout + Design tabs | **done**; safe text-only column balancing added, complex-content fallback still open |
-| M5 | Tables | **done** (row splitting landed) |
-| M6 | References | first version done; long footnote continuation landed |
-| M7 | Review | **done** (margin balloons landed) |
-| M8 | View | mostly done |
-| M9 | Mailings | done (first version) |
-| M10 | File/Backstage | mostly done; native print preview and Linux CUPS submission landed; Windows native controls remain missing |
-| M11 | Draw + objects | text wrap and text boxes done; ink, rotation, grouping missing |
-| M12 | Formats breadth (PDF, ODT, RTF, HTML, MD, TXT) | **done** (first versions) |
-| M13 | Performance budgets | on track (1.4 ms relayout) |
-| M14 | 1.0 polish, packaging, signing | pipeline written; waiting on remote and secrets |
+| Typing, selection, clipboard, undo, find/replace | 85% | 8–12 |
+| Character and paragraph formatting | 82% | 8–12 |
+| Lists | 78% | 5–8 |
+| Equations | 75% | 4–8 |
+| Tables | 76% | 10–16 |
+| Styles and themes | 74% | 8–12 |
+| Review (comments, track changes, compare, protect) | 72% | 15–25 |
+| View | 72% | 6–10 |
+| Page layout and sections | 70% | 12–20 |
+| Mailings | 70% | 6–10 |
+| Headers, footers, page numbers, fields | 70% | 8–12 |
+| References (TOC, citations, bibliography, captions, index) | 65% | 12–20 |
+| Footnotes and endnotes | 60% | 5–8 |
+| Pictures, shapes, text boxes, WordArt | 60% | 20–30 |
+| Backstage, printing, options | 58% | 12–20 |
+| Right-to-left and complex scripts | 50% | 15–25 |
+| Proofing (spelling, grammar, thesaurus, languages) | 40% | 20–40 |
+| Accessibility | 35% | 15–25 |
+| East Asian typography | 25% | 15–25 |
+| Charts, SmartArt, Draw/ink, 3D models, icons | 3% | 70–110 |
+| Agent control (CLI, MCP, control channel, macros) | beyond Word | — |
 
-## Recently landed
-- Phase 6C scientific error bars: fixed magnitudes and exact-length custom `numLit` arrays remain editable. Existing custom `numRef` ranges are editable only when the mapper validates contiguous single-column A1 literal numeric cells, point count/order, and exact agreement with `c:numCache`. `chart.editData` stages workbook-cell and error-cache updates together, revalidates the completed package, and preserves unrelated DOCX/XLSX parts. Scatter X/Y errors are independently editable. Engine integration covers preview refresh, Undo/redo, recovery, save/reopen and PDF; formula cells, external/missing sheets, malformed/overlapping ranges and cache mismatches remain read-only. Synthetic regressions only; no Word/Excel reference output was available.
-- Phase 6C.5C axis-title rendering: the DOCX chart importer resolves unambiguous physical Cartesian axes from chart `axId` references and axis `axPos`, reads supported rich-text defaults (font, size, color, bold and alignment), and draws horizontal and rotated vertical axis titles for bar/column, horizontal bar, line, area and scatter charts. Layout reserves space around tick/category labels and all legend placements; long titles are clipped with an ellipsis inside the chart bounds. Rotated chart text uses the shared display-list transform, so raster and PDF output share the same path. Pie/doughnut, combined/secondary/ambiguous axes, unsupported rich styling and arbitrary title rotations use no axis-title drawing or a documented default-style/orientation fallback; source OOXML remains intact. Synthetic parser/layout/raster/PDF, immediate-edit-refresh, Undo/redo and DOCX save/reopen tests pass. No Word reference rendering was available.
-- Chart title formatting increment: the existing chart edit transaction and Chart Design data dialog can update existing single-run rich-text chart titles and physical horizontal/vertical axis titles for validated Cartesian chart families. It splices only the title text node, preserving run/title formatting, axis IDs and other chart XML; the embedded XLSX remains byte-identical for formatting-only edits. Pie/doughnut expose no axis controls. Missing, multi-run, ambiguous-axis or otherwise unsupported title structures stay read-only; adding/removing titles is not supported. Engine tests cover Apply, Undo/redo, rerender and DOCX save/reopen using synthetic fixtures. Axis-title preview rendering was added in Phase 6C.5C. No independent Word/Excel comparison was available.
-- Chart formatting increment: the existing Edit Chart Data dialog can reposition a supported chart's explicitly declared legend to left/right/top/bottom. It uses the existing validated `chart.editData` transaction and shares Undo/redo with data changes; formatting-only edits leave XLSX bytes unchanged. The chart formatter tests cover all seven validated chart kinds and reject absent/unsupported position attributes. Chart/axis titles and axis scaling/number formats are supported as documented above. Series colors and explicit line widths are supported only for safe existing OOXML styles; markers, data labels and constrained fixed/literal error-bar values are editable as documented, while dash editing and formula-driven/statistical error bars remain unsupported. Replaced ShellCheck-flagged `ls` file listings in Linux packaging scripts with bounded `find` listings. Synthetic verification only; no independent Word/Excel comparison.
-- Native save hardening: document serialization completes before disk writes; native DOCX packages are parsed from the generated bytes before replacement. Saves, PNG exports, control screenshots and desktop preferences use random, exclusive sibling files, flush/sync before replacement, preserve existing basic permissions, refuse symlink destinations, and clean up only the staging file they created. Recovery already uses private `create_new` files and immutable publication; printing and control keys use exclusive private files. GitHub reusable workflows are pinned to the reviewed `craft-common-actions` commit `8f081ff5`; no mutable action refs remain in this repository's workflow call sites. Linux runtime tests pass; Windows/macOS behavior and nested actions inside the shared workflows still need independent review. See [save and workflow security notes](docs/save-security.md). This does not constitute an independent security audit.
-- Phase 6C chart expansion: the validated mapper and atomic edit transaction support simple horizontal bar charts (`barDir="bar"`), line, area, single-series pie and single-series doughnut charts alongside vertical columns (`barDir="col"`). The later Phase 6C.3 extension adds scatter datasets; only synthetic OOXML was tested, and Word/Excel interoperability is unverified. Multi-series pie/doughnut remain read-only.
-- Phase 6C.2 editor integration: `chart.editData` updates validated embedded column charts as one engine Undo/redo step; recovery, atomic saving, save/reopen and immediate cached-chart rerender are covered. The UI now provides Chart Design → Edit Chart Data and a chart context-menu action. `chart.inspectData` supplies read-only validated values; unsupported charts open with an explicit reason, and Cancel leaves editor state untouched. The spreadsheet-like form edits names, categories and finite values through the engine command. Phase 6C.3 extends the same dialog with paired X/Y values for supported scatter series. The dialog submits its original validated snapshot so concurrent edits are rejected as stale. Only synthetic OOXML fixtures were tested; Word/Excel interoperability is unverified.
-- Phase 6C.3 scatter editing: simple embedded scatter charts with one or more series are editable when each series name, X range and Y range resolves to distinct cells in the same worksheet, each X/Y range is a contiguous single-column numeric range of equal nonzero length, and chart caches exactly match workbook values. The dialog displays paired X/Y numeric columns. Formula cells, external links, noncontiguous/malformed ranges, overlapping cells, mismatched caches, extension markup and unsupported package structures remain read-only. The atomic transaction updates X/Y cache points and exact workbook cells together, then re-maps the output before returning it. Mapper, transaction, UI serialization, and engine tests cover multi-series mapping, rejection, render refresh, Undo/redo, recovery, DOCX save/reopen and unrelated-part preservation. Verification used synthetic fixtures; Microsoft Word/Excel interoperability is unverified. `cargo xtask ci` passed all six gates, workspace tests passed (**1,280 passed, 0 failed, 1 ignored**), Linux GUI/CLI release builds passed, and release-mode Windows GNU/macOS target checks passed.
-- Phase 6C.2 chart-data audit: standard bar/column, line, area, pie, doughnut and scatter charts render cached values; chart model values and embedded XLSX parts remain read-only. File Info/open/save warnings now distinguish rendered cached-data charts from opaque placeholder charts. Added a DOCX save regression verifying that the chart part and workbook remain unchanged. Safe editing still needs a model for series/range formulas and a guarded package-part patch path; formulas, shared strings, multiple worksheets and external data are not modified. See [DOCX compatibility](docs/docx-compatibility.md).
-- Phase 6C.2 follow-up audit from `13135e9`: editing remained disabled until the validated series-to-cell mapper, atomic package transaction and engine command were in place. The dialog now consumes that command boundary and does not patch DOCX/XLSX data itself. Unsupported chart structures remain read-only and are not guessed.
-- Phase 6C.2 read-only mapping foundation: added a strict internal mapper for simple embedded column charts. It resolves workbook/worksheet relationships and contiguous single-column A1 ranges; maps series names, repeated/shared or inline category labels, and numeric values to exact sheet parts/cells; and verifies cache count, order, type and value. Formula cells, external relationships, unsafe/missing parts, unsupported chart/range forms and mismatches are rejected with a diagnostic. This phase is read-only: no package bytes, chart caches, workbooks or editor state are mutated, and chart editing remains unimplemented. Five mapping unit tests and an existing preservation integration test cover the subset; no Excel/Word interoperability test was available.
-- Phase 6C.2 transaction foundation: added an internal, immutable-input chart package transaction bound to the original DOCX SHA-256 and a freshly revalidated mapping. It splices only mapped chart-cache and XLSX cell/shared-string text, then validates both nested and outer packages and rechecks cache/workbook consistency before returning output. Inline strings, safe shared strings, multiple series, category labels and numeric values are covered; stale plans, formula cells, external data, cache mismatches, conflicting edits, rich shared strings and unmapped shared-string aliases fail without output. Nine focused mapper/transaction unit tests cover successful updates and rejection cases, including byte-level preservation of unrelated uncompressed parts. No UI, editor/Undo/recovery integration or independent Excel/Word testing is included.
-- Phase 6C audit: table construction/editing, cell formatting, resizing, merge/split, captions, repeated headers, row splitting and floating-image wrapping already exist. Charts render cached values and SmartArt reuses saved drawings, but neither is data-editable; embedded workbook data is preserved and is not synchronized with WordCraft edits. Fixed split-cell allocation for horizontal spans and reject vertical-merge splits that cannot be safely updated row-by-row. Four regressions cover grid/content distribution, DOCX save/reopen and safe rejection. Chart data editing, SmartArt editing, captions refresh automation and complex floating-object positioning remain open. See [DOCX compatibility](docs/docx-compatibility.md).
-- M6: WordCraft-managed citation insertion refreshes existing bibliographies; source replacement refreshes matching citation fields and generated lists; deleting an actively cited source is rejected. The Update Citations and Bibliography command refreshes after manual citation deletion/reordering. Unresolved native tags produce an actionable status while retaining their cached result. Regression coverage confirms an external Zotero ADDIN field and preference property remain unchanged during native style/source refresh. See [citation compatibility](docs/citation-compatibility.md). This is synthetic internal verification only; no Zotero, Mendeley, CSL processor or Microsoft Word application was used.
-- M6B: Source records now retain DOI, ISBN, issue, edition and opaque imported metadata. Added bounded BibTeX/CSL JSON interchange, a searchable source manager with editable metadata and import/export controls, and RIS DOI mapping. Format and engine regression tests cover Unicode and metadata round-tripping, malformed/oversized input handling, source merge, refresh and Undo. Direct interoperability with Zotero, Mendeley, CSL processors and Microsoft Word remains unverified.
-- M6C audit: Compared the Rust CSL processor and current Citum Rust engine/migration path. Neither is a safe drop-in production CSL 1.0.2 formatter for this build: citeproc-rs is still documented as WIP with incomplete suite results and an inactive upstream; Citum uses a distinct style model and explicitly best-effort CSL migration. No formatter dependency or style file was added. Keep the four built-in styles labeled as limited local formatters; see [CSL processor assessment](docs/csl-engine-evaluation.md). Next gate is selecting a maintained processor with a measurable conformance baseline and a rich-field/document adapter.
-- M1: Preserve document-attached custom XML/bibliography data, properties, dependent relationships and content types with bounded graph traversal. Repeated round-trip, hostile-input and multi-page raster/Undo regressions added; independent Word verification remains pending.
-- M5: Drag unmerged column borders and unsplit row borders to resize tables, with one undo step and Escape cancellation (#217, local fix).
-- M7: Accept/Reject resolves tracked paragraph breaks; DOCX preserves their revision tags across saves (#229, local fix).
-- M9: Select Recipients opens a CSV entry dialog; invalid input stays open for correction (#240, local fix).
-- Right-to-left and Persian text: bidi reordering (UAX #9), Arabic-script shaping, right-to-left
-  paragraphs (Left-to-Right / Right-to-Left Text Direction), visual arrow keys, `w:rtl`/`w:cs`/`w:szCs`
-  /`w:bCs`/`w:iCs`/`w:rFonts w:cs`/`w:lang w:bidi` round-trip, Persian font substitutes.
-- Ukrainian interface catalog: all existing 771 labels, Ukrainian locale detection and a persisted language choice (#85).
-- Brazilian Portuguese interface catalog: all existing 771 labels, `pt-BR` locale detection and a persisted language choice (#127).
-- Text wraps around floating pictures and shapes; text boxes lay out their own text.
-- Upstream v0.4.0 adds chart and SmartArt rendering, password-protected DOCX open/save, drawing rotation/flipping, and equation support. Unsupported package content remains guarded and preserved when editing cannot safely reproduce it.
-- Table rows split across pages between lines (Can't Split honoured, header rows repeat).
-- Drop caps; automatic hyphenation with Word's 0.25" hyphenation zone; soft hyphens.
-- Page borders measured from the page edge, line numbers, vertical alignment, column separators.
-- Comment balloons in a markup area beside each page, with leader lines to their anchors.
+Weights and evidence per area: [docs/target-app-parity.md](docs/target-app-parity.md#feature-areas).
 
-## Next
-See [production audit](docs/production-audit.md): protect DOCX data and add durable crash recovery, then complex-content column balancing, native printing and drawing depth. No independent Word 365 parity certification is available.
+## Languages
 
-
-- M14: Native file dialogs run asynchronously; delayed responses are cancelled after document replacement (#94, PR #246 plus regression guard).
-
-- M14: Release font inputs include Simplified Chinese; native UI can use installed CJK fallback faces (#241, PR #248).
 | Language | Code | Status | UI strings |
 |---|---|---|---|
 | English | en | full | 100% |
@@ -474,43 +104,145 @@ See [production audit](docs/production-audit.md): protect DOCX data and add dura
 | Spanish | es | partial | ~95% |
 | Hindi | hi | none | 0% |
 | Arabic | ar | none (document shaping and bidi work; no mirrored UI) | 0% |
-| French | fr | partial (interface) | ~95% |
+| French | fr | partial (interface complete, native-speaker reviewed; no proofing) | 100% (2,615 entries) |
 | Portuguese | pt-br (pt-PT none) | partial | ~95% |
 | Indonesian | id | none | 0% |
 | Japanese | ja | partial | ~95% |
 | German | de | partial (#574) | ~95% |
-| Korean | ko | none | 0% |
+| Korean | ko | partial (interface catalog; proofing unavailable) | 100% (2,463 entries) |
 | Vietnamese | vi | partial (#1434) | ~95% |
 
-Also shipped: Traditional Chinese (`zh-hant`), Ukrainian (`uk`), Serbian (`sr`, `sr-latn`, #250), Russian (`ru`) and Polish (`pl`), all partial (~95%). Bulgarian (`bg`) covers everything the interface audit finds (2,419 entries). Estonian (`et`), Italian (`it`, #594) and Czech (`cs`) now have complete interface catalogs, and Turkish (`tr`) a complete 2,325-entry one (every key of the Russian catalog), all with
-system-locale selection and a saved language choice (Italian also has 51 strings none of the others had yet); Estonian, Turkish, Italian and Czech proofing are not included. Hungarian (`hu`) has a
+Also shipped: Traditional Chinese (`zh-hant`), Ukrainian (`uk`), Serbian (`sr`, `sr-latn`, #250), Russian (`ru`) and Polish (`pl`), all partial (~95%). Bulgarian (`bg`) covers everything the interface audit finds (2,419 entries); Swedish (`sv`) covers that too, plus 44 newer strings no other catalog has yet (2,504 entries). Estonian (`et`), Italian (`it`, #594) and Czech (`cs`) now have complete interface catalogs, and Turkish (`tr`) a complete 2,325-entry one (every key of the Russian catalog), all with
+system-locale selection and a saved language choice (Italian also has 51 strings none of the others had yet); Estonian, Turkish and Italian proofing are not included. Hungarian (`hu`) has a
 complete 2,419-entry catalog, also without proofing. Vietnamese (`vi`, #1434) has a complete
 2,448-entry catalog, also without proofing.
-Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenation), chosen per run from its language. Word ships
+Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenation), plus Czech and Indonesian (system Hunspell spelling, generic checks), chosen per run from its language. Word ships
 30 interface languages and proofing for ~50. Detail: [docs/localization-parity.md](docs/localization-parity.md).
 
+## Upcoming
 
-- M8: Interface theme can follow the operating system, with persisted Light/Dark/System choices (#115, PR #249).
+Ranked, to beta (detail and remaining milestones in [docs/roadmap.md](docs/roadmap.md)):
 
-- Phase 4C step 1: layout reports horizontal/vertical content-boundary overflow and text-box clipping by page, element and severity. The desktop status bar keeps a localized warning visible, identifies the first affected element and jumps to its page. Oversized objects remain intact; no automatic resize or move occurs. See [pagination audit](docs/pagination.md).
+1. Review and merge the ~45 open PRs that already close gaps (owner).
+2. DOCX real-world corpus: open, render, round-trip, compare with Word (30–50 h).
+3. Preserve charts, SmartArt, OLE and ink through a round trip with fallback pictures (10–15 h).
+4. Stability sweep of the open crash, hang and write-failure issues; autosave soak test (20–30 h).
+5. Pagination fidelity: column balancing, footnote continuation, compat options, comparison
+   harness; an Aptos-metric font decision (30–50 h + owner).
+6. Formatting revisions and content controls (12–18 h); native printing (6–10 h); dialog depth
+   (20–30 h).
 
-- M6: Mendeley tab imports RIS exports, searches references, inserts citations/bibliographies and refreshes them; source libraries survive DOCX saves. Cloud sign-in and Mendeley Cite field editing remain future work.
-- Phase 6A: equation import marks unmodeled OMML and blocks edits that would discard it; supported equation structures remain editable. See [equation compatibility](docs/equation-compatibility.md); Microsoft Word comparison remains unavailable.
-- Phase 6A.2: automatic equation numbers no longer leak the `#` marker into DOCX output; expected sequence numbers restore editable marks and right-aligned layout on reopen. Equation-caption cross-references update through `SEQ`/`REF` fields, and broken references clear stale cached results. OMML-number references, stable equation IDs and section-based numbering remain gaps.
-- Phase 6A.2: automatic equation numbers no longer leak the `#` marker into DOCX output; expected sequence numbers restore editable marks and right-aligned layout on reopen. Equation-caption cross-references update through `SEQ`/`REF` fields, and broken references clear stale cached results. OMML-number references, stable equation IDs and section-based numbering remain gaps.
+## Progress log
 
-## Phase 2 — professional document recovery (2026-10-10)
+Imported Word 97–2003 `.doc`/`.dot` files now ask for a supported DOCX target on interactive Save (#2445). Save before Close waits for that write; cancel or failure keeps the draft and original file. This does not add binary Word output. Late Save As answers are rejected before writing if automation has replaced the document.
 
-- Arc 1: native immutable recovery archive foundation, complete editor/media/passthrough snapshots and exact source DOCX retention. Restoring requires Save As; incomplete writes are ignored and live sessions are protected by OS locks. Storage regression tests include abrupt process exit and corrupted archives. Automatic scheduling and the restore/discard/compare interface remain for arc 2. See [recovery storage contract](docs/recovery.md).
+- 2026-10-19: Restrict Editing: with Filling in forms enforced, inserting content controls, their Properties and Remove Content Control are refused, as in Word (it greys them out), so a form's fields stay as they are and only their content is filled in.
+- 2026-10-19: Content controls: text typed over a placeholder takes the control's own run properties (`w:sdtPr/w:rPr`, ECMA-376 §17.5.2.27), as in Word, and the placeholder style is recognised by its built-in name "Placeholder Text" whatever its localized id (German Word: `Platzhaltertext`), so entries in forms from localized Word no longer stay grey.
+- 2026-10-15: Find opens Navigation on Results; editing the query restores Results after manual Headings/Pages navigation. Typed and selected-text searches retain document contents (#2096).
+
 | Date | What landed |
+| 2026-10-19 | Save As, Export and Open no longer do nothing on Linux desktops whose file chooser portal fails to show its dialog (#2999): a "cancel" quicker than anyone could make one asks again without the parent window, then opens the built-in file browser. |
+| 2026-10-18 | Long navigation headings wrap onto further lines inside the resizable pane instead of ending in an ellipsis: the row grows with the text and the pane keeps its width (#759, #3015). |
+| 2026-10-18 | Clearing a font query with no matches keeps Recently Used Fonts visible at the top of a scrollable list. The initial scroll position no longer skips its heading; measured keyboard scrolling is unchanged (#2068). |
+| 2026-10-17 | Edit Recipient List finds records (#1576): a Find in list box hides rows with no cell containing the text (any case) and counts the matches, and "Show only records that will be merged" hides the rows the filter leaves out; both only change the view. Rows are striped, and edits and removes go to the right record however the grid is narrowed |
+| 2026-10-14 | DOCX row table border exceptions render and survive saving. Explicit cell borders win; a row exception does not change other rows. |
+| 2026-10-14 | Tab stops edited on the ruler: the corner selector picks Left/Center/Right/Decimal/Bar, a click sets a stop (Alt skips the snap), dragging moves it with a guide line and position tooltip, dragging off the ruler clears it; markers draw per kind and mirror for RTL; one `para.tabs` call and one undo step per gesture |
+| 2026-10-12 | Fields keep `w:dirty` through DOCX saves (#877): a begin marker flagged by a generator that couldn't compute a result (pandoc-style TOC placeholders) keeps the flag on open/save — as a buffered field or a range field — so Word still refreshes it on open; computing a result (Update Field, Update Table) clears it, like Word's F9 |
+| 2026-10-18 | Symbols keep their font (#2036): a `w:sym` or Insert › Symbol character in Wingdings, Symbol or Webdings remembers its symbol font apart from the text's font, so selecting all and changing the font (or Clear Formatting) no longer turns the symbols into boxes; saved back to DOCX as `w:sym`, so Word shows them too. Typed text and the Format Painter don't pick up the symbol font. |
+| 2026-10-16 | `wordcraft-cli run --script FILE.json` (`-` for stdin) runs a JSON list of commands, then saves to one or more outputs (docx and pdf in one run); errors name the command number and id and nothing is saved, #1963 |
+| 2026-10-17 | Restrict Editing holds for structure too (#1327): an exception inside a table cell no longer lets table, row or cell formatting change the protected rest of the table; formatting limited to styles refuses Paste Formatting, table shading, borders, cell alignment, cell margins, text direction, table-style edits and locked table styles; loading, filtering or sorting recipients no longer rewrites merge-field results in a protected document. |
+| 2026-10-18 | Manage Sources › Import… (#2640) reads a Word bibliography file (`b:Sources`: Word's own `Sources.xml` master list) into the document: the tags, names, kinds and fields Word saves are read by the same code that reads the bibliography custom XML part of a `.docx`, a tag already in the document is left alone (an import never overwrites an edited source), an untagged source gets a tag the way a new one does, the whole import is one undo step, and a file that isn't `b:Sources` is refused. |
+| 2026-10-14 | RTF export writes every section (gap 19): `\sect` ends each section and `\sectd` carries its break type, page size and orientation, margins, columns, page numbering and title page, so multi-section documents survive an RTF round trip |
+| 2026-10-14 | `ASK` and `SET` fields no longer show their stored result on the page or in PDFs (#1765): like Word, they only assign text to a bookmark and draw nothing; the stored result is kept and saved |
+| 2026-10-15 | Table rows with an at-least height start the next page whole when less than their minimum is left on a page that already holds something, so one-row-per-page booklets keep their pages; rows taller than a page split from the top of the next page and repeated header rows go with the row (#1742) |
+| 2026-10-16 | Strict OOXML line heights render as Word renders them (#2329): `w:line="13.90pt"` under `lineRule="auto"` is a height read through twips (13.90 × 20 = 278; the 1.1583 multiple Word shows), not the 13.9 multiple the bare transitional number counts, so a Word 2024 file with 13.9 lines of line spacing opens at Word's 1 page with matching baselines instead of 10 |
+| 2026-10-15 | RTF keeps more tracked changes (gap 19): tracked paragraph marks (a `\par` inside a `\revised`/`\deleted` group) and character and paragraph formatting changes (`\crauth`/`\crdate` with `\oldcprops`, `\prauth`/`\prdate` with `\oldpprops`) are read and written, so their balloons and Accept/Reject survive an RTF round trip |
+| 2026-10-14 | ODT export writes sections (gap 19): every new-page section gets its own page layout and master page (the first stays "Standard"), named by its first paragraph or table with the page-numbering restart; a continuous section with columns is written as a columned `text:section`, so a landscape, two-column or restarted part survives a save as .odt |
+| 2026-10-14 | A bulleted or numbered list item that starts with a lower-case word no longer gets the grammar squiggle for a missing sentence capital (#1741): list items are often fragments, so the sentence-capital rule (every proofed language) skips the first word of a list paragraph (own or style numbering); later sentences in the item are still checked |
+| 2026-10-15 | The caret, clicks and selection edges fall between the letters of a ligature (fi, ffi, lam-alef), as in Word: the glyph's advance is shared evenly among its letters, mirrored in right-to-left text (#1974) |
+| 2026-10-16 | The Spike, as in Word: Ctrl+F3 (⌘F3 on macOS) cuts the selection and adds it to the end of the Spike, each piece followed by a paragraph mark; Ctrl+Shift+F3 (⌘⇧F3) inserts everything collected, in order and with its formatting, and empties the Spike. The clipboard is left alone; each is one undo step. The Spike is the AutoText entry "Spike", so Insert › Quick Parts inserts it without emptying it. It lasts for the session (Word keeps it in Normal.dotm) |
+| 2026-10-16 | Update Field is offered on a table of contents after a save and reopen, and repeated save and update adds no blank line (#2182; the flow in that report already worked since #1197) |
+| 2026-10-16 | DOCX two lines in one and horizontal in vertical (`w:eastAsianLayout`: id, combine, brackets, vert, vertCompress) are read and kept on save, in runs and character styles, instead of being dropped. Layout doesn't apply them yet. |
+| 2026-10-16 | Read Aloud speaks Russian, Ukrainian, Greek, Arabic, Hebrew, CJK and Thai text with a voice for its language instead of spelling out letters (#1843): the sentence's language comes from its run's tag (`w:bidi` for right-to-left text) or, when that disagrees with the script, from its letters, even when English letters outnumber them; Windows reads the text as UTF-8 and picks an installed voice of that language, macOS `say -v` and Linux `espeak -v` get the same language. The user's own voice stays whenever it already speaks the language (English documents read exactly as before), and a voice espeak lacks falls back to the default voice instead of silence. Not run on Windows or macOS here. |
+| 2026-10-16 | Hint-reliant CJK fonts execute TrueType contour assembly; Windows DFKai-SB no longer loses strokes. Synthetic local-font regression; no font binaries bundled. |
+| 2026-10-16 | Ctrl/⌘+wheel only zooms: a coast or wheel notch still gliding no longer scrolls the page on top of the zoom, which keeps the page point under the pointer (#1743). |
+| 2026-10-15 | AutoCorrect follows Turkish and Azerbaijani case mapping: `istanbul` → `İstanbul`, `ılık` → `Ilık`, `İNgilizce` → `İngilizce` with no combining dot (#1923) |
+| 2026-10-16 | Releasing a table drag with the mouse (column or row border, move handle, selection areas) leaves the view where it is instead of scrolling back to the caret (#1738) |
+| 2026-10-16 | Hebrew in fields and quotes (#1670): a STYLEREF (or any field) showing right-to-left text such as "פרק א" reads right to left in headers and the body instead of reversed; smart quotes in Hebrew pinned to Word's logical-order result (“ before, ” after, ” in acronyms like צה"ל) |
+| 2026-10-15 | Backspace with a whole table selected removes it, as in Word, and selected whole rows or columns go the same way; Delete clears them and keeps the table. A selection that covers a table and the paragraph before or after it removes the table, also when it starts inside the table or the table is nested (#1844) |
+| 2026-10-15 | Image size limits are checked before allocating (#1321): a picture whose header declares more RGBA bytes than the 512 MiB budget is refused before decoding (render and PDF share one helper in `wordcraft-geom`), and page rasters are capped at 100 million pixels in total, scaled down rather than only per side. |
+| 2026-10-15 | Saved DOCX files keep the order of mixed right-to-left and left-to-right text in Word: Hebrew around a Latin name, numbers, brackets or an e-mail address no longer changes places, and Word reports the Hebrew as Hebrew rather than Arabic (#1543). |
+| 2026-10-15 | Web: typing in Cyrillic or another non-Latin script no longer repeats text. WordCraft now honours the input method's request to erase around the caret before retyping (#1480). Chrome can still move the hidden text field's caret, so later letters may still land out of order. That cause is still open |
+| 2026-10-15 | Equations: typing `V_dd` or `x^ab` and pressing Space keeps `dd` and `ab` whole in the subscript or superscript, like `V_(dd)`, as Word for Mac does; Linear format shows the bare form |
+| 2026-10-15 | Plain text pasted from another program keeps the formatting of the paragraph it lands in: Paste inserts it as Keep Text Only does, so every pasted line, empty lines too, becomes a paragraph with that paragraph's direction, style, alignment, indents and list, and the text after the caret keeps them. The lines after the first had default formatting, so pasting several lines into a right-to-left paragraph turned all but the first left-to-right |
+| 2026-10-14 | Add Font… imports every file selected in the file chooser (#1789), not just the first: the desktop dialog and the web picker are multi-select, each file is added, a bad file is reported ("Added 11 fonts; 1 couldn't be read: X.ttf") without stopping the rest, and one pick adds at most 2,000 (the status line counts the skipped). On the web each font is added and reported on its own, with no single summary line. The built-in file browser still picks one file. |
+| 2026-10-15 | Additive paragraph spacing retains the full before-space after a section page break; ordinary overlapping spacing is unchanged. |
+| 2026-10-14 | DOCX row table border exceptions render and survive saving. Explicit cell borders win; a row exception does not change other rows. |
+| 2026-10-14 | Tab stops edited on the ruler: the corner selector picks Left/Center/Right/Decimal/Bar, a click sets a stop (Alt skips the snap), dragging moves it with a guide line and position tooltip, dragging off the ruler clears it; markers draw per kind and mirror for RTL; one `para.tabs` call and one undo step per gesture |
+| 2026-10-12 | Fields keep `w:dirty` through DOCX saves (#877): a begin marker flagged by a generator that couldn't compute a result (pandoc-style TOC placeholders) keeps the flag on open/save — as a buffered field or a range field — so Word still refreshes it on open; computing a result (Update Field, Update Table) clears it, like Word's F9 |
+| 2026-10-15 | Exact line spacing keeps the run font baseline around tall equations; automatic and minimum spacing still grow for math. |
+| 2026-10-16 | Zero-extent drawing anchors contribute no inline font height. |
+| 2026-10-16 | Control-channel keyboard and text input reaches the focused widget while the native window is inactive, without activating it; normal widget targets, dialogs and document protection remain in force (#2420) |
+| 2026-10-15 | Hide Quick Access Toolbar (#1945): the toolbar's menu ends with Hide Quick Access Toolbar, as Word's does; the ribbon's right-click menu and Customize Ribbon › Quick Access Toolbar offer Show Quick Access Toolbar; kept between runs; `ui.quickAccessToolbar {"value"?}` for scripts and MCP |
+| 2026-10-15 | Rulers: the numbers thin out as the page shrinks on screen (every 1, 2, 4… units, at least 30 px apart, the small ticks at least 4 px apart), give way to the indent, tab and column markers, and the margins get ticks only; both rulers span the caret's page at its own scale in One Page and Multiple Pages and follow the caret to another page (#1878) |
+| 2026-10-15 | Spelling as you type no longer flags the word being typed; the squiggle comes when the word ends or the caret leaves it, as in Word (#1552) |
+| 2026-10-15 | Text Highlight Color: No Color becomes the Highlight button's choice, as in Word, so the next click on the button removes highlighting instead of applying the colour picked before; the ribbon and the mini toolbar share one menu (#2105) |
+| 2026-10-16 | Footnote and endnote editing keeps the body and active note text at normal opacity (#2545), without changing document colours or print/PDF output. |
+| 2026-10-16 | A picture watermark in a header that starts with a table is drawn centred on the page behind the body text, on every page, instead of in the header's cell at the top of the page (#1775); `layoutInCell="0"` and VML `o:allowincell="f"` survive save and reopen |
+| 2026-10-17 | Ribbon hover hints: a disabled control says why (the command's own reason), split-button arrows, menu buttons and the font, size and outline boxes have hints, and hints show on keyboard focus (#1086). |
+| 2026-10-17 | Insert › Drop Cap is a menu (None, Dropped, In margin, Drop Cap Options…); the dialog sets position, font, lines to drop and distance; letters in the margin; DOCX keeps them (#2601). |
+| 2026-10-16 | An otherwise empty section starting a new page retains its paragraph line before a continuous section, matching an original native Word control. |
+| 2026-10-16 | Equations from Word files keep all their content (#1273): math straight in the body or a table cell, math behind `mc:AlternateContent Requires="m"`, runs inside hyperlinks, simple fields and markup-compatibility blocks within an equation, and `w:sym`/Symbol-font characters in math; operators, delimiters and accents the math font lacks come from a fallback font. Every ECMA-376 §22.1 element is pinned by a coverage test. |
+| 2026-10-16 | Captions and title pages (#1230): Insert Caption… on the right-click menu of pictures, shapes, text boxes and charts, the caption going under (or over) the object in its own cell or text box; Page Setup's Different First Page and Different Odd & Even Pages check boxes, so a title page can go without its page number |
+| 2026-10-17 | SECTIONPAGES includes shared continuous-section pages. A native original control confirms a section starting on page 1 and continuing on page 2 reports 2. |
+| 2026-10-17 | File › Print's Scale to paper size (#2108): pick Letter, Legal, A4 or any Layout › Size paper and every page is scaled to it and centred, the paper turned to each page's orientation, in the preview, the print job (with the spooler's media) and Save these pages as PDF; the document keeps its page size. `paper` param on `ui.print`/`file.printPdf` |
+| 2026-10-17 | Non-overlapping body floating tables clear header tables. Original native controls distinguish never-overlap from allowed overlap. |
+| 2026-10-14 | Comment text being typed is no longer lost or misplaced (#1348): an edit or reply the document refuses (for example read-only protection) keeps the typed text in its field and says why on the status line; drafts belong to their document, so after New or Open a comment with the same number shows its own text; Save, Export, Print, Close, New and Open write pending comment text first; if the document refuses it, Save, Export and Print carry on with the stored comments and show why on the status line (a refused draft is dropped when Save is the only change), while Close, New and Open show the Save Changes prompt (Don't Save drops text the document refuses); Escape discards what was typed; in a document protected as read only or for forms the comment fields can't be typed in |
+|---|---|
+| 2026-10-18 | Picture Format › Size (#2573): width and height in the interface unit, and a size typed in any unit works, pixels too (`300 px` keeps the picture's proportions, #1901), applied once typed (Enter, Tab or a click elsewhere; Esc cancels) in one undo step. The group's launcher opens a Size dialog: height and width, scale of the original size (or of the size it opened with), Lock aspect ratio, the original size with its pixels, and Reset. `picture.size {"original": true, "scale"?}` sizes from the original; sizes past 4000 pt that keep the proportions shrink as a whole. |
+| 2026-10-16 | Save Changes gives assistive technology a named alert dialog with the loss warning and any save failure; visual layout and save policy unchanged (#1015). Native screen-reader verification remains pending. |
+| 2026-10-15 | The font family caches are bounded (4096 families for text, 1024 for math, names over 256 bytes aren't remembered), so a document naming thousands of missing fonts can't grow memory; equation fonts are looked up again after a font is added or removed instead of keeping the old choice (#1354) |
+| 2026-10-15 | AutoCorrect recognizes `-->` as `→` (#2223), respecting replacement settings and undo without changing paragraph-start arrow bullets. |
+| 2026-10-15 | Numbered headings (#1793): the Multilevel List gallery offers four lists linked to Heading 1–9 (1 / 1.1 / 1.1.1, Article I. / Section 1.01 / (a), I. / A. / 1., Chapter 1; `list.multilevelPreset`). The heading styles carry the numbers, so paragraphs already in a Heading style keep their style and level, any other selected paragraph (Normal, Quote, Title) becomes Heading 1 (checked in Word), a new Heading 2 is numbered 2.1 by itself and body text stays unnumbered; Numbering or typing `1. ` keeps a heading a heading |
+| 2026-10-15 | Reversing an automatic sentence capital (Undo, or Backspace and retype) adds the word before it to AutoCorrect's First Letter exceptions, as Word does; "Automatically add words to list" switches for First Letter and INitial CAps (#1857). |
+| 2026-10-15 | Dialog close control: a Windows-style box at the title bar's right end, the whole box clickable, red on hover, in both themes (#1885) |
+| 2026-10-15 | Font box: a Recently Used Fonts section at the top of the list (the fonts applied lately, most recent first, ten at most, kept between runs), then All Fonts, as in Word (#2068) |
+| 2026-10-15 | A missing Thai document font (TH Sarabun New, Angsana New, Cordia New, the UPC families…) is substituted by one Thai face for the whole run, Latin letters and digits included, as Word substitutes Cordia New; Thai no longer sits in one font next to larger Latin in another (#1549) |
+|---|---|
+| 2026-10-17 | Paste from LibreOffice: a paragraph indented on both sides (HTML `<blockquote>` on the clipboard) pastes as an indented Normal paragraph with LibreOffice's margins, not centred and italic in the Quote style (#1270). |
+| 2026-10-17 | DrawingML shape outlines retain explicit preset/custom dashes on screen and in PDF, including zero-width path strokes. |
+| 2026-10-17 | Missing Arial Unicode MS tries Arial and its proportional substitutes before code-font heuristics. |
+| 2026-10-16 | Web Layout text fills the window width and re-wraps once a resize settles, or at once on a zoom, instead of a fixed 800 pt column; Draft and Outline keep their 800 pt column (#1876). |
+| 2026-10-16 | Create Source: the automatic Tag is three letters of the first author and the last two digits of the year (`Smi20`), with 1, 2… added when taken, as Word for Mac 16.113.4 does (user-checked). Editing Author or Year keeps the Tag, as in Word, and the citations in the text show the new author and year (#2094; the reporter expected the Tag to follow). |
+| 2026-10-18 | Split Cells and Convert Text to Table dialogs (#2592), matched to Word: Split Cells starts from the selection (twice its columns, its rows; Merge cells before split offered for several cells or one cell merged across columns); `table.split` gains `rows` and `mergeFirst`, a merged cell splits into 1 to its height rows (its height cuts it into rows, 1 × 1 changes nothing, a number that doesn't divide the height or more than it is refused with Word's messages) and column splits make equal parts without moving other rows' grid lines. Convert Text to Table guesses columns live, shows the row count, and offers Initial column width (Auto or up to 22 in, kept as each column's preferred width), AutoFit to contents/window and Paragraphs/Commas/Tabs/Other separators; `table.fromText` gains `paragraph`/`other` + `char`, `columns`, `autofit` and `width`. |
+| 2026-10-16 | Font list entries of fonts with a very tall ascent (Amiri, Amiri Quran) sit in their row like the others instead of low or cut in half (#2570) |
+| 2026-10-16 | Read Mode draws documents cleanly (#1772): the arrows, Page Up/Down and Escape work as soon as it opens (the canvas kept a stable widget id, so it no longer lost the keyboard), only whole columns show, centred, at any column width, text size or window size, and the columns end above the page-turn bar instead of under it. |
+| 2026-10-16 | Comment and revision balloons are readable in the dark theme (#2045): they were drawn on a fixed white card under light text; the card, markup area and author colours are now theme tokens with a contrast test. |
+| 2026-10-17 | DOCX glossary documents (building blocks) open into the model: Insert › Quick Parts and AutoText list and insert the document's own entries, and saving an entry with `"in": "document"` keeps it in the file (undoable). An untouched glossary is saved back byte for byte; an edited one is written from the model |
+| 2026-10-16 | Indonesian proofing (#498): id-ID spelling reads the installed Hunspell `id_ID` dictionary (`hunspell-id` on Debian/Ubuntu, LibreOffice's `dict-id`, or the Dictionaries folder), suggestions use its MAP/REP/TRY/KEY tables, generic repeated-word (offering `anak-anak`) and spacing checks explain in Indonesian; Review › Language, Set Proofing Language and File › Options › Proofing offer Indonesian. No dictionary data bundled; hyphenation keeps the English fallback; parity estimates unchanged |
+| 2026-10-17 | A table inserted in a right-to-left paragraph is a right-to-left table, like Word, so Tab moves right to left through its cells (#2634) |
+| 2026-10-16 | French interface catalog completed: 402 entries added (equation gallery, built-in style and table-style names, citation styles, paper sizes, watermarks, Bookmark / Go To / Print dialogs), 2,615 in all, with a native-speaker review of the terminology; no French proofing yet |
+| 2026-10-14 | DOCX row table border exceptions render and survive saving. Explicit cell borders win; a row exception does not change other rows. |
+| 2026-10-15 | Layout › Columns with text selected puts only that text in columns, as in Word (#2024): a continuous section break goes where the selection starts and one where it ends (splitting a paragraph there; none at the document's start or end, or where a section already begins or ends), and the columns go on the section between, one undo step; More Columns… offers "Selected text" and picks it. Before, the whole section took the columns |
+| 2026-10-14 | Tab stops edited on the ruler: the corner selector picks Left/Center/Right/Decimal/Bar, a click sets a stop (Alt skips the snap), dragging moves it with a guide line and position tooltip, dragging off the ruler clears it; markers draw per kind and mirror for RTL; one `para.tabs` call and one undo step per gesture |
+| 2026-10-12 | Table formulas: cell references and ranges (`=B2+B3`, `=SUM(B2:C3)`), arithmetic and comparisons, IF, AND, OR, NOT, TRUE, FALSE, DEFINED and the `\#` number format; ABOVE and LEFT sum the run of numbers next to the cell as Word does; an unknown function or a syntax error is an error instead of a sum; Update Field (F9) recalculates formula fields |
+| 2026-10-12 | Fields keep `w:dirty` through DOCX saves (#877): a begin marker flagged by a generator that couldn't compute a result (pandoc-style TOC placeholders) keeps the flag on open/save — as a buffered field or a range field — so Word still refreshes it on open; computing a result (Update Field, Update Table) clears it, like Word's F9 |
+| 2026-10-18 | Different First Page works from page 1 (#2826): Insert › Header and Edit Header with the caret on page 1, and a double-click there while another header is being edited, go into page 1's own header instead of the default one page 1 no longer shows. |
+| 2026-10-15 | Track Changes Options › Moves (gap #5): Moved from and Moved to each have a mark and a colour (by default green double strikethrough and double underline, as before and as in Word for Mac), saved per user; `review.trackingOptions` takes `moveFromMark`, `moveFromColor`, `moveToMark`, `moveToColor`, and `trackMoves`, the document's Track moves setting: off, a tracked cut and paste is an ordinary deletion and insertion. DOCX `w:doNotTrackMoves` round-trips |
+| 2026-10-17 | Language dialog keeps inherited proofing language and no-proof choices (#2717). Opening and accepting unchanged no longer replaces style-derived values with English US and proofing enabled. |
+| 2026-10-16 | Text with the legacy Outline, Shadow, Emboss or Engrave font effects (`w:outline`, `w:shadow`, `w:emboss`, `w:imprint`) is drawn with them on screen and in PDFs, no longer as plain text: hollow outlined letters, or a grey copy behind the letters; the PDF keeps the text (#2534) |
+| 2026-10-15 | Table Layout › Cell Margins opens an editable dialog initialized from the table defaults; confirming an unchanged dialog preserves imported margins, and changing one side retains the others (#1960) |
+| 2026-10-15 | Word's native ink inside groups and drawing canvases survives DOCX saves (gap 2): the ink member keeps its InkML part, relationship, content type and picture fallback, stays in its place among the members, moves with the group and is drawn from its fallback picture; deleting the group drops its part |
 | 2026-10-14 | Consistent preferred cell widths override a stale table grid when both totals agree, for fixed and AutoFit tables. Conflicting widths, spans and percentages remain unchanged. |
 | 2026-10-14 | Legacy VML freeforms (`v:shape` with its own `path`), such as the rule lines in many older headers, are read as freeform shapes: they show on screen and in PDFs and are saved back as DrawingML custom geometry instead of vanishing |
 | 2026-10-14 | Field instructions spanning paragraphs no longer add blank lines during pagination; empty result paragraphs still take a line. |
+| 2026-10-16 | Opening a DOCX no longer copies its pictures: each picture, and each embedded object or macro part kept for saving, was copied out of the unzipped package, so a document with pictures held them twice while it opened and left the package's copies behind as freed memory. The document now shares the package's bytes: a 92 MB document with 20 pictures opens in about 90 MB less (866 → 772 MB in the app on macOS; the command line's peak, 319 → 231 MB) |
 | 2026-10-14 | Page-break-only list paragraphs no longer print stray bullets or numbers. The next item keeps its number, matching the reference export. |
-|---|---|
+| 2026-10-12 | Backspace at the start of the paragraph after a table nested in a cell moves into the nested table's last cell, no longer into the last cell of the table around it |
 | 2026-10-14 | Grouped `flowChartOr` shapes draw their circle and crossing spokes, as in Word |
 | 2026-10-14 | Deleting a comment removes its anchors from headers, footers, notes and text boxes too, not just the body, and deletes the whole thread below it, replies to replies included; no anchor or reply is left pointing at a deleted comment (#1345) |
 | 2026-10-14 | Legacy DOC DIB conversion checks the BMP header and copy before allocation, uses the caller's decode allowance, and caps PNG output while encoding; a BMP fallback is kept when it fits. A generated 1-pixel regression covers 57/58/512-byte limits. Resource-exhaustion consequences remain unmeasured. Related: #1334 and #1554 |
+| 2026-10-15 | Draw: Ink to Shape makes two-stroke arrows and arrows with a closed triangle head. A line plus a separate head stroke (an open V or a small closed triangle, drawn after the line or before it) whose apex sits at one of the line's ends becomes one straight arrow connector, and the head stroke goes, in one undo step; this works while drawing with Ink to Shape on and on lasso-selected strokes with Convert to Shapes. A shaft with a small triangle drawn round its tip in the same stroke is an arrow too; a triangle without a shaft stays a triangle. Our own design (Word for Mac has no Ink to Shape). |
 | 2026-10-13 | Justified vertical page alignment (#1320): a section set to Justified spreads each page's paragraphs and tables from the top margin to the bottom one, as Word does, including the last page and pages ending in a manual page break. DOCX `w:vAlign="both"` opens as Justified (it showed centred) and saves back; `layout.verticalAlign` takes `justify`, and Page Setup has a Vertical alignment box |
 | 2026-10-13 | macOS shortcuts as in Word for Mac: ⌘⇧S Save As, ⌘⌥E Insert Endnote, ⌘⌥A New Comment, ⌃H Replace, ⌘⌥R collapse the ribbon |
 | 2026-10-13 | The status bar flags a proofing language whose Hunspell dictionary isn't installed (Polish, Portuguese): "Polish (no dictionary)", with a tooltip naming the dictionary and where it is looked up (#1167) |
@@ -522,6 +254,7 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-13 | Cut copies to the system clipboard however it is run (#1265): the ribbon, the context menu and the native menu cut deleted the words without copying them (only the Cmd+X event wrote the clipboard, so Paste re-inserted the previous copy); Copy/Cut publication is centralised in one sink and every entry point is tested |
 | 2026-10-13 | Insert › Bookmark deletes bookmarks (#1236): the dialog is laid out as Word's, with Add, Delete and Go To beside the list, Sort by Name or Location and Hidden bookmarks; it opens on the bookmark around the caret, Delete and Go To keep it open, and Go To selects the bookmark's text. `insert.deleteBookmark {name}` removes both ends of a bookmark, also one across paragraphs (adding a bookmark under a name in use left such a one's end behind) |
 | 2026-10-12 | Password-protected Word 97-2003 `.doc` files open after a password prompt (XOR obfuscation, RC4, RC4 CryptoAPI; wrong passwords are rejected by the stored verifier, #1079); written from the public specs and tested on synthetic files only, AES-encrypted `.doc` files are still refused |
+| 2026-10-14 | Update Field works inside headers, footers, notes and text boxes, on the part being edited, as in Word (#1706); with the caret in the body it still leaves them alone, and printing updates every field in the document |
 | 2026-10-12 | Comments can show only for the selected text (#1055): Track Changes Options › Comments › "Only for the selected text" drops the margin column, and the comment under the caret, or the clicked one, floats beside the page (over its edge in a narrow window). The default stays "In the margin", as in Word; `review.trackingOptions {"commentDisplay"}` for agents |
 | 2026-10-12 | Clicking inside a selected comment's balloon moves the caret in its text (#1013); the click used to leave the balloon, so the caret could only be moved with the arrow keys. A press on any balloon now belongs to the balloon, not the page behind it |
 | 2026-10-12 | Page background pictures and textures (Design › Page Color › Fill Effects) are drawn (tiled or stretched) and kept on save instead of being dropped from the package (#999); PDF export paints them too |
@@ -535,6 +268,7 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-14 | All Caps and Small Caps draw ß as SS, as Word does (#1581): "Straße" in All Caps reads STRASSE, not STRASE, and other letters whose capital is two characters (ﬀ, ŉ) draw in full. The ß is still one character: the caret never stops between the two S, and a click on them lands before or after it |
 | 2026-10-13 | Windows Magnifier follows the caret onto a new line: after Enter or Shift+Enter the view moves to the empty line at once, instead of staying on the line above until two more letters are typed (#1119) |
 | 2026-10-13 | A window too big for its screen shrinks to fit when it opens (#1215): on a laptop screen the first window reached under the taskbar or past the screen edge, with the end of the scroll bar, so dragging the scroll bar stopped where the pointer met the edge. A window saved that size is fitted on its next launch too |
+| 2026-10-14 | `layout.pageSetup` with a `section` checks its values like Margins, Size and Columns (#1582): non-finite numbers and margins that leave no room for text are refused with nothing changed; page sides, column count and gap, header/footer distances and line-numbering values are clamped to the same ranges |
 | 2026-10-13 | `wordcraft --control` checks its port (#1426): a missing port, one outside 1–65535 or one that isn't a number prints an error naming it and exits with status 2, instead of starting without the control channel (and dropping `WORDCRAFT_CONTROL_PORT`); a flag right after it, such as `--sample` or `--version`, is read as a flag rather than as the port |
 | 2026-10-14 | Text wrap (#1376): in the narrow strip beside a square-wrapped picture, a word that doesn't fit moves on whole to the next row; it used to be split across the strip ("docu" / "mentazione") |
 | 2026-10-14 | DOCX files with legacy VML preset shapes show them (#1377): Word's right arrow (`_x0000_t13`) and the other presets appear with their fill, outline and size, drawn as WordCraft draws the same DrawingML preset (the nearest shape when it has no exact one), and saving keeps them as DrawingML shapes; before, they were dropped |
@@ -553,6 +287,7 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-13 | Interface size means what it says (#822): a chosen size is absolute, as in PhotoCraft and PdfCraft, so "100%" is one screen pixel per point even where the system reports 200 % (a bare window manager on X11, where winit guesses the scale from the monitor's DPI). The new default, Auto, keeps the system's display scale and its menu entry shows the size it draws at; sizes run 75–300 %. A saved size from before stays the same if it was the default (now Auto) and becomes absolute otherwise |
 | 2026-10-14 | Copied text keeps its formatting in other programs (#1523): Copy and Cut put HTML beside the plain text on the system clipboard for every selection, not only one holding an equation, so a browser, mail client or another word processor pastes bold, italic, fonts and sizes. RTF on the clipboard is not written yet |
 | 2026-10-13 | Copying an equation also puts MathML in HTML on the clipboard beside the linear text like `y=2x_s` (#816; Word/LibreOffice paste not yet verified; OMML is #1297). HTML export writes equations as MathML too, and opening or pasting HTML with MathML gives equations back |
+| 2026-10-16 | Copying one equation on its own also puts it in the clipboard's MathML formats, which Microsoft documents Word reading first when it pastes math. Whether it pastes into Word as an editable equation hasn't been confirmed yet; testers welcome (#1297) |
 | 2026-10-13 | The Equation tab's galleries, structure buttons and symbols keep the theme's colours on Windows: their pictures share a few textures written in place (no wipe of pictures already on screen, room for the built-ins at high display scales), instead of hundreds of small textures freed in bulk, which on DirectX 12 showed inverted, red or teal tiles (#1002) |
 | 2026-10-13 | `file.close` over the control channel or MCP bridge no longer quits and discards unsaved changes (#1268): it returns an error unless the document is saved or `{"force": true}` is passed; the user's Save / Don't Save / Cancel prompt is unchanged |
 | 2026-10-14 | Text copied out of an exported PDF reads as shown (#1473): All Caps and Small Caps text comes out in capitals, as from Word's PDFs, and plain text after it keeps its own case (before, a capital first drawn for a lowercase letter made later capitals extract lowercase) |
@@ -566,6 +301,7 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-14 | Hebrew and Arabic in exported PDFs copy and search as whole words (#1383): right-to-left glyphs are written left to right as they appear, the order Chrome and Edge (PDFium) and poppler read text back from (checked by hand), instead of in reading order, which they reversed (`שלום` came back as `םולש`, Arabic in pieces). Lam-alef stays whole and vowel marks follow their letters, though Chrome and poppler can still break a fully vowelled word with spaces. The page looks the same. Readers that take glyphs strictly in file order get only plain Hebrew runs right, through `/ReversedChars`; screen readers are unverified |
 | 2026-10-14 | HTML import (#1381): header cells (`<th>`) are bold unless their own CSS says otherwise, and `text-align` on a cell, its row, row group or table aligns the cell's paragraphs (a paragraph's own alignment wins), so `wordcraft-cli convert page.html out.docx` writes the bold header and `w:jc` right-aligned cells. HTML, Markdown and plain text, which give no page size, open on the region's paper (A4 in Italy, Letter in the US) like a new blank document, in the app and in `wordcraft-cli`; documents with their own page size keep it |
 | 2026-10-14 | Custom page sizes (#1433): Layout › Size ends with More Paper Sizes…, which opens Page Setup's new Paper group — a Paper size list (the named sizes, or Custom size) and Width and Height in the measurement unit; OK sets the size only when it changed, and a wider-than-tall size comes out landscape. `layout.size` now clamps each side to Word's 0.1"–22" and refuses a page the margins don't fit (the margins rule: 36 pt of text room), and Page Setup checks the size and margins together before applying either |
+| 2026-10-14 | Bold text in Arial Black and other Black or Heavy fonts looks as in Word: older copies of these fonts (Arial Black in the core fonts) call themselves regular weight, so bold was drawn with an extra synthetic bold; a family named Black/Heavy now counts as that heavy |
 | 2026-10-13 | Highlighted text reads on a dark page (View › Switch Modes, #1252): highlights and character shading are dimmed, keeping their hue (yellow turns a dim olive, as in Word), and the text on them is drawn light (coloured text below 4.5:1 is drawn white, and underlines and strikethroughs follow the same rule), instead of white text on bright yellow; light page, print and exports unchanged |
 | 2026-10-13 | Full screen (#980): F11, or View › Window › Full Screen, fills the screen with the window (⌃⌘F on macOS); F11 again or Escape gives back the window as it was. Next Field, which Word puts on F11, keeps Word's Alt+F1 and Alt+Shift+F1 (and Shift+F11). The web app leaves full screen to the browser's own F11 |
 | 2026-10-13 | Double-clicking the top or bottom margin of a page creates its header or footer when it has none and puts the caret in it, as in Word (#960): the one that page shows (different first page, odd and even pages), only in Print Layout; one left empty is taken away again when you leave it, so nothing empty is saved. `insert.editHeader`/`insert.editFooter` take `{"page"}` for agents |
@@ -602,10 +338,12 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-12 | Ribbon groups fit above their labels: View › Show splits its four check boxes into two columns (Hide White Space, #645, had pushed the fourth onto the "Show" label), Developer › Controls loses the gaps that ran into its label, and Layout › Paragraph (#654) no longer trips a debug assertion and sits 2.5 pt higher; a test draws every tab in every language and fails on any group taller than the ribbon |
 | 2026-10-12 | Down and Up from the start of a line beside a table go into it (#1007): the caret, left of the first cell's text there, used to skip the whole table to the paragraph beyond it; it now lands in the cell under it or the nearest one, as in Word |
 | 2026-10-12 | Window caption: a non-Latin file name is drawn with a document fallback face (or the CJK UI font), instead of `?` |
+| 2026-10-12 | Comments: Arabic, Hebrew and other non-Latin comment text and author names are drawn with a document fallback face (or the CJK UI font) in the balloons and Comments pane, instead of boxes; read-only balloons show right-to-left text in reading order, set against the right edge |
 | 2026-10-13 | Word 365 cover pages (#743): shapes placed relative to the page's height now sit where Word puts them (they were at the top of the column), and a freeform drawn back to its start without being closed is filled, so the cover's coloured panel and its white title show |
 | 2026-10-12 | 32-bit Windows starts on OpenGL. DirectX 12 graphics pipeline creation returns "The parameter is incorrect" and the app exited before the window appeared |
 | 2026-10-12 | New documents follow the system region (#838): A4 and centimetres outside the US (Letter in the CLDR Letter territories, inches in the US), lengths written with the region's decimal separator (`2,54 cm`) and typed with either; an explicit Measurement units choice wins; `file.options {"region"}` for agents |
 | 2026-10-12 | Paste from other programs keeps their formatting (#687): Ctrl+V and Home › Paste read the system clipboard's HTML (and RTF on Windows and Wayland); Merge Formatting takes the destination's font and paragraph and keeps bold, italic, underline and strikethrough; Paste Special lists what the system clipboard holds (HTML, RTF, picture, text). Linux: pictures copied in a browser or Spectacle paste on KDE and other Wayland desktops (data-control clipboard), and a paste that finds nothing usable names what the clipboard holds instead of "empty" (#833) |
+| 2026-10-12 | Table style editor (#714): New/Modify Table Style edits each of the 13 table style parts (header row, total row, first/last column, odd/even bands, corner cells) with font, colour, fill, borders and cell alignment; every table using the style follows; all parts round-trip in DOCX; `table.modifyStyle` takes `part`/`parts` and per-edge borders |
 | 2026-10-12 | STYLEREF fields (#775): running headers and footers show each page's chapter title (page's first, or `\l` last, paragraph of the style, else the nearest before), style names, ids, heading levels and character styles, number switches; body STYLEREF updates with the other fields; STYLEREF in the Field dialog; PDF export follows the layout |
 | 2026-10-12 | Undo history list (#701): a ▾ beside the Quick Access Toolbar's Undo lists recent steps newest first; hovering highlights what a click undoes ("Undo 3 Actions"), and a click undoes them in one go. `edit.undoTo {count}` and `edit.undoHistory` (newest first, up to 100) for CLI and MCP |
 | 2026-10-12 | Start screen (#766): launched with nothing to open, WordCraft starts on File › Home (Blank document, templates, Recent) like Word, desktop and web; Esc leaves a blank document; File › Options › General › Start-up turns it off |
@@ -644,7 +382,11 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-12 | Symbol fonts (#776): text in Wingdings, Wingdings 2, Wingdings 3, Webdings and Symbol (proprietary, never bundled) shows its intended symbols — full code tables from Unicode's published correspondence, both storage forms (`w:sym` private-use codes and plain codes); PDF text, copy and TXT export use the Unicode characters; the saved text is unchanged |
 | 2026-10-11 | Hide White Space (#645): `view.hideWhiteSpace` (View › Show checkbox, or double-click the gap between pages) collapses margins, headers and footers between pages to a thin line in Print Layout; screen only, page count unchanged |
 | 2026-10-11 | Fonts: Palatino Linotype and Book Antiqua fall back to Palatino (macOS) or TeX Gyre Pagella / P052 / URW Palladio (Linux) before generic serif (#670) |
-|---|---|
+| 2026-10-12 | Czech proofing: cs-CZ spelling reads the installed Hunspell dictionary (`hunspell-cs` on Debian/Ubuntu), suggestions use runtime MAP/REP/TRY/KEY tables, generic repeated-word and spacing checks explain in Czech; Review › Language offers Czech/Čeština; the Czech interface writes new documents and opened TXT/Markdown in cs-CZ. Affix headers accept trailing comments. No system dictionary data or Czech hyphenation patterns bundled; parity estimates unchanged |
+| 2026-10-12 | Tables: dragging the border of one selected cell (Select Cell, or a click along its left edge) moves it in that cell's row only, as in Word, like the border of cells selected across (#962) |
+| 2026-10-13 | Korean interface catalog completed: all 2,463 entries translated; the ko-KR system locale and saved language choice select the interface. The UI prefers Korean embedded/system font faces so Hangul renders instead of boxes, and print settings and printer feedback are translated. Korean proofing remains unavailable; macOS Korean IME fixes are still pending (#163, #164) |
+| 2026-10-12 | Word default shortcuts expanded (gap #24): 140 commands bound on macOS (169 combinations), 158 on Linux/Windows (188 combinations). Bound Style Inspector (Shift+F1), Macros (Alt+F8), Strikethrough (Mod+Shift+X), Find Next (Shift+F4), Copy/Paste (Mod+Insert, Shift+Insert), Go Back (Mod+Alt+Z), File Open/Save/Save As/Print (Mod+Alt+F2, Alt+Shift+F2, Alt+F2, Mod+Alt+I), Field navigation (Alt+F1, Alt+Shift+F1), Outline show first line (Alt+Shift+L), Next Footnote (Alt+Shift+>), Link to Previous (Alt+Shift+R), AutoText (Alt+F3), Spelling on Mac (Mod+Alt+L) |
+| 2026-10-13 | Web and Draft Layout now render visible full-resolution raster tiles for exceptionally tall pages rather than downsampling the entire page into one texture; verified with a 440-paragraph headless UI reproduction |
 | 2026-10-12 | Track Changes: Accept All after a tracked deletion from the end of one paragraph into a later one no longer joins the paragraph that follows the range, and Reject All after typing into an empty paragraph keeps that paragraph (#864) |
 | 2026-10-12 | Ctrl+drag copies an object (#1014): holding Ctrl (⌘ on macOS) while dragging a picture, shape or text box leaves the original and drops a copy where you let go (text boxes get their own text); the copy is selected, the clipboard is untouched, one undo step; `arrange.copyTo` |
 | 2026-10-11 | Table border drags like Word's (#711): Ctrl shares a column border's change among the columns right of it (the table keeps its width), the table's left edge moves a left-aligned table's indent (a centred or right-aligned table keeps its alignment, as in Word), a border of cells selected across moves only in their rows, and Alt shows the column widths on the ruler |
@@ -726,7 +468,9 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-12 | Native saves use exclusively created sibling temporary files, synchronize before replacement and clean up on failure; existing temporary-name files/links and original files on failed saves are protected. Synthetic CLI and focused tests on macOS; no new Word parity or readiness claim. |
 | 2026-10-11 | Field codes like Word's field keys (#339): show codes (Alt+F9, Shift+F9), edit, unlink, lock and step through fields |
 | 2026-10-11 | Word's common keyboard shortcuts (#330): 101 → 125 of ~250 |
+| 2026-10-13 | Swedish (`sv`) interface: 2,504 catalog entries (every key of the reference catalog, the equation gallery, everything the interface audit finds, and 44 newer strings no catalog had yet, among them the native print settings), `sv-SE`/`sv-FI` system locales and a saved language choice; locale, catalog and bundled-font tests; AI-assisted, terminology and the running app reviewed by a native speaker; no Swedish proofing resources |
 | 2026-10-12 | Bulgarian (`bg`) interface: 2,419 catalog entries (every key of the reference catalog, the equation gallery and everything the interface audit finds), `bg-BG` system locales and a saved language choice; locale, catalog and bundled-font tests; no Bulgarian proofing resources |
+| 2026-10-13 | Croatian (`hr`) interface: 2,507 catalog entries (every key of the reference catalog, built-in style names and the equation gallery), `hr-*` system locales and a saved language choice; locale, catalog and bundled-font tests; no Croatian proofing yet |
 | 2026-10-11 | Hungarian (`hu`) interface: all 2,419 catalog entries, built-in style names translated, `hu-HU` system locales and a saved language choice; locale, catalog and bundled-font tests; no Hungarian proofing resources |
 | 2026-10-11 | Turkish (`tr`) interface: all 1,307 catalog entries, `tr-TR`/`tr-CY` system locales and a saved language choice; command search keeps Turkish dotted and dotless I apart (`italik` finds İtalik); locale, catalog, search and bundled-font tests; no Turkish proofing resources |
 | 2026-10-11 | Italian (`it`) interface (#594): 2,399 entries, feature names as Italian Word users know them, locale and saved-preference tests, bundled-font checks; no Italian proofing resources |
@@ -752,112 +496,100 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-05 | M0–M12 first versions: model, layout, render, engine with 200+ commands, Word-style UI, DOCX I/O, PDF and other formats, references, review, mailings, CLI, MCP, web |
 | 2026-10-12 | Mail-merge recipients (#778): legacy Excel .xls workbooks; CSV/TXT lists in GBK, Big5, Shift_JIS, UTF-16 and other encodings read correctly (plain-text import too); Edit Recipient List filters (equal, not equal, less, greater, blank, contains… joined by And/Or) and sorts, and preview, Finish & Merge and labels use only the matching records in that order (`mailings.filterRecipients`, `mailings.sortRecipients`) |
 | 2026-10-13 | The interface-translation audit runs in CI again (#1128): the size labels of Envelopes, Labels and Layout › Size are translated (`4,13 × 9,5 дюйма`) and use the region's decimal separator, and status-bar messages (table split and merge, ink replay, citations, SmartArt, Researcher, Design defaults), the Reading Mode toolbar, Go To and Search's Suggested heading are translated in every interface language, and the Read Aloud player no longer shows a speech error a frame before the status bar does, the race behind the audit's rare failure under load |
+| 2026-10-15 | Lists (#1683): a bullet stored as a private-use character its font can't draw (the font isn't installed) shows the level's default bullet (• ○ ▪); it used to be whatever an installed icon font has at that code, such as Font Awesome's Twitter logo |
+| 2026-10-15 | The web app keeps its preferences between visits (#2132): theme (dark mode), interface size, editing options and the rest of what the desktop app saves in `ui.json` are kept in the browser's `localStorage`, written as soon as they change |
+| 2026-10-17 | Saving into a folder that refuses a temporary file (macOS privacy protection, read-only folders, #2138) never overwrites an existing document in place: it is left untouched and the error says to use Save As to another folder or allow WordCraft access to the folder (System Settings › Privacy & Security › Files and Folders on macOS). A new file is created directly. Unit tests on Linux; not yet confirmed on a Mac |
 
-- Arc 2: periodic background snapshots (first modified frame, then 15 seconds), replacement/exit checkpoints, startup recovery interface, restore/discard/compare/original-package commands and six command-label translations. Tests include an actual process kill during a write, CRC corruption, restart DOCX/raster fidelity, scheduler timing and UI Save Changes/Cancel protection. Native platform APIs preserve WASM builds; browser recovery remains separate. See docs/recovery.md for bounded storage and preservation limits.
-- Verified: both recovery arcs passed `cargo xtask ci` (fmt, Clippy with warnings denied, workspace tests, assets, layers and WASM). Final suite: **821 passing tests**, including **16 added recovery tests** across storage, engine commands, DOCX/raster restoration and UI. Headless recovery window rendered and visually inspected. No native Windows/macOS power-loss or independent Word parity verification was performed.
+Footer page-table height and body wrapping are corrected. Other pagination gaps remain open.
 
-## DOCX compatibility follow-up from 199822f (2026-10-10)
+## Revision history
 
-- Fixed chart loss during open/edit/save: preserve chart drawing references and their byte-exact dependency graphs, including embedded XLSX, style XML and relationship files. Reuse the existing opaque object model and bounded custom XML graph traversal. Charts remain preservation-only placeholders with explicit File Info/automation warnings.
-- Reject checked corrupt package entries, ambiguous part names, invalid chart dependencies and unsafe drawing namespaces instead of exporting lost data. Failed saves retain original files and document metadata. Recovery and Undo retain chart content.
-- Added 10 regressions: synthetic manuscript/thesis/tracked report package cases, per-story relationships, hostile input, failure integrity and recovery/raster restoration. `cargo xtask ci` passed all six gates with **831 tests**. See [the compatibility contract](docs/docx-compatibility.md) for reproduction, preservation limits and the remaining audit backlog.
-- Arbitrary DOCX losslessness and Microsoft Word 365 visual parity remain unverified. OLE, SmartArt, content controls, unmodeled styles/metadata and native Windows/macOS checks remain outstanding.
-
-## Generic DOCX preservation from 6807535 (2026-10-10)
-
-- Added bounded package-wide preservation with guarded main-body text splices. Original namespaces, extension attributes, SDT metadata/bindings, unknown styles/numbering/settings/metadata, SmartArt/OLE/ActiveX-related data, embedded and orphan parts survive tested saves without executing active content. Original relationship scopes/IDs and content types are retained.
-- Strict XML/OPC graph checks reject malformed or missing dependencies, conflicting identifiers/types, escaping targets and oversized packages. Unsafe structural/formatting/object edits, protected-control edits and signature-breaking edits fail explicitly. Existing chart/Excel/custom XML, Undo, recovery and atomic-save mechanisms are reused.
-- Guarded saves retain original core metadata/statistics; automatic revision/timestamp updates are deferred. Normal native documents keep ordinary editing. New conservative import budgets: 512 parts / 64 MiB total; XML/model inspection 16 MiB. See [the compatibility contract](docs/docx-compatibility.md) for operation and verification limits.
-- Added 19 regressions, including all-part byte fidelity, duplicate protected/unprotected text, native editing, corrupt/oversized input, failed saves and recovery. All six `cargo xtask ci` gates passed with **850 tests** (19 new). GUI/CLI release builds passed; the release CLI preserved the synthetic package byte for byte, and the File Info warning was rendered and visually inspected. Independent Word rendering and native Windows/macOS verification remain outstanding.
-
-## Pagination correctness from 207c442 (2026-10-10)
-
-- Audited five priority defects: section finalization/odd-even starts, note continuation, multicolumn reservation, header/footer clearance and unbreakable content overflow. See [pagination audit and regression contract](docs/pagination.md).
-- Fixed outgoing-page finalization before section geometry changes, exactly-once vertical alignment/footnote flushing, physical odd/even filler placement before numbering restarts and hostile page-number overflow. Preserved existing continuous/web flow and DOCX guarded editing restrictions.
-- Added nine regression tests covering mixed portrait/landscape sections, short academic notes, centered body text, first-page headers, restarted numbering, multipage tables, Undo/recovery/save/reopen, exact raster self-comparison and preservation-safe failures. Generated portrait/landscape pages were visually inspected. All six CI gates passed with **859 tests**, including **nine new regressions**. GUI/CLI release builds passed.
-- Phase 4B covers long-note continuation and oversized-content progress, but the audit found no column-balancing pass and no complete header/footer clearance reservation in the merged implementation. Retroactive multicolumn note reflow, `NextColumn` starts, endnote continuation, complex column balancing, native printing and independent Word/Windows/macOS comparison remain open.
-
-
-## Phase 4B pagination reliability (2026-10-10)
-
-- Long footnotes split at line boundaries, reserve up to 40% of the page body, continue in order and emit continuation pages after body text ends.
-- At the Phase 4B baseline, multicolumn text flowed through configured columns and explicit breaks, but notes discovered in a later column did not reflow earlier columns. Phase 4C.3 below adds that page-wide reservation pass. Column balancing remains unimplemented.
-- Headers and footers render with inheritance and first/even selection. Pagination now reserves clearance for the tallest applicable story variant, which can leave extra whitespace when the selected header or footer is shorter. Independent Word comparison remains open.
-- Oversized inline objects remain whole and permit following text to progress. Existing table pagination continues to split rows where possible and places unsplittable rows/repeated headers oversized on an empty page without retry loops. This can extend beyond page bounds and is not clipped or automatically rescaled.
-- Added regression cases for long-note continuity plus Undo/recovery/DOCX reopen and oversized inline progress. Existing table regressions cover splittable and `cant_split` rows and oversized repeated headers; exploratory section tests are not wired into the crate test suite and are not counted as verified coverage.
-
-## Phase 4C audit and overflow diagnostics (2026-10-10)
-
-- Re-audited the merge against the earlier Phase 4B claims. Upstream chart rendering uses cached chart data; SmartArt rendering uses its saved drawing rather than recalculating the diagram; password-protected DOCX open/save is implemented. Drawing rotation/flipping and UI changes are present. These implementations have synthetic/package regression coverage, not independent Word visual verification.
-- Recovery storage and restore, guarded package editing, chart dependency preservation, Undo, failed-save protection, and academic DOCX save/reopen remain covered by workspace tests. Desktop Print exports the current layout to PDF and opens a system viewer; printer selection, ranges, duplex, scaling, and a dedicated print preview are not implemented. Web printing delegates to the browser.
-- Phase 4B documentation overstated merged column balancing and header/footer clearance: the audited layout has no balancing pass, and pagination does not reserve all inherited/even headers or tall footers. Those are recorded as open gaps in [pagination audit](docs/pagination.md).
-- Implemented `DocLayout::overflow_pages` for body content extending below the available body rectangle and a persistent localized status-bar warning. Oversized images, floating shapes and unsplittable table rows remain intact and have focused regression tests. Horizontal overflow and text-box clipping are not detected.
-- Validation: all six `cargo xtask ci` gates passed; the workspace lists 1,076 test cases. GUI and CLI release builds passed on Linux. A separate recount attempt hit sandbox TCP bind restrictions in desktop control-server tests. No Microsoft Word reference outputs or native Windows/macOS verification were available.
-- Phase 4B validation baseline: all six CI gates passed with **865 tests** (47 suites), and GUI/CLI release builds succeeded on Linux. Complex note objects and mixed section transitions, retroactive multicolumn footnote reflow, complex column balancing, overflow choices, native printing and independent Word/Windows/macOS comparison remained open at that baseline. These checks do not establish Microsoft Word pagination parity.
-
-## Phase 4C.3 — footnote rendering consistency and cross-column reflow (2026-10-10)
-
-- The DOCX raster difference came from a synthetic in-memory footnote story that omitted its own display mark. The DOCX writer correctly serializes a `w:footnoteRef` in that story, and the importer keeps it as the note's leading reference object. The fixture now models that mark before the first render; its strict per-page raster comparison passes after reopen. This validates equivalent model/DOCX behavior and does not hide the marker.
-- Print layout now repeats with page-level footnote reservations when a note appears in a multicolumn section. Each pass reserves the note area across every column on its physical page, moving earlier body lines before placing the note. A bounded high-water fallback keeps note anchors that move between pages from reintroducing overlap; that fallback can leave extra blank space in an unusual nonconverging document.
-- A layout regression verifies a note anchored in column two reflows column one, with each body and note text byte present once and body lines above the separator. The existing end-to-end test continues through Undo, recovery, DOCX save/reopen, raster equality and PDF export.
-- Document-end endnotes now flow across columns/pages after the body. Paragraphs split at line boundaries, retain their existing number/reference and order, and continue with a separator while respecting available body space above footer and footnote areas. Indivisible objects remain intact; an oversized item may overflow an otherwise empty column/page so pagination progresses without data loss.
-- Added focused layout and engine regressions for multi-page line coverage/order, body clearance, Undo/redo, recovery restore, DOCX save/reopen raster equality and PDF export. `w:numFmt` remains global and continuous numbering follows reference order; the document model has no start/restart or endnote-position properties, so section-end placement and continuous/section/page restart selection are not implemented. Custom separator markup remains unmodeled.
-- Internal Linux verification only. No Microsoft Word-produced reference output was available or used. Footnote tables/objects, custom continuation separator fidelity, section-end endnotes, configurable restart numbering, mixed-geometry note transitions and column balancing remain open; Word 365 pagination parity is not claimed.
-
-## Phase 4C.4 — safe multicolumn balancing (2026-10-10)
-
-- At continuous section endings and document end, balance a final page when its body consists of complete top-level paragraphs only. Two/three columns, equal and unequal widths, section spacing, header/footer body geometry and paragraph keep/widow constraints are respected. Paragraph groups are assigned in reading order, and every existing shaped line is checked against its destination width before the page changes.
-- Pages containing notes, tables, floats/objects, partial paragraphs, page-dependent fields, explicit breaks, mixed-section content or insufficient destination width keep their stable original flow. `DocLayout::column_balance_skipped` exposes these pages and the status bar reports the fallback. Notes continue to use their existing page-wide reservations and endnote flow.
-- Added regressions for 2/3 columns, unequal widths, continuous single-column transitions, note/table/shape fallback, and balanced save/reopen with Undo/redo, recovery, exact raster comparison and PDF export. Complex paragraphs that would need width-specific rebreaking and multi-page section balancing remain unsupported. No Microsoft Word reference output was available; this is not Word pagination parity.
-
-## Phase 4C.5 — horizontal overflow and text-box clipping diagnostics (2026-10-10)
-
-- Layout now exposes typed, page-specific horizontal and vertical diagnostics with severity and offending bounds. It checks body paragraphs against the active column, table extents against the body, table-cell text against allocated cell bounds, inline images and floating objects against their intended area, and text-box content before its existing fit pass. Horizontal text-box overflow is a warning; vertical content removed by the fit pass is marked clipped.
-- Page/margin-positioned floating objects are compared with the physical page edge, so artwork intentionally extending into margins or covering the full page is not flagged as body overflow. Off-page objects remain visible as warnings. The UI keeps a localized status warning; its tooltip names the first element and axis, preserves the content assurance and jumps to the affected page.
-- No object is moved, resized or discarded. Text-box clipping remains the existing rendering behavior but is now explicitly reported. Diagnostics are recomputed after edits, Undo/redo, recovery and DOCX reopen; a PDF export and raster self-comparison regression passed. Stroke/shadow extents, note tables, and some deeply nested or unsupported drawing geometry need further audit. No Word reference output was available, and no pagination parity claim is made.
-
-## Upstream integration — WordCraft 0.5.0 source (2026-10-10)
-
-- Merged all **15 upstream commits** after shared base `79b6f33`, through `e4b7d15`. This includes formatting revisions; DOCX chart, SmartArt and OLE save support; freeform pen/pencil/highlighter drawing and table drawing; font search; Columns, Symbol, Field, Tabs, Borders and Shading dialogs; Estonian localization; and overflow/crash fixes.
-- Updated `quick-xml` from 0.38 to 0.41 for the upstream namespace-declaration denial-of-service fix. The fork’s preservation scanner now uses 0.41 namespace resolution and normalized attribute decoding. It continues to preserve extension attributes, content controls, custom XML, embedded data and unknown package parts through its guarded-save rules.
-- Upstream main’s manifest and crate metadata say **0.5.0**, but the upstream GitHub Releases page still identifies **v0.4.0** as the latest published release. The merged build is therefore a tested source build, not a claim that upstream has published a 0.5.0 binary release.
-- Merge conflict resolutions retained both sides’ tests and UI translations. DOCX scanner state now carries both package-wide preservation and the upstream embedded-part manifest; layout rendering retains upstream freeform geometry together with the fork’s overflow diagnostics and shape story references.
-- Merge validation: all six `cargo xtask ci` gates passed (fmt, Clippy, workspace tests, assets, layers, WASM); 1,137 tests passed, none failed (one ignored). Linux GUI and CLI release builds passed. A chart recovery regression found during the full suite is fixed by serializing the inert embedded drawing source and relationship references in recovery snapshots. The upstream Estonian catalog was completed for the new command labels.
-- Integration merge: `30b06020b20667bdc607dd6410eba97138e60fcd` (two-parent merge of fork `8086c22` and upstream `e4b7d15`). Upstream base tip: `e4b7d15`; 15 upstream commits integrated from shared base `79b6f33`. No Microsoft Word reference output was used. Verification is Linux-only; no Windows/macOS native build or print-driver test was run.
-
-## Print preview and CUPS submission (based on `6e2d3f7`, 2026-10-10)
-
-- File › Print renders a horizontal page preview from the same output `DocLayout` used to create the selected-page PDF. Range selection, overflow warnings and preview pagination therefore share one layout result. Printing leaves document contents and undo state unchanged.
-- Linux desktop integrates CUPS queues, copies/collation, discovered media and duplex modes, orientation/scaling requests, and cancellation for queued jobs. Errors and absent queues leave the PDF viewer fallback available. The web retains browser printing.
-- macOS is wired to the CUPS command interface but was not built or tested on macOS; Windows keeps the existing PDF-viewer flow without WordCraft printer controls. No physical printer or Microsoft Word comparison was available.
-- Focused tests cover page ranges, multipage selected-PDF preview, native option/cancel handoff and CUPS parsing/argument construction. All six `cargo xtask ci` gates pass; the workspace reports **1,141 passed, 0 failed, 1 ignored** across 49 suites. Linux GUI and CLI release builds pass. No physical printer, macOS build or Windows printer integration was available for verification.
-
-## Cross-platform print adapters (based on `40a85a6`, 2026-10-10)
-
-- The platform-independent print backend contract now drives Linux/macOS CUPS and a Windows PrintTicket/Windows.Data.Pdf adapter. The WordCraft Print page provides printer selection and driver settings while PDF generation remains shared with preview.
-- Windows supports driver-advertised media and duplex plus validated copies, collation, orientation and fit-to-page settings. Its adapter compile-check passed for `x86_64-pc-windows-gnu`; macOS CUPS compile-check passed for `aarch64-apple-darwin`.
-- Windows submission is synchronous and its wrapper exposes no cancellable job ID; cancellation is available through the system print queue. The macOS path uses CUPS, not AppKit `NSPrintPanel`. No native platform runtime or physical printer was available, so behavior remains unverified on actual devices.
-- Linux/macOS CUPS and Windows driver-specific options may differ. No independent Word print comparison was performed.
-- Final validation: all six `cargo xtask ci` gates passed; workspace tests report **1,143 passed, 0 failed, 1 ignored across 49 suites**. Linux GUI/CLI release build passed. Windows and macOS release-mode `cargo check` passed for the available GNU and Apple Silicon targets; cross-target binaries were not linked or run.
-
-## Upstream synchronization — WordCraft 0.5.0 source (2026-10-11)
-
-- Merged upstream `main` at `2ffba93b5189410a415970be179dcf481092d756`, 19 commits after shared base `dba6e66d53733c2c0fd28355249d24eb3698187e`, into fork commit `f17dbb3e08c3534412f0f34d8b687f5ec707bf69`. Merge commit: `f3038b4f64f481e8cdda03038824c20517e1d89f`. The compatibility follow-up is a separate commit. The backup branch `backup/pre-upstream-sync-f17dbb3` remains available.
-- Preserved fork-specific chart data/cache/XLSX transactions and formatting, guarded DOCX package editing, recovery, atomic saves, pagination, printing and workflow pinning. Reconciled model-only upstream chart serialization without replacing package-backed chart writes.
-- Integrated upstream drawing/WordArt, content-control UI, chart creation, document grid/RTL table, section note options, linked text boxes, move tracking, accessible controls and other v0.5.0 source changes. Security issues #678 and #679 received local fixes; PRs #647/#626/#617 remain open upstream and were not merged. Chart issue #685 remains open: new charts still lack embedded Excel data files.
-- Fixed integration findings for default note-separator round-trip pagination, section-end endnotes, duplicate text-box layout work, dialog dirty-state routing, and canonical command-search ranking. Unsupported DOCX structures remain behind existing guarded-edit failures.
-- Validation: all six `cargo xtask ci` gates pass; **1,420 workspace tests passed, 0 failed, 1 ignored**. Linux GUI and CLI release builds pass. Release-mode Windows GNU and Apple Silicon compile checks pass; native runs, physical printing and Microsoft Word/Excel reference comparisons were unavailable. Version reports `0.5.0` (dev for GUI; `0.5.0` CLI).
-- Installed GUI/CLI binaries were backed up at `/home/shabir/.local/share/wordcraft/backups/2026-10-11-838a7d1` before installing the validated 0.5.0 Linux builds. At audit time, hosted FreeBSD and Windows ARM64 jobs for `838a7d1` were still in progress; packaging lint did not trigger for this push (the latest observed run on `863a82d` succeeded). See [the detailed upstream audit](docs/upstream-audit-2026-10-11.md).
-
-## Upstream synchronization follow-up (2026-10-11)
-
-- Integrated the next 20 upstream commits through `46d5e99b3e82828f95ec87da92b2e1fc1db03b78` using a second normal merge from the 2ffba93 integration, preserving prior custom chart transactions/formatting, DOCX package guards, atomic recovery/save behavior, printing, and CI hardening. A pre-merge backup branch is retained. No open PR was auto-merged.
-- Upstream additions include SmartArt types, Outline view, vertical section text, file Options panes, template/add-in Organizer, shape-wrap controls, accessibility updates, CJK font fallback, section geometry/layout work, and note/page-total behavior. Compatible changes were reconciled with fork-specific layout and DOCX models; where the upstream layout refactor could not safely be combined wholesale, the fork layout engine was retained and compatible fixes/tests were ported.
-- Integration verification: `cargo xtask ci` passed all six gates, including the full workspace and WASM checks; the workspace reports **1,496 passed, 0 failed, 1 ignored**. Linux GUI/CLI release build and available Windows GNU/macOS Apple Silicon release-mode compile checks passed. Three merge regressions found in tests (Options dispatch and localization coverage) were corrected. Hosted workflows and installation are tracked separately in the detailed audit.
-- Upstream audit details, conflict notes, issue/PR status and hosted run results are tracked in [docs/upstream-audit-2026-10-11.md](docs/upstream-audit-2026-10-11.md). No independent Microsoft Word rendering comparison or native printer/platform runtime test is implied.
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-15 | minor | Phase 7U.4: reproduced and fixed #2256 zoom slider oscillation; headless M4 before/after typing probe shows no measurable change; #2259/#2278 reporter-hardware checks remain open |
+| 2026-10-19 | trivial | Progress log: forms protection keeps its content controls: no inserting, Properties or Remove Content Control |
+| 2026-10-19 | trivial | Progress log: text typed into a content control takes the control's formatting; localized placeholder styles recognised |
+| 2026-10-18 | trivial | Progress log: long navigation headings wrap within the pane instead of ending in an ellipsis (#3015) |
+| 2026-10-18 | trivial | Font list starts at its first row after clearing a no-match query; recent heading remains visible (#2068) |
+| 2026-10-18 | trivial | A word after a slash wraps whole, like Word (#2963) |
+| 2026-10-17 | trivial | Progress log: recipient list search and merged-only view (#1576) |
+| 2026-10-18 | trivial | Progress log: symbols keep their font when the text font changes (#2036) |
+| 2026-10-17 | trivial | Progress log: Restrict Editing guards tables, Paste Formatting and merge fields (#1327) |
+| 2026-10-18 | trivial | Progress log: Picture Format › Size, sizes typed in any unit and the Size dialog (#2573); readiness estimates unchanged |
+| 2026-10-18 | trivial | Progress log: Manage Sources imports Word's `Sources.xml` (#2640) |
+| 2026-10-14 | trivial | Progress log: a list item's first word is not flagged for a missing capital (#1741) |
+| 2026-10-18 | trivial | #2445: pending Save As answers keep their originating document identity, so a replacement document is never written to an old picker destination; real Save-button and focused-editor shortcut controls verified |
+| 2026-10-16 | trivial | #2445: interactive Save on import-only .doc/.dot paths uses the existing DOCX Save As flow; cancel and failed writes keep the draft, and Close waits for a successful save. Explicit/script saves still report unsupported legacy output |
+| 2026-10-16 | trivial | Save Changes exposes an alert-dialog role, the document-specific question and loss/failure context to accessibility; full-app focus/ancestry regression. Native screen-reader verification remains pending. |
+| 2026-10-16 | trivial | Progress log: the Spike |
+| 2026-10-16 | trivial | Progress log: `w:eastAsianLayout` kept on save |
+| 2026-10-15 | trivial | Progress log: undrawable private-use list bullets show the level's default bullet (#1683) |
+| 2026-10-15 | trivial | Progress log: web preferences kept between visits (#2132) |
+| 2026-10-15 | trivial | Progress log: Recently Used Fonts in the font box (#2068) |
+| 2026-10-15 | trivial | Progress log: one Thai face for a run in a missing Thai font (#1549) |
+| 2026-10-18 | trivial | Progress log: Different First Page headers reachable from page 1 (#2826) |
+| 2026-10-18 | trivial | Progress log: bold Black/Heavy fonts are not emboldened again |
+| 2026-10-16 | trivial | Progress log: Web Layout fills the window width (#1876) |
+| 2026-10-17 | trivial | Progress log: DOCX glossary documents (building blocks) |
+| 2026-10-15 | trivial | Progress log: move options in Track Changes Options (gap #5) |
+| 2026-10-15 | trivial | Progress log: image size limits checked before allocation (#1321) |
+| 2026-10-17 | trivial | Progress log: Read Aloud speaks each sentence in its own language, #1843 |
+| 2026-10-18 | trivial | Progress log: `wordcraft-cli run --script` (#1963) |
+| 2026-10-18 | trivial | Progress log: header-cell picture watermarks drawn behind the text (#1775); readiness estimates unchanged |
+| 2026-10-14 | trivial | Progress log: comment drafts kept and written before saving or closing (#1348) |
+| 2026-10-17 | trivial | Language dialog keeps inherited proofing language and no-proof choices (#2717); readiness estimates unchanged |
+| 2026-10-14 | trivial | Progress log: ASK and SET fields show nothing (#1765) |
+| 2026-10-15 | trivial | Progress log: at-least table rows start the next page whole (#1742) |
+| 2026-10-14 | trivial | Progress log: ODT sections on export (gap 19) |
+| 2026-10-17 | trivial | Explicit DrawingML preset/custom outline dashes survive import/save and paint in raster/PDF, scaled to the effective stroke width even for zero-width paths. Synthetic controls; theme-inherited dashes and line caps remain unverified. |
+| 2026-10-15 | trivial | `wordcraft-cli convert --update-fields` explicitly refreshes unlocked fields before conversion; ordinary conversion keeps cached results. Field refresh can change pagination |
+| 2026-10-17 | trivial | Arial Unicode MS uses Arial and its proportional substitutes; glyph coverage and exact Word line height remain font-dependent. |
+| 2026-10-18 | trivial | Progress log: Split Cells and Convert Text to Table dialogs, matched to the Word check (#2592) |
+| 2026-10-16 | trivial | Progress log: tall-ascent font list entries no longer cut off (#2570) |
+| 2026-10-16 | trivial | Progress log: Read Mode keeps the keyboard, whole columns, page-turn bar clear (#1772) |
+| 2026-10-16 | trivial | Progress log: comments readable in the dark theme (#2045) |
+| 2026-10-16 | trivial | Progress log: Indonesian proofing (#498) |
+| 2026-10-16 | trivial | Progress log: legacy outline, shadow, emboss and imprint text effects drawn (#2534) |
+| 2026-10-15 | trivial | Progress log: Columns on selected text (#2024) |
+| 2026-10-15 | trivial | Navigation Find and query edits expose Results (#2096) |
+| 2026-10-15 | trivial | Progress log: numbered headings (#1793) |
+| 2026-10-15 | trivial | Add the missing `-->` → `→` AutoCorrect entry (#2223), with typing, undo and preference regression coverage; existing arrow bullets unchanged |
+| 2026-10-15 | trivial | Progress log: Update Field updates the part being edited, as in Word (#1706) |
+| 2026-10-14 | trivial | Progress log: Update Fields reaches headers, footers and text boxes (#1706) |
+| 2026-10-15 | trivial | Progress log: font family caches bounded; math font resolution follows font changes (#1354) |
+| 2026-10-15 | trivial | Progress log: web typing in non-Latin text no longer repeats (#1480) |
+| 2026-10-15 | trivial | Progress log: Backspace removes a selected table, rows or columns (#1844) |
+| 2026-10-16 | trivial | Progress log: Hebrew field results and smart quotes (#1670) |
+| 2026-10-16 | trivial | Progress log: Ctrl+wheel zoom no longer scrolls the document (#1743) |
+| 2026-10-16 | trivial | Hint-reliant CJK fonts execute TrueType contour assembly; Windows DFKai-SB no longer loses strokes. Synthetic local-font regression; no font binaries bundled. |
+| 2026-10-14 | trivial | Progress log: RTF export writes sections (gap 19) |
+| 2026-10-15 | trivial | Progress log: multi-letter equation scripts (#1609) |
+| 2026-10-15 | trivial | Progress log: plain-text paste keeps the paragraph formatting where it lands |
+| 2026-10-14 | trivial | Progress log: Add Font imports every selected font file (#1789) |
+| 2026-10-15 | trivial | Additive paragraph spacing retains the full before-space after a section page break; ordinary overlapping spacing is unchanged. |
+| 2026-10-15 | trivial | Exact line spacing keeps the run font baseline around tall equations; automatic and minimum spacing still grow for math. |
+| 2026-10-16 | trivial | Zero-extent drawing anchors contribute no inline font height. Synthetic regressions. |
+| 2026-10-16 | trivial | Control keyboard/text input works in the inactive native window (#2420) |
+| 2026-10-15 | trivial | Progress log: Hide Quick Access Toolbar (#1945) |
+| 2026-10-15 | trivial | Progress log: native ink nested in groups and drawing canvases kept on save |
+| 2026-10-15 | trivial | Progress log: the word being typed gets no squiggle until the caret leaves it (#1552) |
+| 2026-10-15 | trivial | Progress log: Highlight No Color sticks to the button (#2105) |
+| 2026-10-16 | trivial | Body and active note text keep normal opacity while editing footnotes or endnotes (#2545); header/footer dimming is unchanged |
+| 2026-10-17 | minor | Progress log: Drop Cap Options (#2601) |
+| 2026-10-16 | trivial | An otherwise empty section at page start retains its line before continuous content; later closing marks stay quiet |
+| 2026-10-16 | trivial | Progress log: equations from Word files keep their content (#1273) |
+| 2026-10-16 | trivial | Progress log: Insert Caption… on objects and Page Setup header and footer options (#1230) |
+| 2026-10-17 | trivial | SECTIONPAGES includes shared continuous-section pages in body and header/footer fields |
+| 2026-10-17 | trivial | Footer page tables no longer inflate footer text height; body lines wrap at their physical bounds |
+| 2026-10-17 | minor | Progress log: Scale to paper size on File › Print, #2108 |
+| 2026-10-17 | trivial | Non-overlapping body floating tables clear header tables; overlapping tables keep their requested position |
+| 2026-10-15 | trivial | Progress log: caret inside ligatures (#1974) |
+| 2026-10-14 | trivial | Progress log: row table border exceptions |
+| 2026-10-12 | minor | Czech proofing review: short-word splits rank after deletion, NOSUGGEST excludes suggestions while accepting typed forms, affix comments apply only to headers, ratios keep spaces and repeated-word messages use Czech quotes; synthetic engine end-to-end and latency checks |
+| 2026-10-12 | minor | Czech spelling from the installed Hunspell dictionary, runtime-table suggestions and generic checks; Czech interface writes cs-CZ documents; no Czech hyphenation patterns bundled; estimates unchanged |
+| 2026-10-12 | trivial | Progress log: one selected cell's border drags in its row only (#962) |
+| 2026-10-16 | trivial | Progress log: opening a DOCX no longer copies its pictures |
+| 2026-10-12 | minor | Progress log: Word default shortcuts expanded to 140 commands on macOS (169 combinations) and 158 on Linux/Windows (188 combinations), addressing gap #24 |
+| 2026-10-13 | trivial | Web/Draft long-page blur fixed with visible full-resolution raster tiles |
 | 2026-10-14 | trivial | Progress log: VML freeforms read and kept on save |
 | 2026-10-14 | trivial | Progress log: consistent preferred cell widths |
 | 2026-10-14 | trivial | Field instructions spanning paragraphs no longer add blank lines during pagination; empty result paragraphs still take a line. |
@@ -865,6 +597,7 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-14 | trivial | Floating-table overlap checks use visible line content; empty line-break lines no longer move a table |
 | 2026-10-14 | trivial | Progress log: deleting a comment leaves no dangling anchors or replies (#1345) |
 | 2026-10-14 | minor | Legacy DOC DIB conversion byte limits only; related #1334/#1554, stage and readiness estimates unchanged |
+| 2026-10-15 | trivial | Progress log: Ink to Shape two-stroke and closed-head arrows |
 | 2026-10-13 | trivial | Progress log: justified vertical page alignment (#1320) |
 | 2026-10-14 | trivial | Progress log: file names that aren't valid Unicode (#1440) |
 | 2026-10-13 | trivial | Behind Text pictures and shapes drag over overlapping text in the body and headers, selected or not, while ordinary clicks keep editing text; In Front of Text drag covered too |
@@ -884,6 +617,7 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-14 | trivial | Progress log: All Caps and Small Caps draw ß as SS (#1581) |
 | 2026-10-13 | trivial | Progress log: Windows Magnifier follows the caret onto a new line (#1119) |
 | 2026-10-13 | trivial | Progress log: a window too big for its screen shrinks to fit (#1215) |
+| 2026-10-14 | trivial | Progress log: Page Setup sections are validated (#1582) |
 | 2026-10-13 | trivial | Progress log: `--control` checks its port (#1426) |
 | 2026-10-14 | trivial | Progress log: words beside a floating picture are no longer split (#1376) |
 | 2026-10-14 | trivial | Progress log: VML preset shapes (#1377) |
@@ -931,6 +665,7 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-12 | trivial | Progress log: `--help` for the app and every CLI subcommand (#968) |
 | 2026-10-12 | trivial | Progress log: Down and Up no longer skip a table (#1007) |
 | 2026-10-13 | trivial | Progress log: equation pictures keep the theme colours on Windows (#1002) |
+| 2026-10-12 | trivial | Progress log: table style editor (#714) |
 | 2026-10-11 | trivial | Progress log: Ctrl, Alt, left-edge and selected-cells table border drags (#711) |
 | 2026-10-11 | trivial | Progress log: table markers on the rulers (#700) |
 | 2026-10-11 | trivial | Progress log: the table context menu |
@@ -1005,7 +740,9 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-12 | trivial | Native saves protect existing temporary-name entries and originals on pre-replacement failure; synthetic macOS evidence, explicit durability/platform limits; readiness unchanged |
 | 2026-10-11 | trivial | Word's common keyboard shortcuts (#330): 125 of ~250 |
 | 2026-10-11 | trivial | Collapsed duplicate rows left by parallel merges |
+| 2026-10-13 | trivial | Swedish interface (`sv`): progress log and shipped languages |
 | 2026-10-12 | trivial | Bulgarian interface (`bg`): progress log and shipped languages |
+| 2026-10-13 | trivial | Croatian interface (`hr`): progress log and shipped languages |
 | 2026-10-11 | trivial | Hungarian interface (`hu`): progress log and shipped languages |
 | 2026-10-11 | trivial | Turkish interface (`tr`): progress log and shipped languages |
 | 2026-10-14 | trivial | Progress log: `.doc` notes, headers and text boxes read their text once (#1319) |
@@ -1035,3 +772,7 @@ Proofing: English, Polish, Portuguese and Russian (spelling, grammar, hyphenatio
 | 2026-10-09 | minor | Recently landed: RTL, Ukrainian and Brazilian Portuguese |
 | 2026-10-06 | major | First honest estimate: 88% catalog, ~62% real parity, alpha ~85% of the way |
 | 2026-10-12 | trivial | Progress log: recipient filter and sort, .xls and legacy-encoding recipient lists (#778) |
+| 2026-10-15 | trivial | Progress log: dialog close box (#1885) |
+| 2026-10-15 | trivial | Progress log: mixed Hebrew/Latin text keeps its order in Word (#1543) |
+| 2026-10-15 | trivial | Progress log: ruler numbers by zoom, rulers follow the caret's page (#1878) |
+| 2026-10-17 | trivial | Progress log: saving into a folder that refuses a temporary file (#2138) |

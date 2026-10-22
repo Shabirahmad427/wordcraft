@@ -1,6 +1,6 @@
 # WordCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** Phase 7U.4: reproduce/fix #2256 zoom slider oscillation; #2259 typing lag and #2278 black page remain unverified on reporter hardware · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-18 · **Change:** trivial (M6: Manage Sources imports Word's `Sources.xml`, #2640; previously minor: Czech proofing review fixes; previously minor: Portuguese proofing; previously minor: Polish interface and Polish proofing; previously trivial: M7: formatting revisions landed, #41; previously trivial: M5: Draw Table and Eraser landed, #303; previously minor: beta distance restated: ~15 points, ~150–230 h; previously: alpha gate checked: six core workflows pass; previously major: milestones moved here from ROADMAP.md; Current focus set from the re-measured gaps) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 Forward-looking plan. The summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is
 [`gaps.md`](gaps.md); the numbers are in [`target-app-parity.md`](target-app-parity.md). Hours are
@@ -8,62 +8,15 @@ Opus 5.5 agent wall-clock.
 
 ## Current focus (toward beta, ~150–230 h)
 
-Phase 7M adds shared theme rebinding and preservation regressions. Guarded imports still need a
-safe package XML merge before theme or style edits can be saved; see the
-[DOCX preservation contract](docx-compatibility.md#phase-7m-theme-bindings-and-style-preservation).
-
-Phase 7T validates actual native packages; hosted Linux DEB, Apple Silicon DMG and Windows
-x64 MSI checks passed on their recorded commits. The current integration starts from the fork's
-existing 0.7.0 main history and merges upstream `fd0bb2f`; it does not downgrade or change the
-application version. Package tests remain same-version replacement checks, not version upgrades.
-All six local CI gates pass on the merged tree. Hosted Printing, Document regressions, Packaging
-lint and the complete Linux/macOS/Windows package matrix passed on follow-up commit `85f03acb`
-(runs [38822700466](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700466),
-[38822700393](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700393),
-[38822711168](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822711168), and
-[38822700316](https://github.com/Shabirahmad427/wordcraft/actions/runs/38822700316)). Existing
-Linux and macOS installations remain untouched. Remaining desktop integration gaps are recorded in
-[native installation](native-installation.md). This work does not change the Word-feature estimates
-below.
-
-Phase 7U.1 also adapts upstream PR #2251 for header/footer page-number preservation. Synthetic
-coverage did not reproduce issue #2246; its focused UI harness test was rerun here, including a
-synthetic imported DOCX, edit-mode exit and save/reopen. IME event tests cover synthetic Portuguese
-accent sequences and pass; physical keyboard input remains pending. The requested native Windows
-GUI drawing copy/paste and clipboard-replacement test for #2276 was not performed; the hosted Windows
-clipboard adapter test does not exercise a WordCraft window.
-
-Phase 7U.3 audits upstream DOCX reader PRs [#2275](https://github.com/storytold/wordcraft/pull/2275)
-and [#2267](https://github.com/storytold/wordcraft/pull/2267). Both defects were absent from the
-fork and reproduced with fail-first synthetic package tests. Shared case-insensitive on/off parsing
-and mixed-case measure units/EMU exponent handling are implemented; targeted package tests and all
-six `cargo xtask ci` gates pass locally. On implementation commit `099cbd5f`, hosted Printing
-([run 38826430092](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826430092)), Document
-regressions ([run 38826404239](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826404239)),
-Native packages ([run 38826404171](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826404171))
-and Packaging lint ([run 38826437523](https://github.com/Shabirahmad427/wordcraft/actions/runs/38826437523))
-passed, including successful Linux, macOS and Windows jobs.
-
-Phase 7U.4 reproduces and fixes #2256: the status-bar zoom percentage's changing width moved the
-slider while it was held, causing a 90%/95% oscillation. A held-at-95% UI regression passes. A
-three-run Apple Silicon M4 headless probe on 3-, 35- and 140-page ordinary DOCX files measured
-4.0/8.2/10.0 ms median key frames before and 4.0/8.3/10.0 ms after; it found no typing performance change and did
-not reproduce #2259's reported ~50 ms native delay. #2278 remains open: no trigger was provided,
-and the M4 headless harness did not exercise an actual graphics surface or the reporter's Intel
-HD 4600 GPU. Native reporter hardware and surface-loss coverage are still outstanding. Exact probe
-method and results are in [performance benchmarks](performance-benchmarks.md).
-
-The [cross-platform audit](cross-platform-audit-2026-10-12.md) gives the current five-gap evidence priority and distinguishes native runtime results from cross-builds.
-
 1. **Merge or close the ~45 open PRs** before starting overlapping work: many close catalog gaps
    (Clipboard pane #264, Manage Styles #270, Group #267), fix field bugs (Hebrew RTL #20, IME
-   fixes #155–#164) or add languages (de, nb, nn, he). Owner review needed.
-2. **DOCX real-world corpus** (gap #1, 30–50 h): use the [benchmark protocol](word365-interoperability.md)
-   and `cargo xtask interop` package checks; collect openly licensed, consented Word-generated
-   .docx files, compare with Word locally, and fix reproducible defects. Benchmark tooling is ready,
-   but the genuine corpus and application-level comparisons are not.
-3. **Preserve what we can't render** (gap #2, 10–15 h): charts, SmartArt, OLE, ink, group shapes
-   survive a round trip and show their fallback pictures.
+   fixes #155–#164) or add languages (nb, nn, he). Owner review needed.
+2. **DOCX real-world corpus** (gap #1, 30–50 h): collect openly licensed real-world .docx files,
+   open/render/round-trip them, compare with Word locally, fix what breaks. Omitted/empty
+   paragraph defaults now have synthetic save/reopen coverage; the corpus gate remains open.
+3. **Preserve what we can't render** (gap #2, 10–15 h): remaining native ink forms and unsupported
+   graphics survive a round trip. Drawing-level native ink now keeps its InkML and optional picture
+   fallback alongside chart, SmartArt, OLE and drawing-canvas support.
 4. **Stability sweep** (gap #3, 20–30 h): the open crash, hang and write-failure issues, plus an
    autosave/recovery soak test. Local desktop recovery is implemented; cross-platform field
    validation and longer soak testing remain. See [recovery.md](recovery.md).
@@ -84,8 +37,8 @@ every day, checked end to end on the main platform (macOS desktop), including sa
 | Open a .docx someone sent, edit it, send back a .docx Word opens | partial (not blocking) | Word opens our files; typical text/table/picture documents work; never tested on a real-world corpus; charts, SmartArt and OLE dropped silently, move tracking lost (gaps #1, #2, #5) | 0 (beta work: 50–80) |
 | Build a structured document: tables, pictures, headers/footers, page numbers, sections, columns | yes | Tables with row splitting and floating tables (#137), floating pictures (#136), first/odd/even headers; columns don't balance (gap #4) | 0 |
 | Review with others: comments, track changes, accept/reject, compare | yes | Margin balloons, tracked insert/delete incl. paragraph marks (#125, #244), formatting revisions (#41), compare | 0 |
-| References for reports and papers: TOC, footnotes, citations and bibliography, captions | yes | Updatable TOC field (#52), continued notes, APA/MLA/Chicago/IEEE limited local formatters, Zotero (#189); arbitrary CSL engine selection pending (CSL assessment) | 0 |
-| Share or print: export PDF, print | partial (not blocking) | PDF export and shared-layout preview; Linux CUPS submission, ranges, copies, duplex and cancellation. macOS unverified, Windows uses a PDF viewer, web uses browser printing (gap #6) | 0 (beta work: 6–10) |
+| References for reports and papers: TOC, footnotes, citations and bibliography, captions | yes | Updatable TOC field (#52), notes, APA/MLA/Chicago/IEEE, Zotero (#189); long footnotes don't continue (gap #4) | 0 |
+| Share or print: export PDF, print | partial (not blocking) | PDF export solid (krilla); desktop printing goes through a PDF, no native print dialog (gap #6) | 0 (beta work: 6–10) |
 
 **Result: passes.** Every core workflow completes on macOS and the work saves and reopens; the
 partial rows are fidelity gaps (beta work), not broken workflows. WordCraft stays **alpha**.
@@ -100,16 +53,16 @@ partial rows are fidelity gaps (beta work), not broken workflows. WordCraft stay
 | M3 | Insert tab | mostly done; equations done (#191), icons done (#309); charts, SmartArt, 3D, screenshot, online media missing | 50–80 h |
 | M4 | Layout and Design tabs | done except column balancing, group | 6–10 h |
 | M5 | Tables | done (row splitting, floating tables, style formatting); custom table styles (#256); Draw Table and Eraser (#303) | 6–10 h |
-| M6 | References | first version done (TOC fields, cross-references, Zotero); footnote continuation, 8 more bibliography styles missing | 15–25 h |
+| M6 | References | first version done (TOC fields, cross-references, Zotero); footnote continuation missing; all 12 bibliography styles (#383); bibliography sources import from Word's `Sources.xml` (#2640) | 15–25 h |
 | M7 | Review | done (balloons, paragraph-mark revisions, formatting revisions #41); move tracking, multilingual proofing missing | 35–60 h |
 | M8 | View | mostly done; window commands missing | 3–5 h |
 | M9 | Mailings | done (first version); Excel/Outlook data sources and email merge missing | 6–10 h |
-| M10 | File/Backstage | preview and platform print adapters landed; physical-driver verification and Windows async/cancellation depth remain; upstream added configurable interface sizing | 12–20 h |
-| M11 | Draw and objects | text wrap, text boxes, canvas handles, rotation (#332), ink pens and eraser (#307), group resize/orientation (#441–#445), and contour wrap (#354) landed; lasso and ink conversion remain | 35–55 h |
+| M10 | File/Backstage | mostly done; native printing, Options depth missing | 12–20 h |
+| M11 | Draw and objects | text wrap, text boxes, canvas handles, rotation (#332), ink pens and eraser (#307), contour wrap (#354), lasso, Add Pen, Ink to Shape and Ink Replay (#395) done; Ink to Math, grouping missing | 35–55 h |
 | M12 | Formats breadth (PDF, ODT, RTF, HTML, MD, TXT, LaTeX, `.doc` import) | done (first versions); `.doc` write, encryption, minor formats missing | 60–100 h |
 | M13 | Performance budgets | on track (1.4 ms relayout); large real-world documents unmeasured | 10–20 h |
-| M14 | 1.0 polish, packaging, signing | releases v0.1.0–v0.4.0 published; Phase 7T installation/runtime checks in progress | Installed-package validation and remaining native integration checks |
-| M15 | Localization (12 key languages, RTL interface, proofing languages) | 15 UI languages; English, Polish and Portuguese proofing, a proofing language per run | 70–115 h |
+| M14 | 1.0 polish, packaging, signing | releases v0.1.0–v0.4.0 published (signed macOS, Windows MSI x64/x86/arm64, Linux, FreeBSD, web) | — |
+| M15 | Localization (12 key languages, RTL interface, proofing languages) | 15 UI languages; English, Polish and Portuguese proofing plus Czech spelling and generic checks (system Hunspell; English hyphenation fallback), a proofing language per run | 70–115 h |
 | M16 | Right-to-left and East Asian typography | RTL paragraphs done (#207) | 30–45 h |
 
 ## Next after beta
@@ -121,18 +74,9 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-15 | minor | Phase 7U.4: #2256 zoom oscillation reproduced/fixed; M4 headless typing probe unchanged; #2259 and #2278 need reporter-platform evidence |
-| 2026-10-15 | minor | Phase 7U.3: integrate missing DOCX fixes from #2275/#2267 after package-level repro; all six local CI gates and hosted three-OS workflows pass on `099cbd5f` |
-| 2026-10-15 | minor | Phase 7U.2 structured drawing clipboard landed; hosted regression, printing, packaging lint and full three-OS package matrix passed on `85f03acb`; Windows GUI #2276 and physical Portuguese keyboard checks remain pending |
-| 2026-10-15 | minor | Phase 7U.1: adapted #2251; #2246 independently probed without reproduction; native #2253 keyboard input and hosted checks pending |
-| 2026-10-14 | minor | Integrated upstream 0.7.0; all local CI gates and isolated Apple Silicon GUI/recovery shutdown checks pass; hosted package upgrade checks pending |
-| 2026-10-13 | minor | Phase 7T local DMG correction and installed native app smoke; hosted DEB/MSI validation pending, no beta estimate change |
-| 2026-10-14 | minor | Recorded hosted three-OS package results, Linux headless Wayland launch and unexplained Windows timeout/retry; ranked estimates unchanged |
-| 2026-10-14 | minor | Added verified-baseline package upgrade checks and Windows control lifecycle diagnostics; hosted validation pending |
-| 2026-10-13 | minor | Phase 7M theme binding and style preservation regressions; native six-gate CI passes, hosted matrix pending |
-| 2026-10-12 | minor | Phase 7I synthetic DOCX/PDF corpus and native matrix gate; header-float clipping diagnostic fixed without changing pagination |
-| 2026-10-12 | minor | Added five-gap cross-platform audit; DOCX export safety improved in shared Rust, while native and Word 365 comparisons remain pending |
-| 2026-10-12 | minor | M1: reproducible package fingerprint/allowlist benchmark added; Word 365 corpus and visual comparison remain pending |
+| 2026-10-18 | trivial | M6: Manage Sources imports Word's `Sources.xml` (#2640) |
+| 2026-10-12 | minor | Czech proofing review: short-word splits rank after deletion, NOSUGGEST excludes suggestions while accepting typed forms, affix comments apply only to headers, ratios keep spaces and repeated-word messages use Czech quotes; synthetic engine end-to-end and latency checks |
+| 2026-10-12 | minor | Czech spelling from the installed Hunspell dictionary, runtime-table suggestions and generic checks; Czech interface writes cs-CZ documents; no Czech hyphenation patterns bundled; estimates unchanged |
 | 2026-10-12 | minor | M15: Portuguese proofing (pt-BR spelling from the installed VERO dictionary, suggestions, grammar, hyphenation; Review › Language gains Português (Brasil)) |
 | 2026-10-11 | trivial | M15: Polish interface and Polish proofing landed |
 | 2026-10-11 | trivial | M3: icons landed (#309) |

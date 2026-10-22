@@ -455,6 +455,11 @@ struct TextEdit {
     replacement: String,
 }
 #[derive(Clone, Copy)]
+enum StoryScope {
+    Body,
+    Part(wordcraft_doc::PartKind, Option<i64>),
+}
+#[derive(Clone, Copy)]
 struct RunFormatEdit {
     index: usize,
     start: usize,
@@ -586,14 +591,23 @@ fn differing_model_fields(current: &Document, baseline: &Document) -> Vec<&'stat
     compare_field!(footnote_separators);
     compare_field!(endnote_separators);
     compare_field!(media);
-    compare_field!(passthrough);
+    let mut current_passthrough = current.passthrough.clone();
+    let mut baseline_passthrough = baseline.passthrough.clone();
+    current_passthrough.remove(crate::package::GLOSSARY_READ);
+    baseline_passthrough.remove(crate::package::GLOSSARY_READ);
+    if current_passthrough != baseline_passthrough {
+        fields.push("document.passthrough");
+    }
     fields
 }
 
 fn edits(
     doc: &Document,
     baseline: &Document,
-) -> Result<(Vec<TextEdit>, Vec<RunFormatEdit>, Vec<MarkFormatEdit>, Vec<StyleEdit>, Vec<GraphicSizeEdit>), DocxError> {
+) -> Result<
+    (Vec<TextEdit>, Vec<RunFormatEdit>, Vec<MarkFormatEdit>, Vec<StyleEdit>, Vec<GraphicSizeEdit>, Vec<(String, StoryScope, usize, Vec<TextEdit>)>),
+    DocxError,
+> {
     let mut normalized = doc.clone();
     let mut paragraphs = Vec::new();
     paired_paragraphs(&doc.body, &baseline.body, &mut paragraphs)?;
@@ -603,6 +617,7 @@ fn edits(
     let mut style_edits = Vec::new();
     let mut graphic_sizes = Vec::new();
     let mut normalized_paragraphs = Vec::new();
+    let mut part_edits = Vec::new();
     for (index, (current, original)) in paragraphs.into_iter().enumerate() {
         if current == original {
             continue;
@@ -753,16 +768,114 @@ fn edits(
     if replacement_index != normalized_paragraphs.len() {
         return Err(error("paragraph index"));
     }
+    for (id, current_part) in &doc.parts {
+        let Some(original_part) = baseline.parts.get(id) else {
+            return Err(error("secondary story structure changed"));
+        };
+        if current_part == original_part {
+            continue;
+        }
+        let scope = match current_part.kind {
+            wordcraft_doc::PartKind::Header => StoryScope::Part(wordcraft_doc::PartKind::Header, None),
+            wordcraft_doc::PartKind::Footer => StoryScope::Part(wordcraft_doc::PartKind::Footer, None),
+            wordcraft_doc::PartKind::Footnote => StoryScope::Part(wordcraft_doc::PartKind::Footnote, None),
+            _ => continue,
+        };
+        if current_part.kind != original_part.kind || current_part.body != original_part.body {
+            return Err(error("secondary story metadata edits cannot be preserved safely"));
+        }
+        let key = format!("wordcraft:guardedStory.v1:{id}");
+        let mapping = std::str::from_utf8(doc.passthrough.get(&key).ok_or_else(|| error("secondary story has no source mapping"))?)
+            .map_err(|_| error("invalid secondary story mapping"))?;
+        let mut mapping_lines = mapping.split('\n');
+        let path = mapping_lines.next().unwrap_or("");
+        if !safe_path(path) {
+            return Err(error("invalid secondary story source path"));
+        }
+        let scope = if current_part.kind == wordcraft_doc::PartKind::Footnote {
+            let note_id = mapping_lines.next().and_then(|v| v.parse::<i64>().ok()).ok_or_else(|| error("footnote source mapping has no note id"))?;
+            StoryScope::Part(wordcraft_doc::PartKind::Footnote, Some(note_id))
+        } else {
+            scope
+        };
+        if mapping_lines.next().is_some() {
+            return Err(error("ambiguous secondary story source mapping"));
+        }
+        let mut pairs = Vec::new();
+        paired_paragraphs(&current_part.blocks, &original_part.blocks, &mut pairs)?;
+        let mut local_edits = Vec::new();
+        let mut restore = Vec::new();
+        for (index, (now, before)) in pairs.into_iter().enumerate() {
+            if now == before {
+                continue;
+            }
+            if now.objects != before.objects || now.props != before.props || now.mark != before.mark || now.section != before.section {
+                return Err(error("only isolated text edits are supported in guarded headers, footers and footnotes"));
+            }
+            let prefix = before.text.chars().zip(now.text.chars()).take_while(|(a, b)| a == b).map(|(a, _)| a.len_utf8()).sum::<usize>();
+            let old_tail = before.text.get(prefix..).ok_or_else(|| error("story text edit boundary"))?;
+            let new_tail = now.text.get(prefix..).ok_or_else(|| error("story text edit boundary"))?;
+            let suffix = old_tail.chars().rev().zip(new_tail.chars().rev()).take_while(|(a, b)| a == b).map(|(a, _)| a.len_utf8()).sum::<usize>();
+            let old_end = before.text.len().saturating_sub(suffix);
+            let new_end = now.text.len().saturating_sub(suffix);
+            let removed = before.text.get(prefix..old_end).ok_or_else(|| error("story text edit range"))?;
+            let added = now.text.get(prefix..new_end).ok_or_else(|| error("story text edit range"))?;
+            if added.is_empty() && removed.is_empty() || added.chars().chain(removed.chars()).any(|c| c.is_control() || c == '\u{fffc}') {
+                return Err(error("story edit is not an isolated text change"));
+            }
+            let mut expected = before.clone();
+            let props = before.props_of_char(prefix).clone();
+            expected.delete(prefix, old_end).map_err(|e| error(e.to_string()))?;
+            expected.insert_text(prefix, added, &props).map_err(|e| error(e.to_string()))?;
+            if &expected != now {
+                return Err(error("story text edit changes formatting or objects"));
+            }
+            let text_start = if before.text.starts_with('\u{fffc}') { '\u{fffc}'.len_utf8() } else { 0 };
+            if prefix < text_start {
+                return Err(error("story edit crosses a protected field or note reference"));
+            }
+            let text_end = before
+                .text
+                .get(text_start..)
+                .ok_or_else(|| error("story text range"))?
+                .char_indices()
+                .find(|(_, c)| c.is_control() || *c == '\u{fffc}')
+                .map_or(before.text.len(), |(i, _)| text_start + i);
+            if old_end > text_end {
+                return Err(error("story edit crosses a protected field or formatting boundary"));
+            }
+            let anchor = before.text.get(text_start..text_end).ok_or_else(|| error("story anchor boundary"))?.to_string();
+            let mut replacement = anchor.clone();
+            replacement.replace_range(prefix - text_start..old_end - text_start, added);
+            local_edits.push(TextEdit { index, anchor, replacement });
+            restore.push((index, before.clone()));
+        }
+        let mut index = 0;
+        let mut replacement_index = 0;
+        let mut normalized_blocks = current_part.blocks.clone();
+        replace_paragraphs(&mut normalized_blocks, &mut index, &restore, &mut replacement_index);
+        if replacement_index != restore.len() {
+            return Err(error("secondary story paragraph index"));
+        }
+        normalized.parts.get_mut(id).ok_or_else(|| error("secondary story model index"))?.blocks = normalized_blocks;
+        if !local_edits.is_empty() {
+            part_edits.push((path.to_string(), scope, paragraph_count(&original_part.blocks), local_edits));
+        }
+    }
     // The preservation envelope is storage metadata, not an edit to the imported document.
-    for key in [SOURCE, BASE, MODEL] {
+    for key in [SOURCE, BASE, MODEL, crate::package::GLOSSARY_READ] {
         normalized.passthrough.remove(key);
     }
-    if serde_json::to_vec(&normalized).map_err(|e| error(e.to_string()))? != serde_json::to_vec(baseline).map_err(|e| error(e.to_string()))? {
+    let mut normalized_baseline = baseline.clone();
+    normalized_baseline.passthrough.remove(crate::package::GLOSSARY_READ);
+    if serde_json::to_vec(&normalized).map_err(|e| error(e.to_string()))?
+        != serde_json::to_vec(&normalized_baseline).map_err(|e| error(e.to_string()))?
+    {
         let fields = differing_model_fields(&normalized, baseline);
         let fields = if fields.is_empty() { "serialized model state".to_string() } else { fields.join(", ") };
         return Err(error(format!("protected document state changed at {fields}; refusing save to preserve unsupported OOXML")));
     }
-    Ok((edits, format_edits, mark_edits, style_edits, graphic_sizes))
+    Ok((edits, format_edits, mark_edits, style_edits, graphic_sizes, part_edits))
 }
 struct SourceRun {
     start: usize,
@@ -889,25 +1002,24 @@ fn split_source_run(
     Ok(Splice { start: run.span.start, end: run.span.end, replacement: fragments })
 }
 /// Only the first direct, simple text run has the legacy safe text-edit mapping.
-fn text_slot<'a>(nodes: &'a [Element], para: &Element) -> Option<&'a Element> {
+fn text_slot<'a>(nodes: &'a [Element], para: &Element, anchor: &str) -> Option<&'a Element> {
     if !para.word("p") {
         return None;
     }
-    let run = para.children.iter().filter_map(|i| nodes.get(*i)).find(|node| !node.word("pPr"))?;
-    if !run.word("r") {
-        return None;
+    for run in para.children.iter().filter_map(|i| nodes.get(*i)).filter(|node| node.word("r")) {
+        let texts: Vec<_> = run.children.iter().filter_map(|i| nodes.get(*i)).filter(|node| !node.word("rPr")).collect();
+        let Some(text) = texts.first().copied() else { continue };
+        if texts.len() == 1
+            && text.word("t")
+            && !text.empty
+            && text.children.is_empty()
+            && text.text == anchor
+            && text.attrs.keys().all(|key| key == &qualified("http://www.w3.org/XML/1998/namespace", "space"))
+        {
+            return Some(text);
+        }
     }
-    let texts: Vec<_> = run.children.iter().filter_map(|i| nodes.get(*i)).filter(|node| !node.word("rPr")).collect();
-    let text = *texts.first()?;
-    if texts.len() != 1
-        || !text.word("t")
-        || text.empty
-        || !text.children.is_empty()
-        || !text.attrs.keys().all(|key| key == &qualified("http://www.w3.org/XML/1998/namespace", "space"))
-    {
-        return None;
-    }
-    Some(text)
+    None
 }
 fn map_blocks(nodes: &[Element], parent: &Element, protected: bool, blocks: &mut Vec<Option<usize>>) -> Result<(), DocxError> {
     for index in &parent.children {
@@ -1171,6 +1283,7 @@ fn patch_text(
     mark_edits: &[MarkFormatEdit],
     style_edits: &[StyleEdit],
     expected_blocks: usize,
+    scope: StoryScope,
 ) -> Result<Vec<u8>, DocxError> {
     if edits.is_empty() && format_edits.is_empty() && mark_edits.is_empty() && style_edits.is_empty() {
         return Ok(bytes.to_vec());
@@ -1179,13 +1292,36 @@ fn patch_text(
         return Err(error("editing preserved UTF-16 story XML is unsupported"));
     }
     let nodes = xml::inspect(bytes)?;
-    let body = nodes
-        .first()
-        .and_then(|root| root.children.iter().filter_map(|i| nodes.get(*i)).find(|n| n.word("body")))
-        .ok_or_else(|| error("missing document body"))?;
+    let root = nodes.first().ok_or_else(|| error("missing story root"))?;
+    let scope_node = match scope {
+        StoryScope::Body => root.children.iter().filter_map(|i| nodes.get(*i)).find(|n| n.word("body")),
+        StoryScope::Part(kind, note_id) => {
+            let wanted = match kind {
+                wordcraft_doc::PartKind::Header => "hdr",
+                wordcraft_doc::PartKind::Footer => "ftr",
+                wordcraft_doc::PartKind::Footnote => "footnotes",
+                _ => return Err(error("unsupported editable story part")),
+            };
+            if !root.word(wanted) {
+                return Err(error("story part root does not match its recorded mapping"));
+            }
+            if let Some(id) = note_id {
+                root.children.iter().filter_map(|i| nodes.get(*i)).find(|n| {
+                    n.word("footnote")
+                        && n.attrs
+                            .get(&qualified("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "id"))
+                            .is_some_and(|v| v == &id.to_string())
+                })
+            } else {
+                Some(root)
+            }
+        }
+    }
+    .ok_or_else(|| error("missing document story container"))?;
     let mut blocks = Vec::new();
-    map_blocks(&nodes, body, false, &mut blocks)?;
-    let terminal_section_properties = body.children.last().and_then(|index| nodes.get(*index)).is_some_and(|node| node.word("sectPr"));
+    map_blocks(&nodes, scope_node, false, &mut blocks)?;
+    let terminal_section_properties =
+        matches!(scope, StoryScope::Body) && scope_node.children.last().and_then(|index| nodes.get(*index)).is_some_and(|node| node.word("sectPr"));
     if terminal_section_properties && blocks.len().checked_add(1) == Some(expected_blocks) {
         // Some readers provide an empty terminal paragraph when a table is the last body block;
         // it has no source paragraph to splice into, so retain an unmapped protected slot.
@@ -1204,8 +1340,7 @@ fn patch_text(
             .and_then(|i| *i)
             .and_then(|i| nodes.get(i))
             .ok_or_else(|| error("edited text is inside a protected block structure"))?;
-        let slot =
-            text_slot(&nodes, para).filter(|text| text.text == edit.anchor).ok_or_else(|| error("edited text has no provable source mapping"))?;
+        let slot = text_slot(&nodes, para, &edit.anchor).ok_or_else(|| error("edited text has no provable source mapping"))?;
         if slot.attrs.get(&qualified("http://www.w3.org/XML/1998/namespace", "space")).is_none_or(|s| s != "preserve")
             && edit.replacement.trim() != edit.replacement
         {
@@ -1443,6 +1578,28 @@ fn signed(pkg: &Package) -> bool {
             || (path.ends_with(".rels") && bytes.windows(b"digital-signature".len()).any(|b| b == b"digital-signature"))
     })
 }
+/// DrawingML/VML, OLE and AlternateContent may have visual payloads the model cannot reproduce.
+/// A guarded no-op save keeps the original story whenever any of those structures are present.
+fn has_opaque_story_markup(pkg: &Package, main: &str) -> Result<bool, DocxError> {
+    let Some(bytes) = pkg.get(main) else { return Err(error("missing source story")) };
+    let drawing_namespaces = [
+        "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+        "http://schemas.openxmlformats.org/drawingml/2006/main",
+        "http://schemas.openxmlformats.org/drawingml/2006/picture",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas",
+        "urn:schemas-microsoft-com:vml",
+        "urn:schemas-microsoft-com:office:office",
+    ];
+    Ok(xml::inspect(bytes)?.iter().any(|node| {
+        node.word("drawing")
+            || node.word("pict")
+            || node.word("object")
+            || node.word("AlternateContent")
+            || node.name.strip_prefix('{').and_then(|name| name.split_once('}')).is_some_and(|(namespace, _)| drawing_namespaces.contains(&namespace))
+    }))
+}
 pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Result<Option<Vec<u8>>, DocxError> {
     if !is_guarded(doc) {
         return Ok(None);
@@ -1458,7 +1615,7 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
     if serde_json::to_vec(&model).map_err(|e| error(e.to_string()))? != get(doc, MODEL, MAX_MODEL)? {
         return Err(error("preservation baseline does not match the original document projection"));
     }
-    let (edits, format_edits, mark_edits, style_edits, graphic_sizes) = edits(doc, &model)?;
+    let (edits, format_edits, mark_edits, style_edits, graphic_sizes, part_edits) = edits(doc, &model)?;
     let main = pkg
         .rels_checked("")?
         .by_type(crate::package::rt::OFFICE_DOC)
@@ -1466,7 +1623,7 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
         .map(|r| r.target.clone())
         .unwrap_or_else(|| "word/document.xml".into());
     let original_flavor = flavor(&pkg, &main)?;
-    let modeled_rewrite = modeled_writer_rewrite(&pkg, &current, &main)?;
+    let modeled_rewrite = modeled_writer_rewrite(&pkg, &current, &main)? && !has_opaque_story_markup(&pkg, &main)?;
     // The native writer can remove personal metadata from the model projection, but a guarded
     // package may contain unsupported annotation-bearing parts that it does not know about.
     // Returning the original bytes here would silently defeat the user's privacy settings.
@@ -1488,6 +1645,7 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
             || !mark_edits.is_empty()
             || !style_edits.is_empty()
             || !graphic_sizes.is_empty()
+            || !part_edits.is_empty()
             || requested != original_flavor
             || modeled_rewrite)
     {
@@ -1498,8 +1656,12 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
     }
     // Native output checks detect changes to media and custom XML/opaque graphs, which are
     // skipped by Document's JSON serializer. They must not be hidden by the source overlay.
+    let editable_parts: BTreeSet<String> = part_edits.iter().map(|(path, _, _, _)| path.to_ascii_lowercase()).collect();
     for (path, bytes) in baseline.entries() {
-        if !["word/document.xml", "[Content_Types].xml", "docProps/app.xml"].contains(&path) && current.get(path) != Some(bytes) {
+        if !["word/document.xml", "[Content_Types].xml", "docProps/app.xml"].contains(&path)
+            && !editable_parts.contains(&path.to_ascii_lowercase())
+            && current.get(path) != Some(bytes)
+        {
             return Err(error(format!("editing protected package part {path} is unsupported")));
         }
     }
@@ -1511,18 +1673,37 @@ pub(crate) fn write(doc: &Document, requested: Flavor, generated: &[u8]) -> Resu
         && mark_edits.is_empty()
         && style_edits.is_empty()
         && graphic_sizes.is_empty()
+        && part_edits.is_empty()
         && requested == original_flavor
     {
-        return Ok(Some(if modeled_rewrite { generated.to_vec() } else { original.to_vec() }));
+        // With no user edits, the guarded source package is the authority for all modeled and
+        // opaque markup. The native writer can normalize nested transforms or omit opaque drawing
+        // payloads even when its package-level token check succeeds. Privacy removals are the
+        // only modeled rewrite that must be applied here; otherwise return the original bytes.
+        let privacy_rewrite = doc.settings.remove_personal_info || doc.settings.remove_date_time;
+        return Ok(Some(if modeled_rewrite {
+            generated.to_vec()
+        } else if privacy_rewrite {
+            return Err(error("privacy changes cannot be applied safely to a guarded document"));
+        } else {
+            original.to_vec()
+        }));
     }
     let mut entries: Vec<_> = pkg.entries().map(|(path, bytes)| (path.to_string(), bytes.to_vec())).collect();
     let main_data = pkg.get(&main).ok_or_else(|| error("missing source story"))?;
     let patched = patch_graphic_extents(
-        &patch_text(main_data, &edits, &format_edits, &mark_edits, &style_edits, paragraph_count(&model.body))?,
+        &patch_text(main_data, &edits, &format_edits, &mark_edits, &style_edits, paragraph_count(&model.body), StoryScope::Body)?,
         &graphic_sizes,
     )?;
     let (_, bytes) = entries.iter_mut().find(|(path, _)| path.eq_ignore_ascii_case(&main)).ok_or_else(|| error("missing output source story"))?;
     *bytes = patched;
+    for (path, scope, expected_blocks, story_edits) in part_edits {
+        let (_, bytes) = entries
+            .iter_mut()
+            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(&path))
+            .ok_or_else(|| error("missing mapped secondary story part"))?;
+        *bytes = patch_text(bytes, &story_edits, &[], &[], &[], expected_blocks, scope).map_err(|e| error(format!("{path}: {e}")))?;
+    }
     if requested != original_flavor {
         let types = entries.iter_mut().find(|(path, _)| path == "[Content_Types].xml").ok_or_else(|| error("missing content types"))?;
         let data = xml::utf8(&types.1)?;

@@ -7,6 +7,7 @@
 //! error or a best-effort document, never a panic.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod bibliography;
 mod chart_mapping;
 mod chart_spec;
 mod crypt;
@@ -26,6 +27,8 @@ mod wordml2003_write;
 mod write;
 mod xml;
 
+/// Render an in-memory chart model through the same chart drawing engine as imported charts.
+pub use bibliography::{MAX_SOURCES, Sources, read_sources};
 /// Validated, atomic edits to supported embedded chart data and formatting subsets.
 ///
 /// This API returns new package bytes and never mutates its input. Callers that integrate it into
@@ -35,7 +38,6 @@ pub use chart_mapping::{
     AxisBoundChange, AxisChanges, ChartAxisSnapshot, ChartDataChanges, ChartDataSnapshot, ChartEditPlan, ChartSeriesSnapshot, DataLabelChanges,
     DataLabelSnapshot, ErrorBarSnapshot, SeriesChanges, apply_chart_edit, document_has_chart, inspect_chart_data, prepare_chart_edit,
 };
-/// Render an in-memory chart model through the same chart drawing engine as imported charts.
 pub use chart_spec::{chart_items, chart_xml};
 
 pub use crypt::{
@@ -43,7 +45,7 @@ pub use crypt::{
     is_encrypted, protection_hash,
 };
 pub use flat::{XmlKind, sniff_xml, write as write_flat};
-pub use fonts::embedded_fonts;
+pub use fonts::{EmbeddedFont, embedded_fonts};
 pub use read::read;
 pub use smart_art::smart_art_items;
 pub use wordml2003_write::write as write_wordml2003;

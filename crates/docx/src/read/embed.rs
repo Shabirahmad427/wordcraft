@@ -14,8 +14,10 @@ use std::sync::Arc;
 use wordcraft_doc::graphic::{Embedded, EmbeddedRef};
 
 use super::Reader;
-use crate::package::{ContentTypes, MAX_EMBEDDED_PARTS, MAX_EMBEDDED_RELS, MAX_EMBEDDED_XML, Rel, Rels, manifest_field_ok};
+use crate::package::{ContentTypes, MAX_EMBEDDED_PARTS, MAX_EMBEDDED_RELS, MAX_EMBEDDED_XML, Rel, Rels, manifest_field_ok, rel_is, rt};
 use crate::xml::{El, MAX_DEPTH, NAMESPACES, esc};
+
+const CUSTOM_XML_ROOTS: &str = "customXmlRoots";
 
 /// Relationship types (last path segment) the reader models or the writer produces itself, so
 /// they are never carried verbatim: carrying them would duplicate or contradict the written part.
@@ -63,6 +65,34 @@ pub const HANDLED_RELS: &[&str] = &[
 const MAX_IDS: usize = 64;
 
 impl Reader<'_> {
+    /// Keep custom XML stores reached from the main document or package, without evaluating
+    /// bindings. A bibliography already loaded into the source model belongs to its writer.
+    pub(super) fn keep_custom_xml(&mut self, package: &Rels, document: &Rels) {
+        let mut roots = String::new();
+        for (owner, rels) in [("P", package), ("D", document)] {
+            for rel in rels.list.iter().filter(|r| !r.external && rel_is(&r.kind, rt::CUSTOM_XML)).take(MAX_EMBEDDED_RELS) {
+                if ![&rel.kind, &rel.target].iter().all(|s| manifest_field_ok(s)) {
+                    continue;
+                }
+                if !self.doc.sources.is_empty() && self.xml(&rel.target).ok().flatten().is_some_and(|r| r.local() == "Sources") {
+                    continue;
+                }
+                // Native ink shares the custom XML relationship type, but its part belongs to the
+                // drawing that refers to it: kept with it, or dropped with it (no orphan part).
+                let pkg = self.pkg;
+                if self.content_types.get_or_insert_with(|| ContentTypes::read(pkg)).of(&rel.target) == Some("application/inkml+xml") {
+                    continue;
+                }
+                if self.keep_part_tree(&rel.target) {
+                    roots.push_str(&format!("{owner}\t{}\t{}\n", rel.kind, rel.target));
+                }
+            }
+        }
+        if !roots.is_empty() {
+            self.doc.passthrough.insert(CUSTOM_XML_ROOTS.into(), Arc::new(roots.into_bytes()));
+        }
+    }
+
     /// Keep the parts the package and the main document relate to that WordCraft neither models
     /// nor writes itself (web settings, styles-with-effects, add-in task panes, the thumbnail, a
     /// glossary…), with every part they reach, so saving carries them unchanged. Skipped: the
@@ -70,17 +100,21 @@ impl Reader<'_> {
     /// relationship the main document's markup refers to by id (its target goes with the
     /// element, or not at all).
     pub(super) fn keep_unmodelled(&mut self, package: &Rels, document: &Rels) {
-        let main = self.pkg.get(&self.main).map(|b| b.to_vec()).unwrap_or_default();
+        let pkg = self.pkg;
+        let main = pkg.get(&self.main).unwrap_or_default();
         let referenced = |id: &str| {
             let needle = format!("\"{id}\"");
             main.windows(needle.len()).any(|w| w == needle.as_bytes())
         };
         let mut roots = String::new();
+        // One glossary per main document (its first relationship; see `read_glossary`).
+        let mut glossary = false;
         for (owner, rels) in [("P", package), ("D", document)] {
             for rel in rels.list.iter().filter(|r| !r.external).take(MAX_EMBEDDED_RELS) {
                 let tail = rel.kind.rsplit('/').next().unwrap_or("");
                 if HANDLED_RELS.contains(&tail)
                     || (owner == "D" && referenced(&rel.id))
+                    || (owner == "D" && tail == "glossaryDocument" && std::mem::replace(&mut glossary, true))
                     || ![&rel.kind, &rel.target].iter().all(|s| manifest_field_ok(s))
                 {
                     continue;
@@ -168,14 +202,14 @@ impl Reader<'_> {
             log::warn!("docx: more than {MAX_EMBEDDED_PARTS} parts for embedded objects; the rest are dropped");
             return false;
         }
-        let Some(bytes) = self.pkg.get(part) else {
+        let Some(bytes) = self.pkg.get_shared(part) else {
             log::warn!("docx: part {part} of an embedded object is missing");
             return false;
         };
         let pkg = self.pkg;
         let ct = self.content_types.get_or_insert_with(|| ContentTypes::read(pkg)).of(part).unwrap_or("application/octet-stream");
         let content_type = if manifest_field_ok(ct) { ct.to_string() } else { "application/octet-stream".to_string() };
-        self.doc.passthrough.entry(part.to_string()).or_insert_with(|| Arc::new(bytes.to_vec()));
+        self.doc.passthrough.entry(part.to_string()).or_insert_with(|| bytes.clone());
         self.embedded.parts.insert(part.to_string(), crate::package::EmbeddedPart { content_type, rels: Vec::new() });
         true
     }
