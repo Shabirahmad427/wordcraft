@@ -10,9 +10,9 @@ on:
   workflow_call:
   pull_request:
     paths:
-      - "crates/fonts/**"
       - .github/workflows/freebsd.yml
       - .github/workflows/_shared-freebsd.yml
+      - packaging/env.sh
   workflow_dispatch:
 
 concurrency:

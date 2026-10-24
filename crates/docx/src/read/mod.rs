@@ -351,7 +351,7 @@ fn read_opened_inner(pkg: &Package, preserve: bool, source: &[u8]) -> Result<Doc
     crate::custom_xml::read(pkg, &root_rels, &rels, &main, &embedded_parts, &mut r.doc)?;
     r.read_glossary(&rels);
     r.keep_custom_xml(&root_rels, &rels);
-    r.keep_unmodelled(&root_rels, &rels);
+    r.keep_unmodelled(&root, &root_rels, &rels);
     if !r.embedded.parts.is_empty() {
         let manifest = r.embedded.to_bytes();
         r.doc.passthrough.insert(EMBEDDED_PARTS.into(), Arc::new(manifest));
